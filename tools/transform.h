@@ -6,10 +6,12 @@
 #include "ir/function.h"
 #include "ir/state.h"
 #include "smt/solver.h"
+#include "util/cache.h"
 #include "util/errors.h"
+#include <functional>
 #include <memory>
-#include <string>
 #include <ostream>
+#include <string>
 #include <unordered_map>
 
 namespace tools {
@@ -51,9 +53,10 @@ class TransformVerify {
   Transform &t;
   std::unordered_map<std::string, const IR::Instr*> tgt_instrs;
   bool check_each_var;
+  util::Cache *cache;
 
 public:
-  TransformVerify(Transform &t, bool check_each_var);
+  TransformVerify(Transform &t, bool check_each_var, util::Cache *cache);
   std::pair<std::unique_ptr<IR::State>,std::unique_ptr<IR::State>> exec() const;
   util::Errors verify() const;
   TypingAssignments getTypings() const;

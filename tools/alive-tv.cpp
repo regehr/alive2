@@ -147,6 +147,14 @@ static llvm::cl::opt<string> opt_outputfile("o",
     llvm::cl::init(""), llvm::cl::cat(opt_alive),
     llvm::cl::desc("Specify output filename"));
 
+static llvm::cl::opt<bool> opt_cache("cache",
+  llvm::cl::init(true),
+  llvm::cl::desc("Use external Redis cache (default=false)"));
+
+static llvm::cl::opt<unsigned> opt_cache_port("cache-port",
+  llvm::cl::init(6379),
+  llvm::cl::desc("Port to connect to Redis on (default=6379"));
+
 static llvm::ExitOnError ExitOnErr;
 
 // adapted from llvm-dis.cpp
@@ -271,6 +279,7 @@ static int cmpTypes(llvm::Type *TyL, llvm::Type *TyR,
 }
 
 static optional<smt::smt_initializer> smt_init;
+static Cache *cache;
 
 static void compareFunctions(llvm::Function &F1, llvm::Function &F2,
                              llvm::Triple &targetTriple, unsigned &goodCount,
@@ -308,7 +317,7 @@ static void compareFunctions(llvm::Function &F1, llvm::Function &F2,
   t.src = move(*Func1);
   t.tgt = move(*Func2);
   t.preprocess();
-  TransformVerify verifier(t, false);
+  TransformVerify verifier(t, false, cache);
   if (!opt_succinct)
     t.print(cout, print_opts);
 
@@ -345,7 +354,7 @@ static void compareFunctions(llvm::Function &F1, llvm::Function &F2,
     Transform t2;
     t2.src = move(t.tgt);
     t2.tgt = move(t.src);
-    TransformVerify verifier2(t2, false);
+    TransformVerify verifier2(t2, false, cache);
     t2.print(cout, print_opts);
 
     if (Errors errs2 = verifier2.verify()) {
@@ -439,6 +448,9 @@ convenient way to demonstrate an existing optimizer bug.
   config::disable_undef_input = opt_disable_undef;
   config::disable_poison_input = opt_disable_poison;
   config::debug = opt_debug;
+
+  if (opt_cache)
+    cache = new Cache(opt_cache_port);
 
   if (opt_smt_log)
     smt::start_logging();

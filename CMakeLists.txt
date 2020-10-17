@@ -60,6 +60,8 @@ add_custom_target(
 find_package(ZLIB)
 find_package(Z3 4.8.5 REQUIRED)
 include_directories(${Z3_INCLUDE_DIR})
+find_package(hiredis REQUIRED)
+include_directories(${HIREDIS_INCLUDE_DIR})
 
 find_program(RE2C re2c)
 if (RE2C)
@@ -76,6 +78,7 @@ add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/tools/alive_lexer.cpp"
 
 include_directories(${PROJECT_SOURCE_DIR})
 include_directories(${PROJECT_BINARY_DIR})
+include_directories(${PROJECT_SOURCE_DIR}/libnop)
 
 set(IR_SRCS
   ir/attrs.cpp
@@ -112,6 +115,7 @@ add_library(tools STATIC ${TOOLS_SRCS})
 set(UTIL_SRCS
   "${CMAKE_BINARY_DIR}/version_gen.h"
   util/version.cpp
+  util/cache.cpp
   util/compiler.cpp
   util/config.cpp
   util/errors.cpp
@@ -198,15 +202,16 @@ endif()
 if (CYGWIN)
   # cmake on cygwin doesn't seem to know about dlls..
   get_filename_component(Z3_LIB_DIR "${Z3_LIBRARIES}" DIRECTORY)
-  set(CMAKE_EXE_LINKER_FLAGS "-L${Z3_LIB_DIR} -lz3")
-  set(CMAKE_SHARED_LINKER_FLAGS "-L${Z3_LIB_DIR} -lz3")
-  file(COPY "${Z3_LIBRARIES}" DESTINATION "${PROJECT_BINARY_DIR}")
+  get_filename_component(HIREDIS_LIB_DIR "${HIREDIS_LIBRARIES}" DIRECTORY)
+  set(CMAKE_EXE_LINKER_FLAGS "-L${Z3_LIB_DIR} -lz3 -L${HIREDIS_LIB_DIR} -lhiredis")
+  set(CMAKE_SHARED_LINKER_FLAGS "-L${Z3_LIB_DIR} -lz3 -L${HIREDIS_LIB_DIR} -lhiredis")
+  file(COPY "${Z3_LIBRARIES} ${HIREDIS_LIBRARIES}" DESTINATION "${PROJECT_BINARY_DIR}")
 else()
-  target_link_libraries(alive PRIVATE ${Z3_LIBRARIES})
-  target_link_libraries(alive2 PRIVATE ${Z3_LIBRARIES})
+  target_link_libraries(alive PRIVATE ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES})
+  target_link_libraries(alive2 PRIVATE ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES})
   if (BUILD_LLVM_UTILS OR BUILD_TV)
-    target_link_libraries(alive-tv PRIVATE ${Z3_LIBRARIES})
-    target_link_libraries(alive-exec PRIVATE ${Z3_LIBRARIES})
+    target_link_libraries(alive-tv PRIVATE ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES})
+    target_link_libraries(alive-exec PRIVATE ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES})
   endif()
 endif()
 

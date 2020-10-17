@@ -8,6 +8,10 @@
 #include <utility>
 #include <vector>
 
+#include <nop/serializer.h>
+#include <nop/structure.h>
+#include <nop/utility/stream_writer.h>
+
 namespace util {
 
 struct AliveException {
@@ -22,6 +26,7 @@ public:
 
 class Errors {
   std::vector<std::pair<std::string, bool>> errs;
+  NOP_STRUCTURE(Errors, errs);
 
 public:
   Errors() = default;

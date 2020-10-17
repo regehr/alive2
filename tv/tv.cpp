@@ -124,6 +124,14 @@ llvm::cl::opt<bool> opt_io_nobuiltin(
     llvm::cl::desc("Encode standard I/O functions as an unknown function"),
     llvm::cl::init(false));
 
+llvm::cl::opt<bool> opt_cache("cache",
+  llvm::cl::init(false),
+  llvm::cl::desc("Use external Redis cache (default=false)"));
+
+llvm::cl::opt<unsigned> opt_cache_port("cache-port",
+  llvm::cl::init(6379),
+  llvm::cl::desc("Port to connect to Redis on (default=6379"));
+
 ostream *out;
 ofstream out_file;
 string report_filename;
@@ -141,6 +149,7 @@ bool is_clangtv = false;
 
 struct TVPass final : public llvm::FunctionPass {
   static char ID;
+  Cache *cache = nullptr;
 
   TVPass() : FunctionPass(ID) {}
 
@@ -194,7 +203,7 @@ struct TVPass final : public llvm::FunctionPass {
     t.src = move(old_fn);
     t.tgt = move(I->second.first);
     t.preprocess();
-    TransformVerify verifier(t, false);
+    TransformVerify verifier(t, false, cache);
     t.print(*out, print_opts);
 
     {
@@ -223,6 +232,9 @@ struct TVPass final : public llvm::FunctionPass {
   bool doInitialization(llvm::Module &module) override {
     if (initialized++)
       return false;
+
+    if (opt_cache)
+      cache = new Cache(opt_cache_port);
 
     fnsToVerify.insert(opt_funcs.begin(), opt_funcs.end());
 

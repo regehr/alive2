@@ -5,6 +5,7 @@
 #include "smt/smt.h"
 #include "smt/solver.h"
 #include "tools/alive_parser.h"
+#include "util/cache.h"
 #include "util/config.h"
 #include "util/file.h"
 #include "util/version.h"
@@ -99,6 +100,7 @@ int main(int argc, char **argv) {
 
   smt::smt_initializer smt_init;
   parser_initializer parser_init;
+  Cache *cache = nullptr;
 
   TransformPrintOpts print_opts;
   print_opts.print_fn_header = false;
@@ -117,7 +119,7 @@ int main(int argc, char **argv) {
         t.print(cout, print_opts);
         cout << '\n';
 
-        TransformVerify tv(t, !root_only);
+        TransformVerify tv(t, !root_only, cache);
         auto types = tv.getTypings();
         if (!types) {
           cerr << "Doesn't type check!\n";
