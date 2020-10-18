@@ -21,6 +21,7 @@
 #include <fstream>
 #include <iostream>
 #include <random>
+#include <sstream>
 #include <unordered_map>
 #include <utility>
 
@@ -132,13 +133,19 @@ llvm::cl::opt<unsigned> opt_cache_port("cache-port",
   llvm::cl::init(6379),
   llvm::cl::desc("Port to connect to Redis on (default=6379"));
 
+struct FnInfo {
+  Function fn;
+  unsigned order;
+  std::string fn_tostr;
+};
+
 ostream *out;
 ofstream out_file;
 string report_filename;
 optional<smt::smt_initializer> smt_init;
 optional<llvm_util::initializer> llvm_util_init;
 TransformPrintOpts print_opts;
-unordered_map<string, pair<Function, unsigned>> fns;
+unordered_map<string, FnInfo> fns;
 set<string> fnsToVerify;
 unsigned initialized = 0;
 bool showed_stats = false;
@@ -176,21 +183,33 @@ struct TVPass final : public llvm::FunctionPass {
 
     auto [I, first] = fns.try_emplace(F.getName().str());
     auto fn = llvm2alive(F, *TLI, first ? vector<string_view>()
-                                        : I->second.first.getGlobalVarNames());
+                                        : I->second.fn.getGlobalVarNames());
     if (!fn) {
       fns.erase(I);
       return false;
     }
 
-    auto old_fn = move(I->second.first);
-    I->second.first = move(*fn);
+    if (is_clangtv) {
+      // Compare Alive2 IR and skip if syntactically equal
+      stringstream ss;
+      fn->print(ss);
+
+      string str2 = ss.str();
+      if (I->second.fn_tostr == str2)
+        return false;
+
+      I->second.fn_tostr = move(str2);
+    }
+
+    auto old_fn = move(I->second.fn);
+    I->second.fn = move(*fn);
 
     if (opt_print_dot) {
-      auto &f = I->second.first;
-      ofstream file(f.getName() + '.' + to_string(I->second.second) + ".dot");
+      auto &f = I->second.fn;
+      ofstream file(f.getName() + '.' + to_string(I->second.order) + ".dot");
       CFG cfg(f);
       cfg.printDot(file);
-      ofstream fileDom(f.getName() + '.' + to_string(I->second.second++) +
+      ofstream fileDom(f.getName() + '.' + to_string(I->second.order++) +
                        ".dom.dot");
       DomTree(f, cfg).printDot(fileDom);
     }
@@ -201,7 +220,7 @@ struct TVPass final : public llvm::FunctionPass {
     smt_init->reset();
     Transform t;
     t.src = move(old_fn);
-    t.tgt = move(I->second.first);
+    t.tgt = move(I->second.fn);
     t.preprocess();
     TransformVerify verifier(t, false, cache);
     t.print(*out, print_opts);
@@ -225,7 +244,7 @@ struct TVPass final : public llvm::FunctionPass {
       *out << "Transformation seems to be correct!\n\n";
     }
 
-    I->second.first = move(t.tgt);
+    I->second.fn = move(t.tgt);
     return false;
   }
 
@@ -386,7 +405,12 @@ bool do_skip(const llvm::StringRef &ref) {
     "::TVInitPass", "::TVFinalizePass",
     "ArgumentPromotionPass", "DeadArgumentEliminationPass",
     "HotColdSplittingPass", "InlinerPass",
-    "GlobalOptPass", "IPSCCPPass"
+    "GlobalOptPass", "IPSCCPPass",
+    "ModuleInlinerWrapperPass", // inliner pass wrapper
+    "OpenMPOptPass", // open mp optimization (concurrency)
+    "PostOrderFunctionAttrsPass", // changes fn signatures
+    "EntryExitInstrumenterPass", // instruments profiler-related fn calls
+    "EliminateAvailableExternallyPass", // Del. available_externally linkage fns
   };
   auto sref = ref.str();
   auto ends_with = [](const string_view &a, const string_view &suffix) {
