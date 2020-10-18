@@ -7,6 +7,7 @@
 #include "smt/expr.h"
 #include "smt/smt.h"
 #include "smt/solver.h"
+#include "util/cache.h"
 #include "util/config.h"
 #include "util/errors.h"
 #include "util/stopwatch.h"
@@ -874,8 +875,9 @@ static void calculateAndInitConstants(Transform &t) {
 
 namespace tools {
 
-TransformVerify::TransformVerify(Transform &t, bool check_each_var) :
-  t(t), check_each_var(check_each_var) {
+TransformVerify::TransformVerify(Transform &t, bool check_each_var,
+                                 Cache *cache) :
+  t(t), check_each_var(check_each_var), cache(cache) {
   if (check_each_var) {
     for (auto &i : t.tgt.instrs()) {
       tgt_instrs.emplace(i.getName(), &i);
@@ -941,6 +943,16 @@ Errors TransformVerify::verify() const {
   }
 
   Errors errs;
+  string cache_key;
+
+  if (cache) {
+    stringstream ss;
+    ss << t.src << "====================\n" << t.tgt << "\n";
+    cache_key = ss.str();
+    if (cache->lookup(cache_key, errs))
+      return errs;
+  }
+
   try {
     auto [src_state, tgt_state] = exec();
 
@@ -955,8 +967,11 @@ Errors TransformVerify::verify() const {
                          true, true, val,
                          true, true, tgt_state->at(*tgt_instrs.at(name)),
                          check_each_var);
-        if (errs)
+        if (errs) {
+          if (cache)
+            cache->update(cache_key, errs);
           return errs;
+        }
       }
     }
 
@@ -967,8 +982,15 @@ Errors TransformVerify::verify() const {
                      tgt_state->returnVal(),
                      check_each_var);
   } catch (AliveException e) {
-    return move(e);
+    errs = move(e);
+    if (cache)
+      cache->update(cache_key, errs);
+    return errs;
   }
+
+  if (cache)
+    cache->update(cache_key, errs);
+
   return errs;
 }
 

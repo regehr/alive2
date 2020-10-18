@@ -29,6 +29,7 @@ To build Alive2 you need recent versions of:
 * gcc/clang
 * re2c
 * Z3
+* hiredis
 * LLVM (optional)
 
 
@@ -205,6 +206,18 @@ currently highly experimental and has many restrictions. For example,
 the function cannot take inputs, cannot use memory, cannot depend on
 undefined behaviors, and cannot include loops that execute too many
 iterations.
+
+Caching
+--------
+
+The alive-tv tool and the Alive2 translation validation opt plugin
+support an external cache of translations, using Redis. This can
+significantly speed up workloads that perform repetetive refinement
+checks. If you want to use this functionality, you have two
+responsibilities:
+* Manually start and stop, as appropriate, a Redis server instance on
+  localhost. Alive2 should be the only user of this server.
+* Manually clear the cache contents any time Alive2 or Z3 is upgraded.
 
 LLVM Bugs Found by Alive2
 --------

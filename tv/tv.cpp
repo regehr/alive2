@@ -131,6 +131,14 @@ struct FnInfo {
   std::string fn_tostr;
 };
 
+llvm::cl::opt<bool> opt_cache("cache",
+  llvm::cl::init(true),
+  llvm::cl::desc("Use external Redis cache (default=false)"));
+
+llvm::cl::opt<unsigned> opt_cache_port("cache-port",
+  llvm::cl::init(6379),
+  llvm::cl::desc("Port to connect to Redis on (default=6379"));
+
 ostream *out;
 ofstream out_file;
 string report_filename;
@@ -144,7 +152,7 @@ bool showed_stats = false;
 bool report_dir_created = false;
 bool has_failure = false;
 bool is_clangtv = false;
-
+Cache *cache = nullptr;
 
 struct TVPass final : public llvm::FunctionPass {
   static char ID;
@@ -213,7 +221,7 @@ struct TVPass final : public llvm::FunctionPass {
     t.src = move(old_fn);
     t.tgt = move(I->second.fn);
     t.preprocess();
-    TransformVerify verifier(t, false);
+    TransformVerify verifier(t, false, cache);
     t.print(*out, print_opts);
 
     {
@@ -242,6 +250,9 @@ struct TVPass final : public llvm::FunctionPass {
   bool doInitialization(llvm::Module &module) override {
     if (initialized++)
       return false;
+
+    if (opt_cache)
+      cache = new Cache(opt_cache_port);
 
     fnsToVerify.insert(opt_funcs.begin(), opt_funcs.end());
 
