@@ -47,7 +47,6 @@ static bool remote_get(string_view Key, string_view Field,
     freeReplyObject(reply);
     return false;
   } else if (reply->type == REDIS_REPLY_STRING) {
-    cerr << "reply->len = " << reply->len << "\n";
     Value.reserve(reply->len);
     for (int i=0; i<reply->len; ++i)
       Value.push_back(reply->str[i]);
@@ -72,6 +71,7 @@ static void remote_put(string_view Key, string_view Field, string_view Value,
   if (reply->type != REDIS_REPLY_INTEGER) {
     cerr << "Redis protocol error for cache fill, didn't expect reply type " <<
       to_string(reply->type) << "\n";
+    exit(-1);
   }
   freeReplyObject(reply);
 }
@@ -80,7 +80,6 @@ bool Cache::lookup(const string_view s, Errors &errs) {
   vector<unsigned char> data;
   if (!remote_get(s, "cache", data, ctx))
     return false;
-  cerr << "cache hit, got " << data.size() << " bytes of data\n";
   nop::Deserializer<nop::BufferReader> deserializer{data.data(), data.size()};
   if (!deserializer.Read(&errs)) {
     cerr << "fatal cache deserialization error\n";
@@ -93,7 +92,6 @@ void Cache::update(const string_view s, const Errors &errs) {
   nop::Serializer<nop::StreamWriter<stringstream>> serializer;
   serializer.Write(errs);
   const string data = serializer.writer().stream().str();
-  cerr << "pushing " << data.length() << " bytes into the cache\n";
   remote_put(s, "cache", data, ctx);
 }
   
