@@ -48,7 +48,7 @@ static bool remote_get(string_view Key, string_view Field,
     return false;
   } else if (reply->type == REDIS_REPLY_STRING) {
     Value.reserve(reply->len);
-    for (int i=0; i<reply->len; ++i)
+    for (unsigned i=0; i<reply->len; ++i)
       Value.push_back(reply->str[i]);
     freeReplyObject(reply);
     return true;

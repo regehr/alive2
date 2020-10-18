@@ -132,7 +132,7 @@ struct FnInfo {
 };
 
 llvm::cl::opt<bool> opt_cache("cache",
-  llvm::cl::init(true),
+  llvm::cl::init(false),
   llvm::cl::desc("Use external Redis cache (default=false)"));
 
 llvm::cl::opt<unsigned> opt_cache_port("cache-port",

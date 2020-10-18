@@ -100,7 +100,6 @@ int main(int argc, char **argv) {
 
   smt::smt_initializer smt_init;
   parser_initializer parser_init;
-  Cache *cache = nullptr;
 
   TransformPrintOpts print_opts;
   print_opts.print_fn_header = false;
@@ -119,7 +118,7 @@ int main(int argc, char **argv) {
         t.print(cout, print_opts);
         cout << '\n';
 
-        TransformVerify tv(t, !root_only, cache);
+        TransformVerify tv(t, !root_only, nullptr);
         auto types = tv.getTypings();
         if (!types) {
           cerr << "Doesn't type check!\n";

@@ -147,7 +147,6 @@ static std::unique_ptr<llvm::Module> openInputFile(llvm::LLVMContext &Context,
 }
 
 static optional<smt::smt_initializer> smt_init;
-static Cache *cache;
 
 static void execFunction(llvm::Function &F, llvm::Triple &triple,
                          unsigned &successCount, unsigned &errorCount) {
@@ -166,7 +165,7 @@ static void execFunction(llvm::Function &F, llvm::Triple &triple,
   t.tgt = *llvm2alive(F,
                       llvm::TargetLibraryInfoWrapperPass(triple).getTLI(F));
   t.preprocess();
-  TransformVerify verifier(t, false, cache);
+  TransformVerify verifier(t, false, nullptr);
   if (!opt_succinct)
     t.src.print(cout << "\n----------------------------------------\n");
 
