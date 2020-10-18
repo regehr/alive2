@@ -46,6 +46,8 @@ static bool remote_get(string_view Key, string_view Field, string &Value,
     freeReplyObject(reply);
     return false;
   } else if (reply->type == REDIS_REPLY_STRING) {
+    cerr << "reply->len = " << reply->len << "\n";
+    std::vector<unsigned char> v = reply->str;
     Value = reply->str;
     freeReplyObject(reply);
     return true;
@@ -59,8 +61,8 @@ static bool remote_get(string_view Key, string_view Field, string &Value,
 static void remote_put(string_view Key, string_view Field, string_view Value,
                        redisContext *ctx) {
   assert(ctx);
-  redisReply *reply = (redisReply *)redisCommand(ctx, "HSET %s %s %s",
-      Key.data(), Field.data(), Value.data());
+  redisReply *reply = (redisReply *)redisCommand(ctx, "HSET %s %s %b",
+      Key.data(), Field.data(), Value.data(), Value.length());
   if (!reply || ctx->err) {
     cerr << "Redis error: " << ctx->errstr << "\n";
     exit(-1);
@@ -74,9 +76,9 @@ static void remote_put(string_view Key, string_view Field, string_view Value,
 
 bool Cache::lookup(const string_view s, Errors &errs) {
   string err_str;
-  if (!remote_get(s, "cache", err_str, ctx)) {
+  if (!remote_get(s, "cache", err_str, ctx))
     return false;
-  }
+  cerr << "cache hit, got " << err_str.length() << " bytes of data\n";
   nop::Deserializer<nop::StreamReader<std::stringstream>> deserializer{err_str};
   if (!deserializer.Read(&errs)) {
     cerr << "fatal cache deserialization error\n";
@@ -89,6 +91,7 @@ void Cache::update(const string_view s, const Errors &errs) {
   nop::Serializer<nop::StreamWriter<stringstream>> serializer;
   serializer.Write(errs);
   const string data = serializer.writer().stream().str();
+  cerr << "pushing " << data.length() << " bytes into the cache\n";
   remote_put(s, "cache", data, ctx);
 }
   
