@@ -43,7 +43,7 @@ bool Errors::isUnsound() const {
 ostream& operator<<(ostream &os, const Errors &errs) {
   for (auto &[msg, unsound] : errs.errs) {
     (void)unsound;
-    os << "ERROR: " << msg << '\n';
+    //os << "ERROR: " << msg << '\n';
   }
   return os;
 }

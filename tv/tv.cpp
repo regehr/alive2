@@ -224,20 +224,20 @@ struct TVPass final : public llvm::FunctionPass {
     {
       auto types = verifier.getTypings();
       if (!types) {
-        *out << "Transformation doesn't verify!\n"
-                "ERROR: program doesn't type check!\n\n";
+        //*out << "Transformation doesn't verify!\n"
+	//      "ERROR: program doesn't type check!\n\n";
         return false;
       }
       assert(types.hasSingleTyping());
     }
 
     if (Errors errs = verifier.verify()) {
-      *out << "Transformation doesn't verify!\n" << errs << endl;
+      //*out << "Transformation doesn't verify!\n" << errs << endl;
       has_failure |= errs.isUnsound();
       if (opt_error_fatal && has_failure)
         doFinalization(*F.getParent());
     } else {
-      *out << "Transformation seems to be correct!\n\n";
+      //*out << "Transformation seems to be correct!\n\n";
     }
 
     I->second.fn = move(t.tgt);
@@ -281,7 +281,7 @@ struct TVPass final : public llvm::FunctionPass {
       }
 
       report_filename = path;
-      *out << "Source: " << source_file << endl;
+      //*out << "Source: " << source_file << endl;
       report_dir_created = true;
 
       if (opt_smt_log) {
@@ -323,14 +323,14 @@ struct TVPass final : public llvm::FunctionPass {
       if (opt_alias_stats)
         IR::Memory::printAliasStats(cout);
       if (has_failure && !report_filename.empty())
-        cerr << "Report written to " << report_filename << endl;
+        ;//cerr << "Report written to " << report_filename << endl;
     }
 
     llvm_util_init.reset();
     smt_init.reset();
     --initialized;
 
-    if (has_failure) {
+    if (has_failure && opt_error_fatal) {
       cerr << "Alive2: Transform doesn't verify; aborting!" << endl;
       exit(1);
     }
@@ -433,7 +433,7 @@ llvmGetPassPluginInfo() {
           });
       auto f = [](llvm::StringRef P, llvm::Any IR,
                   const llvm::PreservedAnalyses &PA) {
-        static int count = 0;
+		 //static int count = 0;
         if (!out) {
           // TVInitPass is not called yet.
           // This can happen at very early passes, such as
@@ -445,8 +445,8 @@ llvmGetPassPluginInfo() {
           return;
 
         bool skip_pass = do_skip(P);
-        *out << "-- " << ++count << ". " << P.str()
-             << (skip_pass ? " : Skipping\n" : "\n");
+        //*out << "-- " << ++count << ". " << P.str()
+	//   << (skip_pass ? " : Skipping\n" : "\n");
 
         TVPass tv;
         tv.skip_verify = skip_pass;

@@ -35,7 +35,7 @@ static void print_single_varval(ostream &os, State &st, const Model &m,
                                 const Value *var, const Type &type,
                                 const StateValue &val, unsigned child) {
   if (!val.isValid()) {
-    os << "(invalid expr)";
+    //os << "(invalid expr)";
     return;
   }
 
@@ -44,14 +44,14 @@ static void print_single_varval(ostream &os, State &st, const Model &m,
   // however, cexs are usually triggered by the worst case, which is poison
   if (auto v = m.eval(val.non_poison);
       (!v.isConst() || v.isFalse())) {
-    os << "poison";
+    //os << "poison";
     return;
   }
 
   if (auto *in = dynamic_cast<const Input*>(var)) {
     auto var = in->getUndefVar(type, child);
     if (var.isValid() && m.eval(var, false).isAllOnes()) {
-      os << "undef";
+      //os << "undef";
       return;
     }
   }
@@ -60,7 +60,7 @@ static void print_single_varval(ostream &os, State &st, const Model &m,
 
   expr partial = m.eval(val.value);
   if (is_arbitrary(partial)) {
-    os << "any";
+    //os << "any";
     return;
   }
 
@@ -73,7 +73,7 @@ static void print_single_varval(ostream &os, State &st, const Model &m,
     // needed, not because it's undef
     for (auto &var : partial.vars()) {
       if (isUndef(var)) {
-        os << "\t[based on undef value]";
+        //os << "\t[based on undef value]";
         break;
       }
     }
@@ -88,15 +88,15 @@ static void print_varval(ostream &os, State &st, const Model &m,
     return;
   }
 
-  os << (type.isStructType() ? "{ " : "< ");
+  //os << (type.isStructType() ? "{ " : "< ");
   auto agg = type.getAsAggregateType();
   for (unsigned i = 0, e = agg->numElementsConst(); i < e; ++i) {
     if (i != 0)
-      os << ", ";
+      //os << ", ";
     print_varval(os, st, m, var, agg->getChild(i), agg->extract(val, i),
                  child + i);
   }
-  os << (type.isStructType() ? " }" : " >");
+  //os << (type.isStructType() ? " }" : " >");
 }
 
 
@@ -1190,20 +1190,20 @@ void Transform::preprocess() {
 }
 
 void Transform::print(ostream &os, const TransformPrintOpts &opt) const {
-  os << "\n----------------------------------------\n";
+  //os << "\n----------------------------------------\n";
   if (!name.empty())
-    os << "Name: " << name << '\n';
+    //os << "Name: " << name << '\n';
   if (precondition) {
-    precondition->print(os << "Pre: ");
-    os << '\n';
+    //precondition->print(os << "Pre: ");
+    //os << '\n';
   }
-  src.print(os, opt.print_fn_header);
-  os << "=>\n";
-  tgt.print(os, opt.print_fn_header);
+  //src.print(os, opt.print_fn_header);
+  //os << "=>\n";
+  //tgt.print(os, opt.print_fn_header);
 }
 
 ostream& operator<<(ostream &os, const Transform &t) {
-  t.print(os, {});
+  //t.print(os, {});
   return os;
 }
 
