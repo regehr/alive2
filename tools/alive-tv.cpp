@@ -392,6 +392,9 @@ static llvm::Function *findFunction(llvm::Module &M, const std::string FName) {
 
 static ofstream OutFile;
 
+void __attribute__ ((noinline)) foo(void) {
+}
+
 int main(int argc, char **argv) {
   llvm::sys::PrintStackTraceOnErrorSignal(argv[0]);
   llvm::PrettyStackTraceProgram X(argc, argv);
@@ -523,5 +526,7 @@ end:
   if (opt_alias_stats)
     IR::Memory::printAliasStats(cout);
 
+  cout <<  "end!\n";
+  foo();
   return errorCount > 0;
 }
