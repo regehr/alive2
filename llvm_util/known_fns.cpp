@@ -14,13 +14,14 @@
 using namespace IR;
 using namespace std;
 
-#define RETURN_KNOWN(op)    return { op, true }
-#define RETURN_FAIL_KNOWN() return { nullptr, true }
-#define RETURN_FAIL_UNKNOWN() return { nullptr, false }
+#define RETURN_KNOWN(op)    return { op, FnKnown }
+#define RETURN_FAIL_KNOWN() return { nullptr, FnKnown }
+#define RETURN_FAIL_DEPENDS() return { nullptr, FnDependsOnOpt }
+#define RETURN_FAIL_UNKNOWN() return { nullptr, FnUnknown }
 
 namespace llvm_util {
 
-pair<unique_ptr<Instr>, bool>
+pair<unique_ptr<Instr>, KnownFnKind>
 known_call(llvm::CallInst &i, const llvm::TargetLibraryInfo &TLI,
            BasicBlock &BB, const vector<Value*> &args) {
   auto ty = llvm_type2alive(i.getType());
@@ -53,18 +54,26 @@ known_call(llvm::CallInst &i, const llvm::TargetLibraryInfo &TLI,
     case llvm::LibFunc_scanf:
     case llvm::LibFunc_fclose:
     case llvm::LibFunc_ferror:
+    case llvm::LibFunc_feof:
+    case llvm::LibFunc_fflush:
     case llvm::LibFunc_fgetc:
+    case llvm::LibFunc_fopen:
+    case llvm::LibFunc_fopen64:
     case llvm::LibFunc_fprintf:
     case llvm::LibFunc_fputc:
     case llvm::LibFunc_fputs:
     case llvm::LibFunc_fread:
     case llvm::LibFunc_fscanf:
+    case llvm::LibFunc_fseek:
     case llvm::LibFunc_fwrite:
+    case llvm::LibFunc_getc:
     case llvm::LibFunc_lstat:
+    case llvm::LibFunc_open:
+    case llvm::LibFunc_open64:
     case llvm::LibFunc_perror:
     case llvm::LibFunc_read:
     case llvm::LibFunc_write:
-      RETURN_FAIL_UNKNOWN();
+      RETURN_FAIL_DEPENDS();
     default:
       break;
     }
@@ -107,6 +116,12 @@ known_call(llvm::CallInst &i, const llvm::TargetLibraryInfo &TLI,
     BB.addInstr(unique_ptr<UnaryOp>(Op));
     RETURN_KNOWN(
       make_unique<ConversionOp>(*ty, value_name(i), *Op, ConversionOp::Trunc));
+  }
+  case llvm::LibFunc_fabs:
+  case llvm::LibFunc_fabsf: {
+    RETURN_KNOWN(
+      make_unique<UnaryOp>(*ty, value_name(i), *args[0], UnaryOp::FAbs,
+                           parse_fmath(i)));
   }
   default:
     RETURN_FAIL_KNOWN();

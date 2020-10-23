@@ -62,6 +62,8 @@ class Function final {
   unsigned bits_pointers = 64;
   unsigned bits_ptr_offset = 64;
   bool little_endian = true;
+  // If this is true, FnCalls having DependsOnFlag become valid unknown fn calls
+  bool fncall_valid_flag = true;
 
   // constants used in this function
   std::vector<std::unique_ptr<Value>> constants;
@@ -69,6 +71,9 @@ class Function final {
   std::vector<std::unique_ptr<Value>> undefs;
   std::vector<std::unique_ptr<AggregateValue>> aggregates;
   std::vector<std::unique_ptr<Value>> inputs;
+
+  // an input that has 'returned' attribute
+  Value *returned_input = nullptr;
 
   FnAttrs attrs;
 
@@ -85,6 +90,9 @@ public:
   const std::string& getName() const { return name; }
 
   auto& getFnAttrs() { return attrs; }
+
+  bool getFnCallValidFlag() const { return fncall_valid_flag; }
+  void setFnCallValidFlag(bool f) { fncall_valid_flag = f; }
 
   smt::expr getTypeConstraints() const;
   void fixupTypes(const smt::Model &m);
@@ -120,6 +128,8 @@ public:
     return inputs;
   }
   bool hasSameInputs(const Function &rhs) const;
+  Value *getReturnedInput() const { return returned_input; }
+  void setReturnedInput(Value *v) { returned_input = v; }
 
   bool hasReturn() const;
   unsigned bitsPointers() const { return bits_pointers; }
