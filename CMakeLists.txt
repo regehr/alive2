@@ -179,6 +179,21 @@ if (BUILD_TV)
   endif()
   message(STATUS "Compiling translation validation plugin")
   add_subdirectory(tv)
+  configure_file(
+    ${CMAKE_SOURCE_DIR}/scripts/opt-alive.sh.in
+    ${CMAKE_BINARY_DIR}/scripts/opt-alive.sh
+    @ONLY
+  )
+  configure_file(
+    ${CMAKE_SOURCE_DIR}/scripts/alivecc.in
+    ${CMAKE_BINARY_DIR}/scripts/alivecc
+    @ONLY
+  )
+  configure_file(
+    ${CMAKE_SOURCE_DIR}/scripts/alivecc.in
+    ${CMAKE_BINARY_DIR}/scripts/alive++
+    @ONLY
+  )
 else()
   message(STATUS "Skiping translation validation plugin")
 endif()
@@ -190,11 +205,11 @@ add_executable(alive
               )
 target_link_libraries(alive PRIVATE ${ALIVE_LIBS})
 
-add_library(alive2 SHARED ${IR_SRCS} ${SMT_SRCS} ${TOOLS_SRCS} ${UTIL_SRCS} ${LLVM_UTIL_SRCS})
+#add_library(alive2 SHARED ${IR_SRCS} ${SMT_SRCS} ${TOOLS_SRCS} ${UTIL_SRCS} ${LLVM_UTIL_SRCS})
 
 if (BUILD_LLVM_UTILS OR BUILD_TV)
   llvm_map_components_to_libnames(llvm_libs support core irreader analysis passes transformutils)
-  target_link_libraries(alive2 PRIVATE ${llvm_libs})
+#  target_link_libraries(alive2 PRIVATE ${llvm_libs})
   target_link_libraries(alive-tv PRIVATE ${ALIVE_LIBS_LLVM} ${llvm_libs})
   target_link_libraries(alive-exec PRIVATE ${ALIVE_LIBS_LLVM} ${llvm_libs})
 endif()
@@ -208,7 +223,7 @@ if (CYGWIN)
   file(COPY "${Z3_LIBRARIES} ${HIREDIS_LIBRARIES}" DESTINATION "${PROJECT_BINARY_DIR}")
 else()
   target_link_libraries(alive PRIVATE ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES})
-  target_link_libraries(alive2 PRIVATE ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES})
+  #target_link_libraries(alive2 PRIVATE ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES})
   if (BUILD_LLVM_UTILS OR BUILD_TV)
     target_link_libraries(alive-tv PRIVATE ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES})
     target_link_libraries(alive-exec PRIVATE ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES})

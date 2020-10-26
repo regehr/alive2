@@ -64,28 +64,6 @@ string_view s(llvm::StringRef str) {
   } while (0)
 
 
-FastMathFlags parse_fmath(llvm::Instruction &i) {
-  FastMathFlags fmath;
-  if (auto op = dyn_cast<llvm::FPMathOperator>(&i)) {
-    if (op->hasNoNaNs())
-      fmath.flags |= FastMathFlags::NNaN;
-    if (op->hasNoInfs())
-      fmath.flags |= FastMathFlags::NInf;
-    if (op->hasNoSignedZeros())
-      fmath.flags |= FastMathFlags::NSZ;
-    if (op->hasAllowReciprocal())
-      fmath.flags |= FastMathFlags::ARCP;
-    if (op->hasAllowContract())
-      fmath.flags |= FastMathFlags::Contract;
-    if (op->hasAllowReassoc())
-      fmath.flags |= FastMathFlags::Reassoc;
-    if (op->hasApproxFunc())
-      fmath.flags |= FastMathFlags::AFN;
-  }
-  return fmath;
-}
-
-
 template <typename Fn, typename RetFn>
 void parse_fnattrs(FnAttrs &attrs, llvm::Type *retTy, Fn &&hasAttr,
                    RetFn &&hasRetAttr) {
@@ -275,7 +253,7 @@ public:
       args.emplace_back(a);
     }
 
-    auto [call_val, known] = known_call(i, TLI, *BB, args);
+    auto [call_val, known_kind] = known_call(i, TLI, *BB, args);
     if (call_val)
       RETURN_IDENTIFIER(move(call_val));
 
@@ -309,13 +287,19 @@ public:
     }
 
     string fn_name = '@' + fn->getName().str();
+    FnCall::ValidKind valid = FnCall::Invalid;
+    if (known_kind == FnUnknown)
+      valid = FnCall::Valid;
+    else if (known_kind == FnDependsOnOpt)
+      valid = FnCall::DependsOnFlag;
+
     auto call =
       make_unique<FnCall>(*ty, value_name(i), move(fn_name), move(attrs),
-                          !known);
+                          valid);
     unique_ptr<Instr> ret_val;
 
     // avoid parsing arguments altogether for "unknown known" functions
-    if (known)
+    if (known_kind == FnKnown)
       goto end;
 
     for (uint64_t argidx = 0, nargs = i.arg_size(); argidx < nargs; ++argidx) {
@@ -368,7 +352,7 @@ public:
       if (i.paramHasAttr(argidx, llvm::Attribute::Returned)) {
         auto call2
           = make_unique<FnCall>(Type::voidTy, "", string(call->getFnName()),
-                                FnAttrs(call->getAttributes()), !known);
+                                FnAttrs(call->getAttributes()), valid);
         for (auto &[arg, flags] : call->getArgs()) {
           call2->addArg(*arg, ParamAttrs(flags));
         }
@@ -769,7 +753,8 @@ end:
     case llvm::Intrinsic::bswap:
     case llvm::Intrinsic::ctpop:
     case llvm::Intrinsic::expect:
-    case llvm::Intrinsic::is_constant: {
+    case llvm::Intrinsic::is_constant:
+    case llvm::Intrinsic::fabs: {
       PARSE_UNOP();
       UnaryOp::Op op;
       switch (i.getIntrinsicID()) {
@@ -778,9 +763,11 @@ end:
       case llvm::Intrinsic::ctpop:      op = UnaryOp::Ctpop; break;
       case llvm::Intrinsic::expect:     op = UnaryOp::Copy; break;
       case llvm::Intrinsic::is_constant: op = UnaryOp::IsConstant; break;
+      case llvm::Intrinsic::fabs:        op = UnaryOp::FAbs; break;
       default: UNREACHABLE();
       }
-      RETURN_IDENTIFIER(make_unique<UnaryOp>(*ty, value_name(i), *val, op));
+      RETURN_IDENTIFIER(make_unique<UnaryOp>(*ty, value_name(i), *val, op,
+                                             parse_fmath(i)));
     }
     case llvm::Intrinsic::vector_reduce_add:
     case llvm::Intrinsic::vector_reduce_mul:
@@ -1024,6 +1011,10 @@ end:
         attrs.set(ParamAttrs::NoUndef);
         continue;
 
+      case llvm::Attribute::Returned:
+        attrs.set(ParamAttrs::Returned);
+        continue;
+
       default:
         errorAttr(attr);
         return nullopt;
@@ -1058,6 +1049,12 @@ end:
         return {};
       auto val = make_unique<Input>(*ty, value_name(arg), move(*attrs));
       add_identifier(arg, *val.get());
+
+      if (arg.hasReturnedAttr()) {
+        // Cache this to avoid linear lookup at return
+        assert(Fn.getReturnedInput() == nullptr);
+        Fn.setReturnedInput(val.get());
+      }
       Fn.addInput(move(val));
     }
 

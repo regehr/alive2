@@ -150,8 +150,7 @@ static void error(Errors &errs, State &src_state, State &tgt_state,
     s << " for " << *var;
   s << "\n\nExample:\n";
 
-  for (auto &[var, val, used] : src_state.getValues()) {
-    (void)used;
+  for (auto &[var, val] : src_state.getValues()) {
     if (!dynamic_cast<const Input*>(var) &&
         !dynamic_cast<const ConstantInput*>(var))
       continue;
@@ -170,8 +169,7 @@ static void error(Errors &errs, State &src_state, State &tgt_state,
       }
     }
 
-    for (auto &[var, val, used] : st->getValues()) {
-      (void)used;
+    for (auto &[var, val] : st->getValues()) {
       auto &name = var->getName();
       if (name == var_name)
         break;
@@ -957,7 +955,7 @@ Errors TransformVerify::verify() const {
     auto [src_state, tgt_state] = exec();
 
     if (check_each_var) {
-      for (auto &[var, val, used] : src_state->getValues()) {
+      for (auto &[var, val] : src_state->getValues()) {
         auto &name = var->getName();
         if (name[0] != '%' || !dynamic_cast<const Instr*>(var))
           continue;
@@ -1129,7 +1127,7 @@ static void remove_unreachable_bbs(Function &f) {
   do {
     auto bb = wl.back();
     wl.pop_back();
-    if (!reachable.emplace(bb).second)
+    if (!reachable.emplace(bb).second || bb->empty())
       continue;
 
     if (auto instr = dynamic_cast<JumpInstr*>(&bb->back())) {

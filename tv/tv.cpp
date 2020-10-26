@@ -18,6 +18,7 @@
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <random>
@@ -25,19 +26,12 @@
 #include <unordered_map>
 #include <utility>
 
-#if (__GNUC__ < 8) && (!__APPLE__)
-# include <experimental/filesystem>
-  namespace fs = std::experimental::filesystem;
-#else
-# include <filesystem>
-  namespace fs = std::filesystem;
-#endif
-
 using namespace IR;
 using namespace llvm_util;
 using namespace tools;
 using namespace util;
 using namespace std;
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -66,6 +60,10 @@ llvm::cl::opt<bool> opt_smt_stats(
   "tv-smt-stats", llvm::cl::desc("Alive: show SMT statistics"),
   llvm::cl::init(false));
 
+llvm::cl::opt<bool> opt_succinct(
+  "tv-succinct", llvm::cl::desc("Alive2: make the output succinct"),
+  llvm::cl::init(false));
+
 llvm::cl::opt<bool> opt_alias_stats(
   "tv-alias-stats", llvm::cl::desc("Alive: show alias sets statistics"),
   llvm::cl::init(false));
@@ -77,6 +75,11 @@ llvm::cl::opt<bool> opt_smt_skip(
 llvm::cl::opt<string> opt_report_dir(
   "tv-report-dir", llvm::cl::desc("Alive: save report to disk"),
   llvm::cl::value_desc("directory"));
+
+llvm::cl::opt<bool> opt_overwrite_reports(
+  "tv-overwrite-reports",
+  llvm::cl::desc("Alive: overwrite existing report files"),
+  llvm::cl::init(false));
 
 llvm::cl::opt<bool> opt_smt_verbose(
   "tv-smt-verbose", llvm::cl::desc("Alive: SMT verbose mode"),
@@ -122,7 +125,8 @@ llvm::cl::opt<unsigned> opt_omit_array_size(
 
 llvm::cl::opt<bool> opt_io_nobuiltin(
     "tv-io-nobuiltin",
-    llvm::cl::desc("Encode standard I/O functions as an unknown function"),
+    llvm::cl::desc("Encode standard I/O functions as an unknown function "
+                   "(unused by clang plugin)"),
     llvm::cl::init(false));
 
 struct FnInfo {
@@ -156,6 +160,8 @@ Cache *cache = nullptr;
 
 struct TVPass final : public llvm::FunctionPass {
   static char ID;
+  bool skip_verify = false;
+  bool encode_io_fns_as_unknown = false;
 
   TVPass() : FunctionPass(ID) {}
 
@@ -194,7 +200,11 @@ struct TVPass final : public llvm::FunctionPass {
       fn->print(ss);
 
       string str2 = ss.str();
-      if (I->second.fn_tostr == str2)
+      // Optimization: since string comparison can be expensive for big
+      // functions, skip it if skip_verify is true.
+      // verifier.verify() will never happen if skip_verify is true, so
+      // there is nothing to prune early.
+      if (!skip_verify && I->second.fn_tostr == str2)
         return false;
 
       I->second.fn_tostr = move(str2);
@@ -213,8 +223,11 @@ struct TVPass final : public llvm::FunctionPass {
       DomTree(f, cfg).printDot(fileDom);
     }
 
-    if (first)
+    if (first || skip_verify)
       return false;
+
+    if (is_clangtv)
+      I->second.fn.setFnCallValidFlag(encode_io_fns_as_unknown);
 
     smt_init->reset();
     Transform t;
@@ -222,7 +235,11 @@ struct TVPass final : public llvm::FunctionPass {
     t.tgt = move(I->second.fn);
     t.preprocess();
     TransformVerify verifier(t, false, cache);
-    t.print(*out, print_opts);
+    if (!opt_succinct)
+      t.print(*out, print_opts);
+
+    if (is_clangtv)
+      I->second.fn.setFnCallValidFlag(false);
 
     {
       auto types = verifier.getTypings();
@@ -273,11 +290,13 @@ struct TVPass final : public llvm::FunctionPass {
       fname.replace_extension(".txt");
       fs::path path = fs::path(opt_report_dir.getValue()) / fname.filename();
 
-      do {
-        auto newname = fname.stem();
-        newname += "_" + to_string(rand(re)) + ".txt";
-        path.replace_filename(newname);
-      } while (fs::exists(path));
+      if (!opt_overwrite_reports) {
+        do {
+          auto newname = fname.stem();
+          newname += "_" + to_string(rand(re)) + ".txt";
+          path.replace_filename(newname);
+        } while (fs::exists(path));
+      }
 
       out_file = ofstream(path);
       out = &out_file;
@@ -309,7 +328,17 @@ struct TVPass final : public llvm::FunctionPass {
     smt::set_random_seed(to_string(opt_smt_random_seed));
     smt::set_memory_limit(opt_max_mem * 1024 * 1024);
     config::skip_smt = opt_smt_skip;
-    config::io_nobuiltin = opt_io_nobuiltin;
+
+    if (!is_clangtv)
+      config::io_nobuiltin = opt_io_nobuiltin;
+    else {
+      config::io_nobuiltin = true;
+      if (opt_io_nobuiltin)
+        cerr << "Warning: -tv-io-nobuiltin isn't used by clang plugin. I/O"
+                " function calls will be always regarded as unknown fn calls"
+                " except InstCombine.\n";
+    }
+
     config::symexec_print_each_value = opt_se_verbose;
     config::disable_undef_input = opt_disable_undef_input;
     config::disable_poison_input = opt_disable_poison_input;
@@ -337,8 +366,13 @@ struct TVPass final : public llvm::FunctionPass {
     --initialized;
 
     if (has_failure) {
-      cerr << "Alive2: Transform doesn't verify; aborting!" << endl;
-      exit(1);
+      if (opt_error_fatal)
+        cerr << "Alive2: Transform doesn't verify; aborting!" << endl;
+      else
+        cerr << "Alive2: Transform doesn't verify!" << endl;
+
+      if (!is_clangtv)
+        exit(1);
     }
     return false;
   }
@@ -408,6 +442,7 @@ bool do_skip(const llvm::StringRef &ref) {
     "ModuleInlinerWrapperPass", // inliner pass wrapper
     "OpenMPOptPass", // open mp optimization (concurrency)
     "PostOrderFunctionAttrsPass", // changes fn signatures
+    "InferFunctionAttrsPass", // changes fn signatures
     "EntryExitInstrumenterPass", // instruments profiler-related fn calls
     "EliminateAvailableExternallyPass", // Del. available_externally linkage fns
   };
@@ -447,16 +482,23 @@ llvmGetPassPluginInfo() {
           return;
         }
 
-        if (do_skip(P)) {
-          *out << "-- " << ++count << ". " << P.str() << " : Skipping\n";
-          return;
-        } else if (TVFinalizePass::finalized)
+        if (TVFinalizePass::finalized)
           return;
 
-        *out << "-- " << ++count << ". " << P.str() << "\n";
+        bool skip_pass = do_skip(P);
+        *out << "-- " << ++count << ". " << P.str()
+             << (skip_pass ? " : Skipping\n" : "\n");
+
         TVPass tv;
+        tv.skip_verify = skip_pass;
+        // For I/O known calls like printf, it is fine to regard them as valid
+        // 'unknown calls' except when it is InstCombine.
+        tv.encode_io_fns_as_unknown = P != "InstCombinePass" &&
+                                      P != "AggressiveInstCombinePass";
+
         auto M = const_cast<llvm::Module *>(unwrapModule(IR));
         for (auto &F: *M)
+          // If skip_pass is true, this updates fns map only.
           tv.runOnFunction(F);
       };
       PB.getPassInstrumentationCallbacks()->registerAfterPassCallback(move(f));
