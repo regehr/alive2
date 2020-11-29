@@ -135,11 +135,11 @@ struct FnInfo {
   std::string fn_tostr;
 };
 
-llvm::cl::opt<bool> opt_cache("cache",
-  llvm::cl::init(false),
+llvm::cl::opt<bool> opt_cache("tv-cache",
+  llvm::cl::init(true),
   llvm::cl::desc("Use external Redis cache (default=false)"));
 
-llvm::cl::opt<unsigned> opt_cache_port("cache-port",
+llvm::cl::opt<unsigned> opt_cache_port("tv-cache-port",
   llvm::cl::init(6379),
   llvm::cl::desc("Port to connect to Redis on (default=6379"));
 

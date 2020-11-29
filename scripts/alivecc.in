@@ -1,18 +1,49 @@
-#!/bin/bash
+#!/usr/bin/env perl
 
-set -e
+use strict;
+use autodie;
+use File::Basename;
 
-COMPILER=`basename "$0"`
+# detect if we're compiling a C or C++ file, as opposed to being a
+# linker or assembler
+my $compiling = 0;
+foreach my $arg (@ARGV) {
+    if ($arg =~ /\.c$|\.cpp$|\.CC$|\.c\+\+$|\.cc$|\.cxx$|\.C$|\.c\+$/) {
+        $compiling = 1;
+    }
+}
 
-if [ $COMPILER = "alivecc" ]; then
-  EXE=clang
-elif [ $COMPILER = "alive++" ]; then
-  EXE=clang++
-else
-  echo "Unexpected invocation as $COMPILER";
-  exit -1
-fi
+my $COMPILER = File::Basename::basename($0);
 
-@LLVM_BINARY_DIR@/bin/$EXE \
-  -fpass-plugin=@CMAKE_BINARY_DIR@/tv/tv.so -fexperimental-new-pass-manager \
-  -Xclang -load -Xclang @CMAKE_BINARY_DIR@/tv/tv.so $*
+my $EXE;
+if ($COMPILER eq "alivecc") {
+    $EXE = "clang";
+} elsif ($COMPILER eq "alive++") {
+    $EXE = "clang++";
+} else {
+    print STDERR "Unexpected invocation as ${COMPILER}";
+    exit(-1);
+}
+
+unshift @ARGV, "@LLVM_BINARY_DIR@/bin/${EXE}";
+
+if ($compiling) {
+    push @ARGV,
+        "-fpass-plugin=@CMAKE_BINARY_DIR@/tv/tv.so",
+        "-fexperimental-new-pass-manager",
+        "-Xclang", "-load",
+        "-Xclang", "@CMAKE_BINARY_DIR@/tv/tv.so";
+    if (exists $ENV{"ALIVE_REPORT_DIR"}) {
+        my $dir = $ENV{"ALIVE_REPORT_DIR"};
+        push @ARGV, "-mllvm", "-tv-report-dir=${dir}";
+    }
+    if (exists $ENV{"ALIVE_OVERWRITE_REPORT"}) {
+        push @ARGV, "-mllvm", "-tv-overwrite-reports";
+    }
+    if (exists $ENV{"ALIVE_CACHE"}) {
+        push @ARGV, "-mllvm", "-tv-cache";
+    }
+}
+
+exec @ARGV;
+die "exec() failed.";
