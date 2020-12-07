@@ -359,9 +359,8 @@ struct TVPass final : public llvm::FunctionPass {
       llvm_util_init.reset();
       smt_init.reset();
       parallelMgr->finishChild();
-    } else {
-      return false;
     }
+    return false;
   }
 
   bool doInitialization(llvm::Module &module) override {
