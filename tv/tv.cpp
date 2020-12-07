@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <sstream>
 #include <unordered_map>
@@ -142,12 +143,6 @@ llvm::cl::opt<unsigned> opt_omit_array_size(
                    "this number"),
     llvm::cl::cat(TVOptions), llvm::cl::init(-1));
 
-llvm::cl::opt<bool> opt_io_nobuiltin(
-    "tv-io-nobuiltin",
-    llvm::cl::desc("Encode standard I/O functions as an unknown function "
-                   "(unused by clang plugin)"),
-    llvm::cl::cat(TVOptions), llvm::cl::init(false));
-
 llvm::cl::opt<bool> opt_elapsed_time(
     "tv-elapsed-time",
     llvm::cl::desc("Print the elapsed time"),
@@ -204,8 +199,19 @@ bool is_clangtv = false;
 fs::path opt_report_parallel_dir;
 const char *parallel_subdir = "tmp_parallel";
 unique_ptr<parallel> parallelMgr;
-default_random_engine re;
-uniform_int_distribution<unsigned> rand;
+
+string get_random_str() {
+  static default_random_engine re;
+  static uniform_int_distribution<unsigned> rand;
+  static bool seeded = false;
+
+  if (!seeded) {
+    random_device rd;
+    re.seed(rd());
+    seeded = true;
+  }
+  return to_string(rand(re));
+}
 
 struct TVPass final : public llvm::FunctionPass {
   static char ID;
@@ -222,7 +228,7 @@ struct TVPass final : public llvm::FunctionPass {
     if (!fnsToVerify.empty() && !fnsToVerify.count(F.getName().str()))
       return false;
 
-    ScopedWatch timer([&] (const StopWatch &sw) {
+    ScopedWatch timer([&](const StopWatch &sw) {
       fns_elapsed_time[F.getName().str()] += sw.seconds();
     });
 
@@ -277,14 +283,12 @@ struct TVPass final : public llvm::FunctionPass {
       return false;
 
     if (parallelMgr) {
-      random_device rd;
-      re.seed(rd());      
-      string newname;
       fs::path path;
       if (report_dir_created) {
         // NB there's a low-probability toctou race here
+        string newname;
         do {
-          newname = "tmp_" + to_string(rand(re)) + ".txt";
+          newname = "tmp_" + get_random_str() + ".txt";
           path = opt_report_parallel_dir / newname;
         } while (fs::exists(path));
       }
@@ -318,9 +322,6 @@ struct TVPass final : public llvm::FunctionPass {
      * is non-null; instead we call parallelMgr->finishChild()
      */
 
-    if (is_clangtv)
-      I->second.fn.setFnCallValidFlag(encode_io_fns_as_unknown);
-
     smt_init->reset();
     Transform t;
     t.src = move(old_fn);
@@ -329,9 +330,6 @@ struct TVPass final : public llvm::FunctionPass {
     TransformVerify verifier(t, false);
     if (!opt_succinct)
       t.print(*out, print_opts);
-
-    if (is_clangtv)
-      I->second.fn.setFnCallValidFlag(false);
 
     {
       auto types = verifier.getTypings();
@@ -387,14 +385,6 @@ struct TVPass final : public llvm::FunctionPass {
     fnsToVerify.insert(opt_funcs.begin(), opt_funcs.end());
 
     if (!report_dir_created && !opt_report_dir.empty()) {
-      static bool seeded = false;
-
-      if (!seeded) {
-        random_device rd;
-        re.seed(rd());
-        seeded = true;
-      }
-
       try {
         fs::create_directories(opt_report_dir.getValue());
       } catch (...) {
@@ -410,7 +400,7 @@ struct TVPass final : public llvm::FunctionPass {
         // NB there's a low-probability toctou race here
         do {
           auto newname = fname.stem();
-          newname += "_" + to_string(rand(re)) + ".txt";
+          newname += "_" + get_random_str() + ".txt";
           path.replace_filename(newname);
         } while (fs::exists(path));
       }
@@ -456,16 +446,6 @@ struct TVPass final : public llvm::FunctionPass {
     smt::set_random_seed(to_string(opt_smt_random_seed));
     smt::set_memory_limit(opt_max_mem * 1024 * 1024);
     config::skip_smt = opt_smt_skip;
-
-    if (!is_clangtv)
-      config::io_nobuiltin = opt_io_nobuiltin;
-    else {
-      config::io_nobuiltin = true;
-      if (opt_io_nobuiltin)
-        cerr << "Warning: -tv-io-nobuiltin isn't used by clang plugin. I/O"
-                " function calls will be always regarded as unknown fn calls"
-                " except InstCombine.\n";
-    }
 
     config::symexec_print_each_value = opt_se_verbose;
     config::disable_undef_input = opt_disable_undef_input;
@@ -576,28 +556,27 @@ const llvm::Module * unwrapModule(llvm::Any IR) {
   llvm_unreachable("Unknown IR unit");
 }
 
-bool do_skip(const llvm::StringRef &ref) {
-  const vector<string_view> pass_list = {
-    "::TVInitPass", "::TVFinalizePass",
-    "ArgumentPromotionPass", "DeadArgumentEliminationPass",
-    "HotColdSplittingPass", "InlinerPass",
-    "GlobalOptPass", "IPSCCPPass",
-    "ModuleInlinerWrapperPass", // inliner pass wrapper
-    "OpenMPOptPass", // open mp optimization (concurrency)
-    "PostOrderFunctionAttrsPass", // changes fn signatures
-    "InferFunctionAttrsPass", // changes fn signatures
-    "EntryExitInstrumenterPass", // instruments profiler-related fn calls
-    "EliminateAvailableExternallyPass", // Del. available_externally linkage fns
-  };
-  auto sref = ref.str();
-  auto ends_with = [](const string_view &a, const string_view &suffix) {
-    return a.size() >= suffix.size() &&
-           a.substr(a.size() - suffix.size()) == suffix;
-  };
-  return
-    std::find_if(pass_list.begin(), pass_list.end(), [&](string_view elem) {
-        return ends_with(sref, elem);
-      }) != pass_list.end();
+const char* skip_pass_list[] = {
+  "{anonymous}::TVInitPass",
+  "ModuleToFunctionPassAdaptor<{anonymous}::TVFinalizePass>",
+  "ArgumentPromotionPass",
+  "DeadArgumentEliminationPass",
+  "EliminateAvailableExternallyPass",
+  "EntryExitInstrumenterPass",
+  "GlobalOptPass",
+  "HotColdSplittingPass",
+  "InferFunctionAttrsPass", // IPO
+  "InlinerPass",
+  "IPSCCPPass",
+  "ModuleInlinerWrapperPass",
+  "OpenMPOptPass",
+  "PostOrderFunctionAttrsPass", // IPO
+};
+
+bool do_skip(const llvm::StringRef &pass0) {
+  auto pass = pass0.str();
+  return any_of(skip_pass_list, end(skip_pass_list),
+                [&](auto skip) { return pass == skip; });
 }
 
 // Entry point for this plugin
