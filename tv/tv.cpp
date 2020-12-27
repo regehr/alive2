@@ -1,6 +1,8 @@
 // Copyright (c) 2018-present The Alive2 Authors.
 // Distributed under the MIT license that can be found in the LICENSE file.
 
+#define EXPENSIVE_CHECKS
+
 #include "ir/memory.h"
 #include "llvm_util/llvm2alive.h"
 #include "llvm_util/utils.h"
@@ -16,6 +18,7 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/StructuralHash.h"
 #include "llvm/Pass.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
@@ -275,11 +278,50 @@ struct TVPass final : public llvm::ModulePass {
     }
 
     if (is_clangtv) {
+
+      {
+        uint64_t h = llvm::StructuralHash(F);
+        static vector<uint64_t> hash;
+        bool hit = false;
+        for (int i=0; i<hash.size(); ++i) {
+          if (hash[i] == h) {
+            cerr << "STRUCTURAL_CACHE_HIT\n";
+            hit = true;
+            break;
+          }
+        }
+        if (!hit) {
+            cerr << "STRUCTURAL_CACHE_MISS\n";
+            hash.push_back(h);
+        }
+      }
+      
       // Compare Alive2 IR and skip if syntactically equal
       stringstream ss;
       fn->print(ss);
 
       string str2 = ss.str();
+
+      {
+        //hash<string> hasher;
+        //size_t hash = hasher(str2);
+        static vector<string> seen;
+        bool hit = false;
+        for (int i=0; i<seen.size(); ++i) {
+          if (seen[i] == str2) {
+            cerr << "CACHE_HIT\n";
+            hit = true;
+            break;
+          }
+        }
+        if (!hit) {
+          seen.push_back(str2);
+          cerr << "CACHE_MISS\n";
+        }
+      }
+
+      return false;
+
       // Optimization: since string comparison can be expensive for big
       // functions, skip it if skip_verify is true.
       // verifier.verify() will never happen if skip_verify is true, so
