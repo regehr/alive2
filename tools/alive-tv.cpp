@@ -112,6 +112,11 @@ static llvm::cl::opt<bool> opt_debug(
     "dbg", llvm::cl::desc("Print debugging info"),
     llvm::cl::cat(opt_alive), llvm::cl::init(false));
 
+static llvm::cl::opt<bool> opt_print_dot(
+    "dot",
+    llvm::cl::desc("Alive: print .dot files of each function"),
+    llvm::cl::cat(opt_alive), llvm::cl::init(false));
+
 static llvm::cl::opt<bool> opt_smt_stats(
     "smt-stats", llvm::cl::desc("Show SMT statistics"),
     llvm::cl::cat(opt_alive), llvm::cl::init(false));
@@ -129,11 +134,6 @@ static llvm::cl::opt<unsigned> opt_omit_array_size(
     llvm::cl::desc("Omit an array initializer if it has elements more than "
                    "this number"),
     llvm::cl::cat(opt_alive), llvm::cl::init(-1));
-
-static llvm::cl::opt<bool> opt_io_nobuiltin(
-    "io-nobuiltin",
-    llvm::cl::desc("Encode standard I/O functions as an unknown function"),
-    llvm::cl::cat(opt_alive), llvm::cl::init(false));
 
 static llvm::cl::opt<unsigned> opt_max_mem(
      "max-mem", llvm::cl::desc("Max memory (approx)"),
@@ -300,7 +300,6 @@ static void compareFunctions(llvm::Function &F1, llvm::Function &F2,
     ++errorCount;
     return;
   }
-  Func1->unroll(opt_src_unrolling_factor);
 
   auto Func2 = llvm2alive(F2, llvm::TargetLibraryInfoWrapperPass(targetTriple)
                                     .getTLI(F2), Func1->getGlobalVarNames());
@@ -310,7 +309,11 @@ static void compareFunctions(llvm::Function &F1, llvm::Function &F2,
     ++errorCount;
     return;
   }
-  Func2->unroll(opt_tgt_unrolling_factor);
+
+  if (opt_print_dot) {
+    Func1->writeDot("src");
+    Func2->writeDot("tgt");
+  }
 
   smt_init->reset();
   Transform t;
@@ -443,11 +446,12 @@ convenient way to demonstrate an existing optimizer bug.
   smt::set_random_seed(to_string(opt_smt_random_seed));
   smt::set_memory_limit((uint64_t)opt_max_mem * 1024 * 1024);
   config::skip_smt = opt_smt_skip;
-  config::io_nobuiltin = opt_io_nobuiltin;
   config::symexec_print_each_value = opt_se_verbose;
   config::disable_undef_input = opt_disable_undef;
   config::disable_poison_input = opt_disable_poison;
   config::debug = opt_debug;
+  config::src_unroll_cnt = opt_src_unrolling_factor;
+  config::tgt_unroll_cnt = opt_tgt_unrolling_factor;
 
   if (opt_cache)
     cache = new Cache(opt_cache_port);

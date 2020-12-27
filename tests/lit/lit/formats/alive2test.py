@@ -30,11 +30,14 @@ def executeCommand(command):
     err = str(err)
   return out, err, exitCode
 
+def is_timeout(str):
+  return str.find('ERROR: Timeout') > 0
 
 def id_check(fn, cmd, args):
   out, err, exitCode = executeCommand(cmd + args)
-  if exitCode != 0 or (out + err).find(ok_string) < 0:
-    raise Exception(fn + ' identity check fail: ' + out + err)
+  str = out + err
+  if not is_timeout(str) and (exitCode != 0 or str.find(ok_string) < 0):
+    raise Exception(fn + ' identity check fail: ' + str)
 
 
 def readFile(path):
@@ -46,9 +49,9 @@ class Alive2Test(TestFormat):
   def __init__(self):
     self.regex_errs = re.compile(r";\s*(ERROR:.*)")
     self.regex_xfail = re.compile(r";\s*XFAIL:\s*(.*)")
-    self.regex_args = re.compile(r";\s*TEST-ARGS:(.*)")
-    self.regex_check = re.compile(r";\s*CHECK:(.*)")
-    self.regex_check_not = re.compile(r";\s*CHECK-NOT:(.*)")
+    self.regex_args = re.compile(r"(?:;|//)\s*TEST-ARGS:(.*)")
+    self.regex_check = re.compile(r"(?:;|//)\s*CHECK:(.*)")
+    self.regex_check_not = re.compile(r"(?:;|//)\s*CHECK-NOT:(.*)")
     self.regex_skip_identity = re.compile(r";\s*SKIP-IDENTITY")
     self.regex_errs_out = re.compile("ERROR:.*")
 
@@ -60,7 +63,8 @@ class Alive2Test(TestFormat):
       if not filename.startswith('.') and \
           not os.path.isdir(filepath) and \
           (filename.endswith('.opt') or filename.endswith('.src.ll') or
-           filename.endswith('.srctgt.ll')):
+           filename.endswith('.srctgt.ll') or filename.endswith('.c') or
+           filename.endswith('.cpp') or filename.endswith('.opt.ll')):
         yield lit.Test.Test(testSuite, path_in_suite + (filename,), localConfig)
 
 
@@ -79,7 +83,22 @@ class Alive2Test(TestFormat):
       if not os.path.isfile('alive-tv'):
         return lit.Test.UNSUPPORTED, ''
 
-    if not alive_tv_1 and not alive_tv_2:
+    opt_tv = test.endswith('.opt.ll')
+    if opt_tv:
+      cmd = ['./opt-alive-test.sh', '-disable-output']
+      if not os.path.isfile('opt-alive-test.sh'):
+        return lit.Test.UNSUPPORTED, ''
+
+    clang_tv = test.endswith('.c') or test.endswith('.cpp')
+    if clang_tv:
+      execpath = './%s' % ("alivecc" if test.endswith('.c')
+                                     else "alive++")
+      # 30 seconds is too long to apply to all passes, just use the default to
+      cmd = [execpath, "-c", "-o", "/dev/null"]
+      if not os.path.isfile(execpath):
+        return lit.Test.UNSUPPORTED, ''
+
+    if not alive_tv_1 and not alive_tv_2 and not clang_tv and not opt_tv:
       cmd = ['./alive', '-smt-to:20000']
 
     input = readFile(test)
@@ -111,31 +130,38 @@ class Alive2Test(TestFormat):
     if alive_tv_2:
       cmd.append(test.replace('.src.ll', '.tgt.ll'))
     out, err, exitCode = executeCommand(cmd)
+    output = out + err
 
-    expect_err = self.regex_errs.search(input)
     xfail = self.regex_xfail.search(input)
-    chk = self.regex_check.search(input)
-    chk_not = self.regex_check_not.search(input)
-
-    # Check XFAIL early.
-    if xfail != None and (out + err).find(xfail.group(1)) != -1:
+    if xfail != None and output.find(xfail.group(1)) != -1:
       return lit.Test.XFAIL, ''
 
-    if chk != None and (out + err).find(chk.group(1).strip()) == -1:
-      return lit.Test.FAIL, out + err
+    if is_timeout(output):
+      return lit.Test.PASS, ''
 
-    if chk_not != None and (out + err).find(chk_not.group(1).strip()) != -1:
-      return lit.Test.FAIL, out + err
+    chk = self.regex_check.search(input)
+    if chk != None and output.find(chk.group(1).strip()) == -1:
+      return lit.Test.FAIL, output
 
+    chk_not = self.regex_check_not.search(input)
+    if chk_not != None and output.find(chk_not.group(1).strip()) != -1:
+      return lit.Test.FAIL, output
+
+    if clang_tv and exitCode != 0:
+      # clang tv should not exit with non-zero even if validation fails.
+      # Otherwise it will stop a build system such as `make`.
+      return lit.Test.FAIL, output
+
+    expect_err = self.regex_errs.search(input)
     if expect_err is None and xfail is None and chk is None and chk_not is None:
       # If there's no other test, correctness of the transformation should be
       # checked.
-      if exitCode == 0 and (out + err).find(ok_string) != -1 and \
-          self.regex_errs_out.search(out + err) is None:
+      if exitCode == 0 and output.find(ok_string) != -1 and \
+          self.regex_errs_out.search(output) is None:
         return lit.Test.PASS, ''
-      return lit.Test.FAIL, out + err
+      return lit.Test.FAIL, output
 
-    if expect_err != None and (out + err).find(expect_err.group(1)) == -1:
-      return lit.Test.FAIL, out + err
+    if expect_err != None and output.find(expect_err.group(1)) == -1:
+      return lit.Test.FAIL, output
 
     return lit.Test.PASS, ''

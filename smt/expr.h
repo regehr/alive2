@@ -55,7 +55,7 @@ class expr {
       return simplify_const(std::move(e), inputs...);
     return std::move(e);
   }
-  static expr simplify_const(expr &&e) { return e.simplify(); }
+  static expr simplify_const(expr &&e) { return e.simplifyNoTimeout(); }
 
   bool alwaysFalse() const { return false; }
 
@@ -64,7 +64,6 @@ class expr {
   static expr mkUInt(uint64_t n, Z3_sort sort);
   static expr mkInt(int64_t n, Z3_sort sort);
   static expr mkConst(Z3_func_decl decl);
-  static expr mkQuantVar(unsigned i, Z3_sort sort);
 
   bool isBinOp(expr &a, expr &b, int z3op) const;
 
@@ -311,10 +310,14 @@ public:
   static expr mkLambda(const expr &var, const expr &val);
 
   expr simplify() const;
+  expr simplifyNoTimeout() const;
 
   // replace v1 -> v2
   expr subst(const std::vector<std::pair<expr, expr>> &repls) const;
   expr subst(const expr &from, const expr &to) const;
+
+  // replace quantified variables in increasing index order
+  expr subst(const std::vector<expr> &repls) const;
 
   std::set<expr> vars() const;
   static std::set<expr> vars(const std::vector<const expr*> &exprs);

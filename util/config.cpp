@@ -12,10 +12,11 @@ namespace util::config {
 
 bool symexec_print_each_value = false;
 bool skip_smt = false;
-bool io_nobuiltin = false;
 bool disable_poison_input = false;
 bool disable_undef_input = false;
 bool debug = false;
+unsigned src_unroll_cnt = 0;
+unsigned tgt_unroll_cnt = 0;
 
 ostream &dbg() {
   return *debug_os;

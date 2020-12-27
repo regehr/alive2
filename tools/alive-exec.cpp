@@ -115,11 +115,6 @@ static llvm::cl::opt<unsigned> opt_omit_array_size(
                    "this number"),
     llvm::cl::cat(opt_alive), llvm::cl::init(-1));
 
-static llvm::cl::opt<bool> opt_io_nobuiltin(
-    "io-nobuiltin",
-    llvm::cl::desc("Encode standard I/O functions as an unknown function"),
-    llvm::cl::cat(opt_alive), llvm::cl::init(false));
-
 static llvm::cl::opt<unsigned> opt_max_mem(
      "max-mem", llvm::cl::desc("Max memory (approx)"),
      llvm::cl::cat(opt_alive), llvm::cl::init(1024), llvm::cl::value_desc("MB"));
@@ -127,6 +122,10 @@ static llvm::cl::opt<unsigned> opt_max_mem(
 static llvm::cl::opt<string> opt_outputfile("o",
     llvm::cl::init(""), llvm::cl::cat(opt_alive),
     llvm::cl::desc("Specify output filename"));
+
+static llvm::cl::opt<bool> opt_print_dot(
+    "dot", llvm::cl::desc("Print .dot file with CFG of each function"),
+    llvm::cl::init(false));
 
 static llvm::ExitOnError ExitOnErr;
 
@@ -158,7 +157,10 @@ static void execFunction(llvm::Function &F, llvm::Triple &triple,
     ++errorCount;
     return;
   }
-  Func->unroll(opt_unrolling_factor);
+  if (opt_print_dot) {
+    Func->writeDot("");
+  }
+  config::src_unroll_cnt = opt_unrolling_factor;
 
   Transform t;
   t.src = move(*Func);
@@ -284,7 +286,6 @@ will attempt to execute every function in the bitcode file.
   smt::set_random_seed(to_string(opt_smt_random_seed));
   smt::set_memory_limit((uint64_t)opt_max_mem * 1024 * 1024);
   config::skip_smt = opt_smt_skip;
-  config::io_nobuiltin = opt_io_nobuiltin;
   config::symexec_print_each_value = opt_se_verbose;
   config::disable_undef_input = opt_disable_undef;
   config::disable_poison_input = opt_disable_poison;

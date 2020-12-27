@@ -885,11 +885,8 @@ StateValue UnaryOp::toSMT(State &s) const {
     return { move(var), true };
   }
   case FNeg:
-    // TODO
-    if (!fmath.isNone())
-      return {};
-    fn = [](auto v, auto np) -> StateValue {
-      return { v.fneg(), expr(np) };
+    fn = [&](auto v, auto np) -> StateValue {
+      return fm_poison(s, v, np, [](expr &v){ return v.fneg(); }, fmath, false);
     };
     break;
   case FFS:
@@ -1559,7 +1556,7 @@ bool FnCall::canFree() const {
 }
 
 uint64_t FnCall::getMaxAccessSize() const {
-  uint64_t sz = attrs.has(FnAttrs::Dereferenceable) ? attrs.getDerefBytes() : 0;
+  uint64_t sz = attrs.has(FnAttrs::Dereferenceable) ? attrs.derefBytes : 0;
   for (auto &arg : args) {
     if (arg.second.has(ParamAttrs::Dereferenceable))
       sz = max(sz, arg.second.derefBytes);
@@ -1568,19 +1565,36 @@ uint64_t FnCall::getMaxAccessSize() const {
 }
 
 FnCall::ByteAccessInfo FnCall::getByteAccessInfo() const {
-  bool has_deref = getAttributes().has(FnAttrs::Dereferenceable);
-  if (!has_deref) {
-    for (auto &arg : args)
-      if (arg.second.has(ParamAttrs::Dereferenceable)) {
-        has_deref = true;
-        break;
-      }
+  auto &retattr = getAttributes();
+  bool has_deref = retattr.has(FnAttrs::Dereferenceable);
+  uint64_t bytesize = has_deref ? gcd(retattr.derefBytes, retattr.align) : 0;
+
+  for (auto &arg : args) {
+    if (!arg.first->getType().isPtrType())
+      continue;
+
+    if (arg.second.has(ParamAttrs::Dereferenceable)) {
+      has_deref = true;
+      // Without align, nothing is guaranteed about the bytesize
+      uint64_t b = gcd(arg.second.derefBytes, arg.second.align);
+      bytesize = bytesize ? gcd(bytesize, b) : b;
+    }
+    // Pointer arguments without dereferenceable attr don't contribute to the
+    // byte size.
+    // call f(* dereferenceable(n) align m %p, * %q) is equivalent to a dummy
+    // load followed by a function call:
+    //   load i<8*n> %p, align m
+    //   call f(* %p, * %q)
+    // f(%p, %q) does not contribute to the bytesize. After bytesize is fixed,
+    // function calls update a memory with the granularity.
   }
-  if (!has_deref)
+  if (!has_deref) {
     // No dereferenceable attribute
+    assert(bytesize == 0);
     return {};
-  // dereferenceable(n) does not guarantee that the pointer is n-byte aligned
-  return ByteAccessInfo::anyType(1);
+  }
+
+  return ByteAccessInfo::anyType(bytesize);
 }
 
 
@@ -1617,9 +1631,7 @@ void FnCall::print(ostream &os) const {
   }
   os << ')' << attrs;
 
-  // To print this when valid == DependsOnFlag, FnCall::print should know
-  // Function::fncall_valid_flag
-  if (valid == Invalid)
+  if (!valid)
     os << "\t; WARNING: unknown known function";
 }
 
@@ -1644,6 +1656,9 @@ static void unpack_inputs(State &s, Value &argv, Type &ty,
 
       if (argflag.has(ParamAttrs::NonNull))
         s.addUB(p.isNonZero());
+
+      if (argflag.has(ParamAttrs::Align))
+        s.addUB(p.isAligned(argflag.align));
 
       ptr_inputs.emplace_back(StateValue(p.release(), move(value.non_poison)),
                               argflag.has(ParamAttrs::ByVal),
@@ -1689,22 +1704,24 @@ pack_return(State &s, Type &ty, vector<StateValue> &vals, const FnAttrs &attrs,
 
   bool isDeref = attrs.has(FnAttrs::Dereferenceable);
   bool isNonNull = attrs.has(FnAttrs::NonNull);
-  if (ty.isPtrType() && (isDeref || isNonNull)) {
+  bool isAlign = attrs.has(FnAttrs::Align);
+
+  if (ty.isPtrType() && (isDeref || isNonNull || isAlign)) {
     Pointer p(s.getMemory(), ret.value);
     s.addUB(ret.non_poison);
     if (isDeref)
-      s.addUB(p.isDereferenceable(attrs.getDerefBytes()));
+      s.addUB(p.isDereferenceable(attrs.derefBytes));
     if (isNonNull)
       s.addUB(p.isNonZero());
+    if (isAlign)
+      s.addUB(p.isAligned(attrs.align));
   }
 
   return ret;
 }
 
 StateValue FnCall::toSMT(State &s) const {
-  bool is_valid = valid == Valid ||
-                  (valid == DependsOnFlag && s.getFn().getFnCallValidFlag());
-  if (!is_valid) {
+  if (!valid) {
     s.addUB(expr());
     return {};
   }
@@ -2050,10 +2067,26 @@ void Phi::removeValue(const string &BB_name) {
   }
 }
 
+vector<string> Phi::sources() const {
+  vector<string> s;
+  for (auto &[_, bb] : values) {
+    s.emplace_back(bb);
+  }
+  return s;
+}
+
+void Phi::replaceSourceWith(const string &from, const string &to) {
+  for (auto &[_, bb] : values) {
+    if (bb == from) {
+      bb = to;
+      break;
+    }
+  }
+}
+
 vector<Value*> Phi::operands() const {
   vector<Value*> v;
   for (auto &[val, bb] : values) {
-    (void)bb;
     v.emplace_back(val);
   }
   return v;
@@ -2061,8 +2094,16 @@ vector<Value*> Phi::operands() const {
 
 void Phi::rauw(const Value &what, Value &with) {
   for (auto &[val, bb] : values) {
-    (void)bb;
     RAUW(val);
+  }
+}
+
+void Phi::replace(const string &predecessor, Value &newval) {
+  for (auto &[val, bb] : values) {
+    if (bb == predecessor) {
+      val = &newval;
+      break;
+    }
   }
 }
 
@@ -2097,7 +2138,6 @@ StateValue Phi::toSMT(State &s) const {
 expr Phi::getTypeConstraints(const Function &f) const {
   auto c = Value::getTypeConstraints();
   for (auto &[val, bb] : values) {
-    (void)bb;
     c &= val->getType() == getType();
   }
   return c;
@@ -2117,7 +2157,7 @@ const BasicBlock& JumpInstr::target_iterator::operator*() const {
     return idx == 0 ? br->getTrue() : *br->getFalse();
 
   if (auto sw = dynamic_cast<Switch*>(instr))
-    return idx == 0 ? sw->getDefault() : sw->getTarget(idx-1).second;
+    return idx == 0 ? *sw->getDefault() : *sw->getTarget(idx-1).second;
 
   UNREACHABLE();
 }
@@ -2137,6 +2177,13 @@ JumpInstr::target_iterator JumpInstr::it_helper::end() const {
 }
 
 
+void Branch::replaceTargetWith(const BasicBlock *from, const BasicBlock *to) {
+  if (dst_true == from)
+    dst_true = to;
+  if (dst_false == from)
+    dst_false = to;
+}
+
 vector<Value*> Branch::operands() const {
   if (cond)
     return { cond };
@@ -2151,7 +2198,7 @@ void Branch::print(ostream &os) const {
   os << "br ";
   if (cond)
     os << *cond << ", ";
-  os << "label " << dst_true.getName();
+  os << "label " << dst_true->getName();
   if (dst_false)
     os << ", label " << dst_false->getName();
 }
@@ -2159,9 +2206,9 @@ void Branch::print(ostream &os) const {
 StateValue Branch::toSMT(State &s) const {
   if (cond) {
     auto &c = s.getAndAddPoisonUB(*cond, true);
-    s.addCondJump(c.value, dst_true, *dst_false);
+    s.addCondJump(c.value, *dst_true, *dst_false);
   } else {
-    s.addJump(dst_true);
+    s.addJump(*dst_true);
   }
   return {};
 }
@@ -2174,19 +2221,28 @@ expr Branch::getTypeConstraints(const Function &f) const {
 
 unique_ptr<Instr> Branch::dup(const string &suffix) const {
   if (dst_false)
-    return make_unique<Branch>(*cond, dst_true, *dst_false);
-  return make_unique<Branch>(dst_true);
+    return make_unique<Branch>(*cond, *dst_true, *dst_false);
+  return make_unique<Branch>(*dst_true);
 }
 
 
 void Switch::addTarget(Value &val, const BasicBlock &target) {
-  targets.emplace_back(&val, target);
+  targets.emplace_back(&val, &target);
+}
+
+void Switch::replaceTargetWith(const BasicBlock *from, const BasicBlock *to) {
+  if (default_target == from)
+    default_target = to;
+
+  for (auto &[_, bb] : targets) {
+    if (bb == from)
+      bb = to;
+  }
 }
 
 vector<Value*> Switch::operands() const {
   vector<Value*> ret = { value };
   for (auto &[val, target] : targets) {
-    (void)target;
     ret.emplace_back(val);
   }
   return ret;
@@ -2195,15 +2251,14 @@ vector<Value*> Switch::operands() const {
 void Switch::rauw(const Value &what, Value &with) {
   RAUW(value);
   for (auto &[val, target] : targets) {
-    (void)target;
     RAUW(val);
   }
 }
 
 void Switch::print(ostream &os) const {
-  os << "switch " << *value << ", label " << default_target.getName() << " [\n";
+  os << "switch " << *value << ", label " << default_target->getName() << " [\n";
   for (auto &[val, target] : targets) {
-    os << "    " << *val << ", label " << target.getName() << '\n';
+    os << "    " << *val << ", label " << target->getName() << '\n';
   }
   os << "  ]";
 }
@@ -2217,10 +2272,10 @@ StateValue Switch::toSMT(State &s) const {
     assert(target.non_poison.isTrue());
     expr cmp = val.value == target.value;
     default_cond &= !cmp;
-    s.addJump(move(cmp), bb);
+    s.addJump(move(cmp), *bb);
   }
 
-  s.addJump(move(default_cond), default_target);
+  s.addJump(move(default_cond), *default_target);
   s.addUB(expr(false));
   return {};
 }
@@ -2234,9 +2289,9 @@ expr Switch::getTypeConstraints(const Function &f) const {
 }
 
 unique_ptr<Instr> Switch::dup(const string &suffix) const {
-  auto sw = make_unique<Switch>(*value, default_target);
+  auto sw = make_unique<Switch>(*value, *default_target);
   for (auto &[value_cond, bb] : targets) {
-    sw->addTarget(*value_cond, bb);
+    sw->addTarget(*value_cond, *bb);
   }
   return sw;
 }
@@ -2287,17 +2342,22 @@ StateValue Return::toSMT(State &s) const {
 
   bool isDeref = attrs.has(FnAttrs::Dereferenceable);
   bool isNonNull = attrs.has(FnAttrs::NonNull);
-  if (isDeref || isNonNull) {
+  bool isAlign = attrs.has(FnAttrs::Align);
+
+  if (isDeref || isNonNull || isAlign) {
     assert(val->getType().isPtrType());
     Pointer p(s.getMemory(), retval.value);
 
     if (isDeref) {
-      s.addUB(p.isDereferenceable(attrs.getDerefBytes()));
+      s.addUB(p.isDereferenceable(attrs.derefBytes));
       if (has_alloca)
         s.addUB(p.getAllocType() != Pointer::STACK);
     }
     if (isNonNull) {
       s.addUB(p.isNonZero());
+    }
+    if (isAlign) {
+      s.addUB(p.isAligned(attrs.align));
     }
   }
 
@@ -2711,7 +2771,6 @@ uint64_t GEP::getMaxGEPOffset() const {
 vector<Value*> GEP::operands() const {
   vector<Value*> v = { ptr };
   for (auto &[sz, idx] : idxs) {
-    (void)sz;
     v.emplace_back(idx);
   }
   return v;
@@ -2720,7 +2779,6 @@ vector<Value*> GEP::operands() const {
 void GEP::rauw(const Value &what, Value &with) {
   RAUW(ptr);
   for (auto &[sz, idx] : idxs) {
-    (void)sz;
     RAUW(idx);
   }
 }
@@ -2802,7 +2860,6 @@ expr GEP::getTypeConstraints(const Function &f) const {
            getType().enforceVectorTypeIff(ptr->getType()) &&
            getType().enforcePtrOrVectorType();
   for (auto &[sz, idx] : idxs) {
-    (void)sz;
     // It is allowed to have non-vector idx with vector pointer operand
     c &= idx->getType().enforceIntOrVectorType() &&
           getType().enforceVectorTypeIff(idx->getType());

@@ -1,0 +1,79 @@
+#!/bin/bash
+
+set -e
+
+# IPO passes aren't supported ATM
+# safe-stack: introduces non-cost globals
+# place-safepoints: places new function calls (@do_safepoint)
+# loop-extract: extracts a top-level loop into a distinct function
+# extract-blocks: extract specified blocks into a distinct function
+# attributor, function-attrs: inter procedural pass that deduces and/or propagates attributes
+# metarenamer: anonymizes function names
+# sample-profile: inlines functions
+PASSES="argpromotion deadargelim globalopt hotcoldsplit inline ipconstprop ipsccp mergefunc partial-inliner tbaa loop-extract extract-blocks safe-stack place-safepoints attributor function-attrs metarenamer sample-profile lowertypetests extract-blocks openmpopt prune-eh tailcallelim iroutliner -Os -Oz -O1 -O2 -O3"
+PASSREGISTRY="@LLVM_BUILD_MAIN_SRC_DIR@/lib/Passes/PassRegistry.def"
+
+TV="-tv"
+SKIP_TV=0
+for arg in $@; do
+  if [[ $arg == "-debug-pass-manager" ]]; then
+    SKIP_TV=1
+    TV=""
+    break
+  fi
+done
+
+NPM_TV=0
+for arg in $@; do
+  # update the -passes argument only.
+  shift
+  if [[ $arg == "-passes="* || $arg == "--passes="* ]]; then
+    TV=""
+    passes=${arg/-*passes=/}
+    passes_new=`@CMAKE_SOURCE_DIR@/scripts/rewritepass.py "$PASSREGISTRY" $passes`
+    firstpass_level=`echo $passes_new | cut -d "(" -f1`
+    if [[ $SKIP_TV == 0 &&
+        $firstpass_level != "module" && $firstpass_level != "cgscc" ]]; then
+      set -- "$@" "-passes=module(tv),$passes_new,module(tv)"
+      NPM_TV=1
+    else
+      set -- "$@" "$arg"
+    fi
+  else
+    if [[ $arg == "-enable-new-pm" ]]; then
+      NPM_TV=1
+    fi
+    set -- "$@" "$arg"
+    for p in $PASSES; do
+      if [[ $arg == *"$p"* ]]; then
+        TV=""
+        break
+      fi
+    done
+  fi
+done
+
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  # Mac
+  TV_SHAREDLIB=tv.dylib
+else
+  # Linux, Cygwin/Msys, or Win32?
+  TV_SHAREDLIB=tv.so
+fi
+
+TV_REPORT_DIR=""
+TIMEOUT=""
+TV_SMT_TO=""
+TV_SMT_STATS=""
+if [[ @FOR_ALIVE2_TEST@ == 0 ]]; then
+  TV_REPORT_DIR=-tv-report-dir=@CMAKE_BINARY_DIR@/logs
+  TIMEOUT="timeout 1000"
+  TV_SMT_TO=-tv-smt-to=10000
+  TV_SMT_STATS=-tv-smt-stats
+fi
+NPM_PLUGIN=""
+# Without this guard, passes like default<Os> invokes whole-pass validation
+if [[ $NPM_TV == 1 ]]; then
+  NPM_PLUGIN="-load-pass-plugin=@CMAKE_BINARY_DIR@/tv/$TV_SHAREDLIB"
+fi
+$TIMEOUT @LLVM_BINARY_DIR@/bin/opt -load=@CMAKE_BINARY_DIR@/tv/$TV_SHAREDLIB  $NPM_PLUGIN -tv-exit-on-error $TV $@ $TV $TV_SMT_TO $TV_REPORT_DIR $TV_SMT_STATS

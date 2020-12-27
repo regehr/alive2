@@ -151,6 +151,31 @@ expr State::strip_undef_and_add_ub(const Value &val, const expr &e) {
            is_undef_cond(not_undef, var);
   };
 
+  // e2: stripped expression
+  auto is_if_undef_or_add = [&](const expr &e, expr &var, expr &not_undef,
+                                expr &e2) {
+    // when e = (ite (= #b0 isundef_%var) %var undef):
+    //   var = %var, e2 = %var
+    // when e = (bvadd const (ite (= #b0 isundef_%var) %var undef))
+    //   var = %var, e2 = const + %var
+    if (is_if_undef(e, var, not_undef)) {
+      e2 = var;
+      return true;
+    }
+
+    expr a, b;
+    if (e.isAdd(a, b)) {
+      if (b.isConst() && is_if_undef(a, var, not_undef)) {
+        e2 = b + var;
+        return true;
+      } else if (a.isConst() && is_if_undef(b, var, not_undef)) {
+        e2 = a + var;
+        return true;
+      }
+    }
+    return false;
+  };
+
   expr c, a, b, lhs, rhs;
 
   // two variants
@@ -177,76 +202,99 @@ expr State::strip_undef_and_add_ub(const Value &val, const expr &e) {
   };
 
   if (e.isIf(c, a, b) && a.isConst() && b.isConst()) {
-    expr val, val2, not_undef, not_undef2;
+    expr val, val2, newe, newe2, not_undef, not_undef2;
     // (ite (= val (ite (= #b0 isundef_%var) %var undef)) #b1 #b0)
+    // (ite (= val (bvadd c (ite (= #b0 isundef_%var) %var undef)) #b1 #b0)
     if (c.isEq(lhs, rhs)) {
-      if (is_if_undef(lhs, val, not_undef) && !has_undef(rhs)) {
+      if (is_if_undef_or_add(lhs, val, not_undef, newe) && !has_undef(rhs)) {
         addUB(move(not_undef));
         mark_notundef(val);
-        return expr::mkIf(val == rhs, a, b);
+        // %var == rhs
+        // (bvadd c %var) == rhs
+        return expr::mkIf(newe == rhs, a, b);
       }
-      if (is_if_undef(rhs, val, not_undef) && !has_undef(lhs)) {
+      if (is_if_undef_or_add(rhs, val, not_undef, newe) && !has_undef(lhs)) {
         addUB(move(not_undef));
         mark_notundef(val);
-        return expr::mkIf(lhs == val, a, b);
+        return expr::mkIf(lhs == newe, a, b);
       }
-      if (is_if_undef(lhs, val, not_undef) &&
-          is_if_undef(rhs, val2, not_undef2)) {
+      if (is_if_undef_or_add(lhs, val, not_undef, newe) &&
+          is_if_undef_or_add(rhs, val2, not_undef2, newe2)) {
         addUB(move(not_undef));
         addUB(move(not_undef2));
         mark_notundef(val);
         mark_notundef(val2);
-        return expr::mkIf(val == val2, a, b);
+        return expr::mkIf(newe == newe2, a, b);
       }
     }
 
     if (c.isSLE(lhs, rhs)) {
       // (ite (bvsle val (ite (= #b0 isundef_%var) %var undef)) #b1 #b0)
-      if (is_if_undef(rhs, val, not_undef) && !has_undef(lhs)) {
-        addUB(not_undef || lhs == expr::IntSMin(lhs.bits()));
-        mark_notundef(val);
-        return expr::mkIf(lhs.sle(val), a, b);
+      // (ite (bvsle val (bvadd c (ite (= #b0 isundef_%var) %var undef))
+      //       #b1 #b0)
+      if (is_if_undef_or_add(rhs, val, not_undef, newe) && !has_undef(lhs)) {
+        expr cond = lhs == expr::IntSMin(lhs.bits());
+        addUB(not_undef || cond);
+        if (cond.isFalse())
+          mark_notundef(val);
+        // lhs <=s %var
+        // lhs <=s (bvadd c %var)
+        return expr::mkIf(lhs.sle(newe), a, b);
       }
 
       // (ite (bvsle (ite (= #b0 isundef_%var) %var undef) val) #b1 #b0)
-      if (is_if_undef(lhs, val, not_undef) && !has_undef(rhs)) {
-        addUB(not_undef || rhs == expr::IntSMax(rhs.bits()));
-        mark_notundef(val);
-        return expr::mkIf(val.sle(rhs), a, b);
+      // (ite (bvsle (bvadd c (ite (= #b0 isundef_%var) %var undef)) val)
+      //       #b1 #b0)
+      if (is_if_undef_or_add(lhs, val, not_undef, newe) && !has_undef(rhs)) {
+        expr cond = rhs == expr::IntSMax(rhs.bits());
+        addUB(not_undef || cond);
+        if (cond.isFalse())
+          mark_notundef(val);
+        return expr::mkIf(newe.sle(rhs), a, b);
       }
 
       // undef <= undef
-      if (is_if_undef(lhs, val, not_undef) &&
-          is_if_undef(rhs, val2, not_undef2)) {
+      if (is_if_undef_or_add(lhs, val, not_undef, newe) &&
+          is_if_undef_or_add(rhs, val2, not_undef2, newe2)) {
         addUB((not_undef && not_undef2) ||
-              (not_undef && val == expr::IntSMin(lhs.bits())) ||
-              (not_undef2 && val2 == expr::IntSMax(rhs.bits())));
-        return expr::mkIf(val.sle(val2), a, b);
+              (not_undef && newe == expr::IntSMin(lhs.bits())) ||
+              (not_undef2 && newe2 == expr::IntSMax(rhs.bits())));
+        return expr::mkIf(newe.sle(newe2), a, b);
       }
     }
 
     if (c.isULE(lhs, rhs)) {
       // (ite (bvule val (ite (= #b0 isundef_%var) %var undef)) #b1 #b0)
-      if (is_if_undef(rhs, val, not_undef) && !has_undef(lhs)) {
-        addUB(not_undef || lhs == 0);
-        mark_notundef(val);
-        return expr::mkIf(lhs.ule(val), a, b);
+      // (ite (bvule val (bvadd c (ite (= #b0 isundef_%var) %var undef)))
+      //       #b1 #b0)
+      if (is_if_undef_or_add(rhs, val, not_undef, newe) && !has_undef(lhs)) {
+        expr cond = lhs == 0;
+        addUB(not_undef || cond);
+        if (cond.isFalse())
+          mark_notundef(val);
+        // lhs <=u %var
+        // lhs <=u (bvadd c %var)
+        return expr::mkIf(lhs.ule(newe), a, b);
       }
 
       // (ite (bvule (ite (= #b0 isundef_%var) %var undef) val) #b1 #b0)
-      if (is_if_undef(lhs, val, not_undef) && !has_undef(rhs)) {
-        addUB(not_undef || rhs == expr::mkInt(-1, rhs));
-        mark_notundef(val);
-        return expr::mkIf(val.ule(rhs), a, b);
+      // (ite (bvule (bvadd c (ite (= #b0 isundef_%var) %var undef)) %val)
+      //       #b1 #b0)
+      if (is_if_undef_or_add(lhs, val, not_undef, newe) && !has_undef(rhs)) {
+        expr cond = rhs == expr::mkInt(-1, rhs);
+        addUB(not_undef || cond);
+        if (cond.isFalse())
+          mark_notundef(val);
+        return expr::mkIf(newe.ule(rhs), a, b);
       }
 
       // undef <= undef
-      if (is_if_undef(lhs, val, not_undef) &&
-          is_if_undef(rhs, val2, not_undef2)) {
+      if (is_if_undef_or_add(lhs, val, not_undef, newe) &&
+          is_if_undef_or_add(rhs, val2, not_undef2, newe2)) {
         addUB((not_undef && not_undef2) ||
-              (not_undef && val == 0) ||
-              (not_undef2 && val2 == expr::mkInt(-1, rhs)));
-        return expr::mkIf(val.ule(val2), a, b);
+              (not_undef && newe == 0) ||
+              (not_undef2 && newe2 == expr::mkInt(-1, rhs)));
+        return expr::mkIf(newe.ule(newe2), a, b);
       }
     }
   }
@@ -264,6 +312,13 @@ expr State::strip_undef_and_add_ub(const Value &val, const expr &e) {
   return e;
 }
 
+StateValue* State::no_more_tmp_slots() {
+  if (i_tmp_values < tmp_values.size()-1)
+    return nullptr;
+  useUnsupported("Too many temporaries");
+  return &(tmp_values.back() = StateValue());
+}
+
 const StateValue& State::operator[](const Value &val) {
   auto &[var, val_uvars] = values[values_map.at(&val)];
   auto &[sval, uvars] = val_uvars;
@@ -271,33 +326,28 @@ const StateValue& State::operator[](const Value &val) {
 
   auto undef_itr = analysis.non_undef_vals.find(&val);
   bool is_non_undef = undef_itr != analysis.non_undef_vals.end();
+  bool is_non_poison = analysis.non_poison_vals.count(&val);
 
-  auto simplify = [&](StateValue &sv0, bool use_new_slot) -> StateValue&{
-    StateValue *sv = &sv0;
-    if (analysis.non_poison_vals.count(&val)) {
-      if (use_new_slot) {
-        assert(i_tmp_values < tmp_values.size());
-        tmp_values[i_tmp_values++] = *sv;
-        use_new_slot = false;
-      }
-      assert(i_tmp_values > 0);
-      StateValue &sv_new = tmp_values[i_tmp_values - 1];
+  auto simplify = [&](StateValue &sv0, bool use_new_slot) -> StateValue& {
+    if (!is_non_undef && !is_non_poison)
+      return sv0;
+
+    if (use_new_slot) {
+      if (auto ret = no_more_tmp_slots())
+        return *ret;
+      assert(i_tmp_values < tmp_values.size());
+      tmp_values[i_tmp_values++] = sv0;
+    }
+    assert(i_tmp_values > 0);
+    StateValue &sv_new = tmp_values[i_tmp_values - 1];
+    if (is_non_undef) {
+      sv_new.value = undef_itr->second;
+    }
+    if (is_non_poison) {
       const expr &np = sv_new.non_poison;
       sv_new.non_poison = np.isBool() ? true : expr::mkUInt(0, np);
-      sv = &sv_new;
     }
-
-    if (is_non_undef) {
-      if (use_new_slot) {
-        assert(i_tmp_values < tmp_values.size());
-        tmp_values[i_tmp_values++] = *sv;
-      }
-      assert(i_tmp_values > 0);
-      StateValue &sv_new = tmp_values[i_tmp_values - 1];
-      sv_new.value = undef_itr->second;
-      sv = &sv_new;
-    }
-    return *sv;
+    return sv_new;
   };
 
   if (is_non_undef) {
@@ -332,6 +382,9 @@ const StateValue& State::operator[](const Value &val) {
   for (auto &p : repls) {
     undef_vars.emplace(move(p.second));
   }
+
+  if (auto ret = no_more_tmp_slots())
+    return *ret;
 
   assert(i_tmp_values < tmp_values.size());
   tmp_values[i_tmp_values++] = move(sval_new);
@@ -408,6 +461,10 @@ State::getAndAddPoisonUB(const Value &val, bool undef_ub_too) {
     // If val is an aggregate, all elements should be non-poison
     addUB(not_poison_except_padding(val.getType(), sv.non_poison));
   }
+
+  if (auto ret = no_more_tmp_slots())
+    return *ret;
+
   assert(i_tmp_values < tmp_values.size());
   return tmp_values[i_tmp_values++] = { move(v),
            sv.non_poison.isBool() ? true : expr::mkUInt(0, sv.non_poison) };
@@ -549,8 +606,10 @@ void State::addNoReturn() {
 expr State::FnCallInput::operator==(const FnCallInput &rhs) const {
   if (readsmem != rhs.readsmem ||
       argmemonly != rhs.argmemonly ||
-      fncall_ranges != rhs.fncall_ranges ||
-      m < rhs.m || rhs.m < m)
+      (readsmem && (
+        fncall_ranges != rhs.fncall_ranges ||
+        m < rhs.m || rhs.m < m
+      )))
     return false;
 
   AndExpr eq;
@@ -571,7 +630,7 @@ expr State::FnCallInput::refinedBy(
   const Memory &m2, bool readsmem2, bool argmemonly2) const {
 
   if (readsmem != readsmem2 || argmemonly != argmemonly2 ||
-      !fncall_ranges.overlaps(fncall_ranges2))
+      (readsmem && !fncall_ranges.overlaps(fncall_ranges2)))
     return false;
 
   AndExpr refines;
@@ -691,10 +750,12 @@ State::addFnCall(const string &name, vector<StateValue> &&inputs,
   if (isSource()) {
     auto &calls_fn = fn_call_data[name];
     auto call_data_pair
-      = calls_fn.try_emplace({ move(inputs), move(ptr_inputs),
-                               analysis.ranges_fn_calls,
-                               reads_memory ? memory : Memory(*this),
-                               reads_memory, argmemonly });
+      = calls_fn.try_emplace(
+          { move(inputs), move(ptr_inputs),
+            reads_memory ? analysis.ranges_fn_calls
+                         : State::ValueAnalysis::FnCallRanges(),
+            reads_memory ? memory : Memory(*this),
+            reads_memory, argmemonly });
     auto &I = call_data_pair.first;
     bool inserted = call_data_pair.second;
 

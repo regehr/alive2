@@ -4,162 +4,68 @@ This document lists the bugs found so far by Alive2 in LLVM & Z3.
 Please contact us or submit a PR if something is missing or inaccurate.
 
 
-### Integer/Float operations
-1. Incorrect fold of 'x & (-1 >> y) s>= x'
-(https://bugs.llvm.org/show_bug.cgi?id=39861)
-
-2. Incorrect instcombine fold for icmp sgt
-(https://bugs.llvm.org/show_bug.cgi?id=42198)
-
-3. Instsimplify: uadd_overflow(X, undef) is not undef
-(https://bugs.llvm.org/show_bug.cgi?id=42209)
-
-4. SimplifyCFG's -switch-to-lookup is incorrect w.r.t undef
-(https://bugs.llvm.org/show_bug.cgi?id=42617)
-
-5. CVP: adding nuw flags not correct in the presence of undef
-(https://bugs.llvm.org/show_bug.cgi?id=42618)
-
-6. DivRemPairs is incorrect in the presence of undef
-(https://bugs.llvm.org/show_bug.cgi?id=42619)
-
-7. EmitGEPOffset() incorrectly adds NUW to multiplications
-(https://bugs.llvm.org/show_bug.cgi?id=42699)
-
-8. Incorrect fold of uadd.with.overflow with undef
-(https://bugs.llvm.org/show_bug.cgi?id=43188)
-
-9. Incorrect fold of ashr+xor -> lshr w/ vectors
-(https://bugs.llvm.org/show_bug.cgi?id=43665)
-
-10. Incorrect 'icmp sle' -> 'icmp slt' w/ vectors
-(https://bugs.llvm.org/show_bug.cgi?id=43730)
-
-11. shuffle undef mask on vectors with poison elements
-(https://bugs.llvm.org/show_bug.cgi?id=43958)
-
-12. Can't remove shufflevector if input might be poison
-(https://bugs.llvm.org/show_bug.cgi?id=44185)
-
-13. Incorrect instcombine transform urem -> icmp+zext with vectors
-(https://bugs.llvm.org/show_bug.cgi?id=44186)
-
-14. Instcombine: incorrect transformation 'x > (x & undef)' -> 'x > undef'
-(https://bugs.llvm.org/show_bug.cgi?id=44383)
-
-15. Incorrect transformation: (undef u>> a) ^ -1 -> undef >> a, when a != 0
-(https://bugs.llvm.org/show_bug.cgi?id=45447)
-
-16. Invalid undef splat in instcombine
-(https://bugs.llvm.org/show_bug.cgi?id=45455)
-
-17. Incorrect transformation of minnum with nnan
-(https://bugs.llvm.org/show_bug.cgi?id=45478)
-
-18. Can't remove insertelement undef
-(https://bugs.llvm.org/show_bug.cgi?id=45481)
-
-19. InstSimplify: fadd (nsz op), +0 incorrectly removed
-(https://bugs.llvm.org/show_bug.cgi?id=45778)
-
-20. Incorrect instcombine fold of control-flow to umul.with.overflow
-(https://bugs.llvm.org/show_bug.cgi?id=45952)
-
-21. Incorrect instcombine fold of vector ult -> sgt
-(https://bugs.llvm.org/show_bug.cgi?id=45954)
-
-22. Jumpthreading introduces jump on poison
-(https://bugs.llvm.org/show_bug.cgi?id=45956)
-
-23. Incorrect transformation: mul foo, undef -> shl foo, undef
-(https://bugs.llvm.org/show_bug.cgi?id=47133)
-
-24. Incorrect transformation: (llvm.maximum undef, %x) -> undef
-(https://bugs.llvm.org/show_bug.cgi?id=47567)
-
-25. InstCombine: incorrect select operand simplification with undef
-(https://bugs.llvm.org/show_bug.cgi?id=47696)
-
-26. SCEVExpander introduces branch on poison
-(https://bugs.llvm.org/show_bug.cgi?id=47769)
-
-
-### Memory Operations
-
-1. EmitGEPOffset() incorrectly adds NUW to multiplications
-(https://bugs.llvm.org/show_bug.cgi?id=42699)
-
-2. invalid bitcast->gep inbounds
-(https://bugs.llvm.org/show_bug.cgi?id=43501)
-
-3. InstCombine incorrectly shrinks the size of store
-(https://bugs.llvm.org/show_bug.cgi?id=44306)
-
-4. InstCombine incorrectly folds 'gep(bitcast ptr), idx' into 'gep ptr, idx'
-(https://bugs.llvm.org/show_bug.cgi?id=44321)
-
-5. memcpyopt adds incorrect align to memset
-(https://bugs.llvm.org/show_bug.cgi?id=44388)
-
-6. Folding 'gep p, (q - p)' to q should check it is never used for loads & stores
-(https://bugs.llvm.org/show_bug.cgi?id=44403)
-
-7. StraightLineStrengthReduce can introduce UB when optimizing 2-dim array gep
-(https://bugs.llvm.org/show_bug.cgi?id=44533)
-
-8. SLPVectorizer should drop nsw flags from add
-(https://bugs.llvm.org/show_bug.cgi?id=44536)
-
-9. InstCombine should correctly propagate alignment
-(https://bugs.llvm.org/show_bug.cgi?id=44543)
-
-10. DSE not checking decl of libcalls
-(https://github.com/llvm/llvm-project/commit/87407fc03c82d880cc42330a8e230e7a48174e3c
-& https://github.com/llvm/llvm-project/commit/7f903873b8a937acec2e2cc232e70cba53061352)
-
-11. [globalopt] optimization leaves store to a constant global
-(https://bugs.llvm.org/show_bug.cgi?id=43616)
-NOTE: Alive2 can't find this bug anymore due to changes to reduce false-positives
-
-12. -expandmemcmp generates loads with incorrect alignment
-(https://bugs.llvm.org/show_bug.cgi?id=43880)
-
-13. InstCombine incorrectly rewrites indices of gep inbounds
-(https://bugs.llvm.org/show_bug.cgi?id=44861)
-
-14. Instcombine incorrectly transforms store i64 -> store double
-(https://bugs.llvm.org/show_bug.cgi?id=45152)
-
-15. Incorrect optimization of gep without inbounds + load -> icmp eq
-(https://bugs.llvm.org/show_bug.cgi?id=45210)
-
-16. gep(ptr, undef) isn't undef
-(https://bugs.llvm.org/show_bug.cgi?id=45445)
-
-17. X86InterleavedAccess introduces misaligned loads
-(https://bugs.llvm.org/show_bug.cgi?id=45957)
-
-18. load-store-vectorizer cannot assume that an offset calculated from add nuw is fine in general
-(https://bugs.llvm.org/show_bug.cgi?id=46591)
-
-19. LoopReroll incorrectly reorders stores across loads when they may alias
-(https://bugs.llvm.org/show_bug.cgi?id=47658)
-
-20. MemCpyOpt: uses sext instead of zext for memcpy/memset size subtraction
-(https://bugs.llvm.org/show_bug.cgi?id=47697)
+### Bugs found in LLVM
+1. Incorrect fold of 'x & (-1 >> y) s>= x' (https://llvm.org/PR39861)
+2. Incorrect instcombine fold for icmp sgt (https://llvm.org/PR42198)
+3. Instsimplify: uadd_overflow(X, undef) is not undef (https://llvm.org/PR42209)
+4. CVP: adding nuw flags not correct in the presence of undef (https://llvm.org/PR42618)
+5. DivRemPairs is incorrect in the presence of undef (https://llvm.org/PR42619)
+6. EmitGEPOffset() incorrectly adds NUW to multiplications (https://llvm.org/PR42699)
+7. Incorrect fold of uadd.with.overflow with undef (https://llvm.org/PR43188)
+8. Incorrect transformation of bitcast->gep inbounds (https://llvm.org/PR43501)
+9. globalopt leaves store to a constant global (https://llvm.org/PR43616)
+10. Incorrect fold of ashr+xor -> lshr w/ vectors (https://llvm.org/PR43665)
+11. Incorrect 'icmp sle' -> 'icmp slt' w/ vectors (https://llvm.org/PR43730)
+12. expandmemcmp generates loads with incorrect alignment (https://llvm.org/PR43880)
+13. Shuffle undef mask on vectors with poison elements (https://llvm.org/PR43958)
+14. Can't remove shufflevector if input might be poison (https://llvm.org/PR44185)
+15. Incorrect instcombine transform: urem -> icmp+zext with vectors (https://llvm.org/PR44186)
+16. InstCombine incorrectly shrinks the size of store (https://llvm.org/PR44306)
+17. InstCombine incorrectly folds 'gep(bitcast ptr), idx' into 'gep ptr, idx' (https://llvm.org/PR44321)
+18. Instcombine: incorrect transformation 'x > (x & undef)' -> 'x > undef' (https://llvm.org/PR44383)
+19. memcpyopt adds incorrect align to memset (https://llvm.org/PR44388)
+20. Folding 'gep p, (q - p)' to q should check it is never used for loads & stores (https://llvm.org/PR44403)
+21. StraightLineStrengthReduce can introduce UB when optimizing 2-dim array gep (https://llvm.org/PR44533)
+22. SLPVectorizer should drop nsw flags from add (https://llvm.org/PR44536)
+23. InstCombine doesn't propagate correct alignment (https://llvm.org/PR44543)
+24. DSE not checking decl of libcalls (https://github.com/llvm/llvm-project/commit/87407fc03c82d880cc42330a8e230e7a48174e3c & https://github.com/llvm/llvm-project/commit/7f903873b8a937acec2e2cc232e70cba53061352)
+25. InstCombine incorrectly rewrites indices of gep inbounds (https://llvm.org/PR44861)
+26. InstCombine incorrectly transforms store i64 -> store double (https://llvm.org/PR45152)
+27. Incorrect optimization of gep without inbounds + load -> icmp eq (https://llvm.org/PR45210)
+28. gep(ptr, undef) isn't undef (https://llvm.org/PR45445)
+29. Incorrect transformation: (undef u>> a) ^ -1 -> undef >> a, when a != 0 (https://llvm.org/PR45447)
+30. Invalid undef splat in instcombine (https://llvm.org/PR45455)
+31. Incorrect transformation of minnum with nnan (https://llvm.org/PR45478)
+32. Can't remove insertelement undef (https://llvm.org/PR45481)
+33. InstSimplify: fadd (nsz op), +0 incorrectly removed (https://llvm.org/PR45778)
+34. Incorrect instcombine fold of control-flow to umul.with.overflow (https://llvm.org/PR45952)
+35. Incorrect instcombine fold of vector ult -> sgt (https://llvm.org/PR45954)
+36. Jumpthreading introduces jump on poison (https://llvm.org/PR45956)
+37. X86InterleavedAccess introduces misaligned loads (https://llvm.org/PR45957)
+38. load-store-vectorizer vectorizes non consecutive loads (https://llvm.org/PR46591)
+39. Incorrect transformation: mul foo, undef -> shl foo, undef (https://llvm.org/PR47133)
+40. Incorrect transformation: (llvm.maximum undef, %x) -> undef (https://llvm.org/PR47567)
+41. LoopReroll incorrectly reorders stores across loads when they may alias (https://llvm.org/PR47658)
+42. InstCombine: incorrect select operand simplification with undef (https://llvm.org/PR47696)
+43. MemCpyOpt: uses sext instead of zext for memcpy/memset size subtraction (https://llvm.org/PR47697)
+44. SCEVExpander introduces branch on poison (https://llvm.org/PR47769)
+45. Incorrect transformation of fabs with nnan flag (https://llvm.org/PR47960)
+46. Loop peeling introduces OOB stores (https://llvm.org/PR48125)
+47. Loop vectorizer introduces gep inbounds with negative offset (https://llvm.org/PR48126)
+48. DSE incorrectly removes store in function that only triggers UB in one of the branches (https://llvm.org/PR48521)
 
 
 ### Bugs found in Z3
-1. https://github.com/Z3Prover/z3/issues/2369 - bug in bitblast for FPA
-2. https://github.com/Z3Prover/z3/issues/2596 - bug in FPA w/ quantifiers
-3. https://github.com/Z3Prover/z3/issues/2631 - bug in FPA w/ quantifiers
-4. https://github.com/Z3Prover/z3/issues/2792 - Lambdas don't like quantified variables in body
-5. https://github.com/Z3Prover/z3/issues/2822 - bug in MBQI
-6. https://github.com/Z3Prover/z3/commit/0b14f1b6f6bb33b555bace93d644163987b0c54f - equality of arrays w/ lambdas
-7. https://github.com/Z3Prover/z3/issues/2865 - crash in FPA model construction
-8. https://github.com/Z3Prover/z3/issues/2878 - crash in BV theory assertion
-9. https://github.com/Z3Prover/z3/issues/2879 - crash in SMT eq propagation assertion
-10. https://github.com/Z3Prover/z3/commit/bb5edb7c653f9351fe674630d63cdd2b10338277 - assertion violation in qe_lite
-11. https://github.com/Z3Prover/z3/issues/4192 - SMT internalize doesn't respect timeout
-12. https://github.com/Z3Prover/z3/issues/2761 - crash in printing multi precision integer
-13. https://github.com/Z3Prover/z3/issues/2652 - crash in partial model mode
+1. Incorrect bitblast for fprem (https://github.com/Z3Prover/z3/issues/2369)
+2. Bug in FPA w/ quantifiers (https://github.com/Z3Prover/z3/issues/2596)
+3. Bug in FPA w/ quantifiers (https://github.com/Z3Prover/z3/issues/2631)
+4. Crash in partial model mode (https://github.com/Z3Prover/z3/issues/2652)
+5. Crash when printing multi-precision integer (https://github.com/Z3Prover/z3/issues/2761)
+6. Bug with lambdas and quantified variables (https://github.com/Z3Prover/z3/issues/2792)
+7. Bug in MBQI (https://github.com/Z3Prover/z3/issues/2822)
+8. Bug with equality of arrays w/ lambdas (https://github.com/Z3Prover/z3/commit/0b14f1b6f6bb33b555bace93d644163987b0c54f)
+9. Crash in FPA model construction (https://github.com/Z3Prover/z3/issues/2865)
+10. Crash in BV theory assertion (https://github.com/Z3Prover/z3/issues/2878)
+11. Assertion violation in SMT equality propagation (https://github.com/Z3Prover/z3/issues/2879)
+12. Assertion violation in qe_lite (https://github.com/Z3Prover/z3/commit/bb5edb7c653f9351fe674630d63cdd2b10338277)
+13. SMT internalize doesn't respect the timeout (https://github.com/Z3Prover/z3/issues/4192)

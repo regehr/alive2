@@ -52,7 +52,8 @@ expr::expr(Z3_ast ast) : ptr((uintptr_t)ast) {
 }
 
 bool expr::isZ3Ast() const {
-  return (ptr & 1) == 0;
+  return true;
+  //return (ptr & 1) == 0;
 }
 
 Z3_ast expr::ast() const {
@@ -215,10 +216,6 @@ expr expr::mkConst(Z3_func_decl decl) {
   return Z3_mk_app(ctx(), decl, 0, {});
 }
 
-expr expr::mkQuantVar(unsigned i, Z3_sort sort) {
-  return Z3_mk_bound(ctx(), i, sort);
-}
-
 bool expr::isBinOp(expr &a, expr &b, int z3op) const {
   if (auto app = isAppOf(z3op)) {
     if (Z3_get_app_num_args(ctx(), app) != 2)
@@ -261,7 +258,7 @@ expr expr::mkFreshVar(const char *prefix, const expr &type) {
 }
 
 expr expr::some(const expr &type) {
-  return type.isBool() ? expr(false) : mkNumber("0", type);
+  return type.isBool() ? expr(false) : mkNumber("3", type);
 }
 
 expr expr::IntSMin(unsigned bits) {
@@ -1586,21 +1583,17 @@ expr expr::load(const expr &idx) const {
     if (body.isConst())
       return body;
 
-    auto subst = [&](const expr &e, const expr &var) {
+    auto subst = [&](const expr &e) {
       if (e.isLoad(array, str_idx)) {
-        expr new_idx = str_idx.subst(var, idx).simplify();
-        assert(!idx.isValid() || !str_idx.eq(new_idx));
-        return array.load(new_idx);
+        return array.load(str_idx.subst({ idx }));
       }
-      return e.subst(var, idx);
+      return e.subst({ idx });
     };
 
     expr cond, then, els;
     if (body.isIf(cond, then, els)) {
-      auto sort = Z3_get_quantifier_bound_sort(ctx(), ast(), 0);
-      expr var = expr::mkQuantVar(0, sort);
-      cond = cond.subst(var, idx).simplify();
-      return mkIf_fold(cond, subst(then, var), subst(els, var));
+      cond = cond.subst({ idx }).simplify();
+      return mkIf_fold(cond, subst(then), subst(els));
     }
   }
 
@@ -1674,6 +1667,11 @@ expr expr::simplify() const {
   return e ? e : *this;
 }
 
+expr expr::simplifyNoTimeout() const {
+  C();
+  return Z3_simplify_ex(ctx(), ast(), ctx.getNoTimeoutParam());
+}
+
 expr expr::subst(const vector<pair<expr, expr>> &repls) const {
   C();
   if (repls.empty())
@@ -1697,6 +1695,20 @@ expr expr::subst(const expr &from, const expr &to) const {
   auto f = from();
   auto t = to();
   return Z3_substitute(ctx(), ast(), 1, &f, &t);
+}
+
+expr expr::subst(const vector<expr> &repls) const {
+  C();
+  if (repls.empty())
+    return *this;
+
+  unique_ptr<Z3_ast[]> vars(new Z3_ast[repls.size()]);
+  unsigned i = 0;
+  for (auto &v : repls) {
+    C2(v);
+    vars[i++] = v();
+  }
+  return Z3_substitute_vars(ctx(), ast(), repls.size(), vars.get());
 }
 
 set<expr> expr::vars() const {

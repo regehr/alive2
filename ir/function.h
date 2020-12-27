@@ -36,18 +36,22 @@ public:
   smt::expr getTypeConstraints(const Function &f) const;
   void fixupTypes(const smt::Model &m);
 
-  void addInstr(std::unique_ptr<Instr> &&i);
+  void addInstr(std::unique_ptr<Instr> &&i, bool push_front = false);
+  void addInstrAt(std::unique_ptr<Instr> &&i, const Instr *other, bool before);
   void delInstr(Instr *i);
 
   util::const_strip_unique_ptr<decltype(m_instrs)> instrs() const {
     return m_instrs;
   }
   Instr& back() { return *m_instrs.back(); }
+  std::vector<Phi*> phis() const;
 
   bool empty() const { return m_instrs.empty(); }
   JumpInstr::it_helper targets() const;
+  void replaceTargetWith(const BasicBlock *from, const BasicBlock *to);
 
   std::unique_ptr<BasicBlock> dup(const std::string &suffix) const;
+  void rauw(const Value &what, Value &with);
 
   friend std::ostream& operator<<(std::ostream &os, const BasicBlock &bb);
 };
@@ -62,8 +66,6 @@ class Function final {
   unsigned bits_pointers = 64;
   unsigned bits_ptr_offset = 64;
   bool little_endian = true;
-  // If this is true, FnCalls having DependsOnFlag become valid unknown fn calls
-  bool fncall_valid_flag = true;
 
   // constants used in this function
   std::vector<std::unique_ptr<Value>> constants;
@@ -91,9 +93,6 @@ public:
 
   auto& getFnAttrs() { return attrs; }
 
-  bool getFnCallValidFlag() const { return fncall_valid_flag; }
-  void setFnCallValidFlag(bool f) { fncall_valid_flag = f; }
-
   smt::expr getTypeConstraints() const;
   void fixupTypes(const smt::Model &m);
 
@@ -102,6 +101,7 @@ public:
   BasicBlock& getBB(std::string_view name, bool push_front = false);
   const BasicBlock& getBB(std::string_view name) const;
   const BasicBlock* getBBIfExists(std::string_view name) const;
+
   void removeBB(BasicBlock &BB);
 
   void addConstant(std::unique_ptr<Value> &&c);
@@ -164,14 +164,18 @@ public:
   instr_helper instrs() { return *this; }
   instr_helper instrs() const { return *this; }
 
-  std::multimap<Value*, Value*> getUsers() const;
-  bool removeUnusedStuff(const std::multimap<Value*, Value*> &users,
+  using UsersTy = std::unordered_map<const Value*,
+                                     std::set<std::pair<Value*, BasicBlock*>>>;
+  UsersTy getUsers() const;
+  bool removeUnusedStuff(const UsersTy &users,
                          const std::vector<std::string_view> &src_glbs);
 
+  void topSort();
   void unroll(unsigned k);
 
   void print(std::ostream &os, bool print_header = true) const;
   friend std::ostream &operator<<(std::ostream &os, const Function &f);
+  void writeDot(const char *filename_prefix) const;
 };
 
 
@@ -185,6 +189,7 @@ public:
     std::vector<BasicBlock*>::iterator bbi, bbe;
     JumpInstr::target_iterator ti, te;
     void next();
+
   public:
     edge_iterator(std::vector<BasicBlock*>::iterator &&it,
                   std::vector<BasicBlock*>::iterator &&end);
@@ -202,45 +207,56 @@ public:
   void printDot(std::ostream &os) const;
 };
 
+
 class DomTree final {
-    Function &f;
-    CFG &cfg;
+  const Function &f;
 
-    struct DomTreeNode {
-      const BasicBlock &bb;
-      std::vector<DomTreeNode*> preds;
-      DomTreeNode *dominator = nullptr;
-      unsigned order;
+  struct DomTreeNode {
+    const BasicBlock &bb;
+    std::vector<DomTreeNode*> preds;
+    DomTreeNode *dominator = nullptr;
+    unsigned order;
 
-      DomTreeNode(const BasicBlock &bb) : bb(bb) {}
-    };
+    DomTreeNode(const BasicBlock &bb) : bb(bb) {}
+  };
 
-    std::unordered_map<const BasicBlock*, DomTreeNode> doms;
+  std::unordered_map<const BasicBlock*, DomTreeNode> doms;
 
-    void buildDominators();
-    static DomTreeNode* intersect(DomTreeNode *b1, DomTreeNode *b2);
+  void buildDominators(const CFG &cfg);
+  static DomTreeNode* intersect(DomTreeNode *b1, DomTreeNode *b2);
 
-  public:
-    DomTree(Function &f, CFG &cfg) : f(f), cfg(cfg) { buildDominators(); }
-    const BasicBlock* getIDominator(const BasicBlock &bb) const;
-    void printDot(std::ostream &os) const;
+public:
+  DomTree(const Function &f, const CFG &cfg) : f(f) { buildDominators(cfg); }
+  const BasicBlock* getIDominator(const BasicBlock &bb) const;
+  bool dominates(const BasicBlock *a, const BasicBlock *b) const;
+  void printDot(std::ostream &os) const;
 };
+
 
 class LoopAnalysis final {
   Function &f;
   CFG cfg;
 
-  std::map<const BasicBlock*, unsigned> number;
-  std::vector<const BasicBlock*> node;
+  std::unordered_map<const BasicBlock*, unsigned> number;
+  std::vector<BasicBlock*> node;
   std::vector<unsigned> last;
   void getDepthFirstSpanningTree();
 
   std::vector<unsigned> header;
   enum NodeType { nonheader, self, reducible, irreducible };
   std::vector<NodeType> type;
-  void analysis();
+  std::unordered_map<BasicBlock*, std::vector<BasicBlock*>> forest;
+  std::unordered_map<BasicBlock*, BasicBlock*> parent;
+  std::vector<BasicBlock*> roots;
+  void run();
+
 public:
-  LoopAnalysis(Function &f) : f(f), cfg(f) { analysis(); }
+  LoopAnalysis(Function &f) : f(f), cfg(f) { run(); }
+
+  auto& getRoots() const { return roots; }
+  auto& getLoopForest() const { return forest; }
+  BasicBlock* getParent(BasicBlock *bb) const;
+
   void printDot(std::ostream &os) const;
 };
 

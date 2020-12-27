@@ -276,6 +276,13 @@ Value* get_operand(llvm::Value *v,
     RETURN_CACHE(ret);
   }
 
+  if (isa<llvm::PoisonValue>(v)) {
+    auto val = make_unique<PoisonValue>(*ty);
+    auto ret = val.get();
+    current_fn->addConstant(move(val));
+    RETURN_CACHE(ret);
+  }
+
   if (isa<llvm::UndefValue>(v)) {
     auto val = make_unique<UndefValue>(*ty);
     auto ret = val.get();
@@ -420,6 +427,14 @@ void init_llvm_utils(ostream &os, const llvm::DataLayout &dataLayout) {
   int_types[1] = make_unique<IntType>("i1", 1);
   ptr_types.emplace_back(make_unique<PtrType>(0));
   DL = &dataLayout;
+}
+
+ostream& get_outs() {
+  return *out;
+}
+
+void set_outs(ostream &os) {
+  out = &os;
 }
 
 void reset_state(Function &f) {

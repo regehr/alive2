@@ -11,13 +11,15 @@ extern bool symexec_print_each_value;
 
 extern bool skip_smt;
 
-extern bool io_nobuiltin;
-
 extern bool disable_poison_input;
 
 extern bool disable_undef_input;
 
 extern bool debug;
+
+extern unsigned src_unroll_cnt;
+
+extern unsigned tgt_unroll_cnt;
 
 std::ostream &dbg();
 void set_debug(std::ostream &os);

@@ -1,12 +1,15 @@
 // Copyright (c) 2018-present The Alive2 Authors.
 // Distributed under the MIT license that can be found in the LICENSE file.
 
-#include "llvm_util/llvm2alive.h"
 #include "ir/memory.h"
+#include "llvm_util/llvm2alive.h"
+#include "llvm_util/utils.h"
 #include "smt/smt.h"
 #include "smt/solver.h"
 #include "tools/transform.h"
 #include "util/config.h"
+#include "util/parallel.h"
+#include "util/stopwatch.h"
 #include "util/version.h"
 #include "llvm/ADT/Any.h"
 #include "llvm/ADT/Triple.h"
@@ -18,126 +21,178 @@
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
+#include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <random>
+#include <signal.h>
 #include <sstream>
+#include <unistd.h>
 #include <unordered_map>
 #include <utility>
-
-#if (__GNUC__ < 8) && (!__APPLE__)
-# include <experimental/filesystem>
-  namespace fs = std::experimental::filesystem;
-#else
-# include <filesystem>
-  namespace fs = std::filesystem;
-#endif
 
 using namespace IR;
 using namespace llvm_util;
 using namespace tools;
 using namespace util;
 using namespace std;
+namespace fs = std::filesystem;
 
 namespace {
 
-llvm::cl::opt<bool> opt_error_fatal(
-  "tv-exit-on-error", llvm::cl::desc("Alive: exit on error"),
-  llvm::cl::init(false));
+llvm::cl::OptionCategory TVOptions("Alive translation verifier options");
 
-llvm::cl::opt<unsigned> opt_smt_to(
-  "tv-smt-to", llvm::cl::desc("Alive: timeout for SMT queries"),
-  llvm::cl::init(1000), llvm::cl::value_desc("ms"));
+llvm::cl::opt<bool> opt_error_fatal("tv-exit-on-error",
+                                    llvm::cl::desc("Alive: exit on error"),
+                                    llvm::cl::cat(TVOptions),
+                                    llvm::cl::init(false));
+
+llvm::cl::opt<unsigned>
+    opt_smt_to("tv-smt-to", llvm::cl::desc("Alive: timeout for SMT queries"),
+               llvm::cl::cat(TVOptions), llvm::cl::init(1000),
+               llvm::cl::value_desc("ms"));
 
 llvm::cl::opt<unsigned> opt_smt_random_seed(
-  "tv-smt-random-seed",
-  llvm::cl::desc("Alive: Random seed for the SMT solver (default=0)"),
-  llvm::cl::init(0));
+    "tv-smt-random-seed",
+    llvm::cl::desc("Alive: Random seed for the SMT solver (default=0)"),
+    llvm::cl::cat(TVOptions), llvm::cl::init(0));
 
-llvm::cl::opt<unsigned> opt_max_mem(
-  "tv-max-mem", llvm::cl::desc("Alive: max memory (aprox)"),
-  llvm::cl::init(1024), llvm::cl::value_desc("MB"));
+llvm::cl::opt<unsigned> opt_max_mem("tv-max-mem",
+                                    llvm::cl::desc("Alive: max memory (aprox)"),
+                                    llvm::cl::cat(TVOptions),
+                                    llvm::cl::init(1024),
+                                    llvm::cl::value_desc("MB"));
 
-llvm::cl::opt<bool> opt_se_verbose(
-  "tv-se-verbose", llvm::cl::desc("Alive: symbolic execution verbose mode"),
-  llvm::cl::init(false));
+llvm::cl::opt<bool>
+    opt_se_verbose("tv-se-verbose",
+                   llvm::cl::desc("Alive: symbolic execution verbose mode"),
+                   llvm::cl::cat(TVOptions), llvm::cl::init(false));
 
-llvm::cl::opt<bool> opt_smt_stats(
-  "tv-smt-stats", llvm::cl::desc("Alive: show SMT statistics"),
-  llvm::cl::init(false));
+llvm::cl::opt<bool> opt_smt_stats("tv-smt-stats",
+                                  llvm::cl::desc("Alive: show SMT statistics"),
+                                  llvm::cl::cat(TVOptions),
+                                  llvm::cl::init(false));
 
-llvm::cl::opt<bool> opt_succinct(
-  "tv-succinct", llvm::cl::desc("Alive2: make the output succinct"),
-  llvm::cl::init(false));
+llvm::cl::opt<bool>
+    opt_succinct("tv-succinct",
+                 llvm::cl::desc("Alive2: make the output succinct"),
+                 llvm::cl::cat(TVOptions), llvm::cl::init(false));
 
-llvm::cl::opt<bool> opt_alias_stats(
-  "tv-alias-stats", llvm::cl::desc("Alive: show alias sets statistics"),
-  llvm::cl::init(false));
+llvm::cl::opt<bool>
+    opt_alias_stats("tv-alias-stats",
+                    llvm::cl::desc("Alive: show alias sets statistics"),
+                    llvm::cl::cat(TVOptions), llvm::cl::init(false));
 
-llvm::cl::opt<bool> opt_smt_skip(
-  "tv-smt-skip", llvm::cl::desc("Alive: skip SMT queries"),
-  llvm::cl::init(false));
+llvm::cl::opt<bool> opt_smt_skip("tv-smt-skip",
+                                 llvm::cl::desc("Alive: skip SMT queries"),
+                                 llvm::cl::cat(TVOptions),
+                                 llvm::cl::init(false));
 
-llvm::cl::opt<string> opt_report_dir(
-  "tv-report-dir", llvm::cl::desc("Alive: save report to disk"),
-  llvm::cl::value_desc("directory"));
+llvm::cl::opt<string>
+    opt_report_dir("tv-report-dir",
+                   llvm::cl::desc("Alive: save report to disk"),
+                   llvm::cl::cat(TVOptions), llvm::cl::value_desc("directory"));
 
-llvm::cl::opt<bool> opt_smt_verbose(
-  "tv-smt-verbose", llvm::cl::desc("Alive: SMT verbose mode"),
-  llvm::cl::init(false));
+llvm::cl::opt<bool> opt_overwrite_reports(
+    "tv-overwrite-reports",
+    llvm::cl::desc("Alive: overwrite existing report files"),
+    llvm::cl::cat(TVOptions), llvm::cl::init(false));
 
-llvm::cl::opt<bool> opt_tactic_verbose(
-  "tv-tactic-verbose", llvm::cl::desc("Alive: SMT Tactic verbose mode"),
-  llvm::cl::init(false));
+llvm::cl::opt<bool> opt_smt_verbose("tv-smt-verbose",
+                                    llvm::cl::desc("Alive: SMT verbose mode"),
+                                    llvm::cl::cat(TVOptions),
+                                    llvm::cl::init(false));
 
-llvm::cl::opt<bool> opt_smt_log(
-  "tv-smt-log", llvm::cl::desc("Alive: log interactions with the SMT solver"),
-  llvm::cl::init(false));
+llvm::cl::opt<bool>
+    opt_tactic_verbose("tv-tactic-verbose",
+                       llvm::cl::desc("Alive: SMT Tactic verbose mode"),
+                       llvm::cl::cat(TVOptions), llvm::cl::init(false));
+
+llvm::cl::opt<bool>
+    opt_smt_log("tv-smt-log",
+                llvm::cl::desc("Alive: log interactions with the SMT solver"),
+                llvm::cl::cat(TVOptions), llvm::cl::init(false));
 
 llvm::cl::opt<bool> opt_print_dot(
-  "tv-dot", llvm::cl::desc("Alive: print .dot file with CFG of each function"),
-  llvm::cl::init(false));
+    "tv-dot",
+    llvm::cl::desc("Alive: print .dot files of each function"),
+    llvm::cl::cat(TVOptions), llvm::cl::init(false));
 
 llvm::cl::opt<bool> opt_disable_poison_input(
-  "tv-disable-poison-input",
-  llvm::cl::desc("Alive: Assume function input cannot be poison"),
-  llvm::cl::init(false));
+    "tv-disable-poison-input",
+    llvm::cl::desc("Alive: Assume function input cannot be poison"),
+    llvm::cl::cat(TVOptions), llvm::cl::init(false));
 
 llvm::cl::opt<bool> opt_disable_undef_input(
-  "tv-disable-undef-input",
-  llvm::cl::desc("Alive: Assume function input cannot be undef"),
-  llvm::cl::init(false));
+    "tv-disable-undef-input",
+    llvm::cl::desc("Alive: Assume function input cannot be undef"),
+    llvm::cl::cat(TVOptions), llvm::cl::init(false));
 
-llvm::cl::list<std::string> opt_funcs(
-  "tv-func",
-  llvm::cl::desc("Name of functions to verify (without @)"),
-  llvm::cl::ZeroOrMore, llvm::cl::value_desc("function name"));
+llvm::cl::list<string>
+    opt_funcs("tv-func",
+              llvm::cl::desc("Name of functions to verify (without @)"),
+              llvm::cl::cat(TVOptions), llvm::cl::ZeroOrMore,
+              llvm::cl::value_desc("function name"));
 
-llvm::cl::opt<bool> opt_debug(
-  "tv-dbg",
-  llvm::cl::desc("Alive: Show debug data"),
-  llvm::cl::init(false), llvm::cl::Hidden);
+llvm::cl::opt<bool> opt_debug("tv-dbg",
+                              llvm::cl::desc("Alive: Show debug data"),
+                              llvm::cl::cat(TVOptions), llvm::cl::init(false),
+                              llvm::cl::Hidden);
 
 llvm::cl::opt<unsigned> opt_omit_array_size(
-  "tv-omit-array-size",
-  llvm::cl::desc("Omit an array initializer if it has elements more than "
-                  "this number"),
-  llvm::cl::init(-1));
+    "tv-omit-array-size",
+    llvm::cl::desc("Omit an array initializer if it has elements more than "
+                   "this number"),
+    llvm::cl::cat(TVOptions), llvm::cl::init(-1));
 
-llvm::cl::opt<bool> opt_io_nobuiltin(
-    "tv-io-nobuiltin",
-    llvm::cl::desc("Encode standard I/O functions as an unknown function "
-                   "(unused by clang plugin)"),
-    llvm::cl::init(false));
+llvm::cl::opt<bool> opt_elapsed_time(
+    "tv-elapsed-time",
+    llvm::cl::desc("Print the elapsed time"),
+    llvm::cl::cat(TVOptions), llvm::cl::init(false));
+
+llvm::cl::opt<unsigned> opt_src_unrolling_factor(
+    "tv-src-unroll",
+    llvm::cl::desc("Unrolling factor for src function (default=0)"),
+    llvm::cl::cat(TVOptions), llvm::cl::init(0));
+
+llvm::cl::opt<unsigned> opt_tgt_unrolling_factor(
+    "tv-tgt-unroll",
+    llvm::cl::desc("Unrolling factor for tgt function (default=0)"),
+    llvm::cl::cat(TVOptions), llvm::cl::init(0));
+
+llvm::cl::opt<bool> parallel_tv_jobserver(
+    "tv-parallel-jobserver",
+    llvm::cl::desc("Distribute TV load across cores (requires GNU Make, "
+                   "please see README.md, default=false)"),
+    llvm::cl::cat(TVOptions), llvm::cl::init(false));
+
+llvm::cl::opt<bool> parallel_tv_unrestricted(
+    "tv-parallel-unrestricted",
+    llvm::cl::desc("Distribute TV load across cores without any throttling; "
+                   "use this very carefully, if at all (default=false)"),
+    llvm::cl::cat(TVOptions), llvm::cl::init(false));
+
+llvm::cl::opt<int> max_subprocesses(
+    "tv-max-subprocesses",
+    llvm::cl::desc("Maximum children any single clang instance will have at one "
+                   "time (default=128)"),
+    llvm::cl::cat(TVOptions), llvm::cl::init(128));
+
+llvm::cl::opt<long> subprocess_timeout(
+    "tv-subprocess-timeout",
+    llvm::cl::desc("Maximum time, in seconds, that a parallel TV call "
+                   "will be allowed to execeute (default=infinite)"),
+    llvm::cl::cat(TVOptions), llvm::cl::init(-1));
 
 struct FnInfo {
   Function fn;
   unsigned order;
-  std::string fn_tostr;
+  string fn_tostr;
 };
 
 llvm::cl::opt<bool> opt_cache("cache",
-  llvm::cl::init(false),
+  llvm::cl::init(true),
   llvm::cl::desc("Use external Redis cache (default=false)"));
 
 llvm::cl::opt<unsigned> opt_cache_port("cache-port",
@@ -151,22 +206,53 @@ optional<smt::smt_initializer> smt_init;
 optional<llvm_util::initializer> llvm_util_init;
 TransformPrintOpts print_opts;
 unordered_map<string, FnInfo> fns;
+unordered_map<string, float> fns_elapsed_time;
 set<string> fnsToVerify;
 unsigned initialized = 0;
 bool showed_stats = false;
 bool report_dir_created = false;
 bool has_failure = false;
+// If is_clangtv is true, tv should exit with zero
 bool is_clangtv = false;
 Cache *cache = nullptr;
+fs::path opt_report_parallel_dir;
+unique_ptr<parallel> parallelMgr;
+stringstream parent_ss;
 
-struct TVPass final : public llvm::FunctionPass {
+void sigalarm_handler(int) {
+  parallelMgr->finishChild(/*is_timeout=*/true);
+  // this is a fully asynchronous exit, skip destructors and such
+  _Exit(0);
+}
+
+string get_random_str() {
+  static default_random_engine re;
+  static uniform_int_distribution<unsigned> rand;
+  static bool seeded = false;
+
+  if (!seeded) {
+    random_device rd;
+    re.seed(rd());
+    seeded = true;
+  }
+  return to_string(rand(re));
+}
+
+struct TVPass final : public llvm::ModulePass {
   static char ID;
   bool skip_verify = false;
-  bool encode_io_fns_as_unknown = false;
+  const function<llvm::TargetLibraryInfo*(llvm::Function&)> *TLI_override
+    = nullptr;
 
-  TVPass() : FunctionPass(ID) {}
+  TVPass() : ModulePass(ID) {}
 
-  bool runOnFunction(llvm::Function &F) override {
+  bool runOnModule(llvm::Module &M) override {
+    for (auto &F: M)
+      runOnFunction(F);
+    return false;
+  }
+
+  bool runOnFunction(llvm::Function &F) {
     if (F.isDeclaration())
       // This can happen at EntryExitInstrumenter pass.
       return false;
@@ -174,20 +260,22 @@ struct TVPass final : public llvm::FunctionPass {
     if (!fnsToVerify.empty() && !fnsToVerify.count(F.getName().str()))
       return false;
 
+    ScopedWatch timer([&](const StopWatch &sw) {
+      fns_elapsed_time[F.getName().str()] += sw.seconds();
+    });
+
     llvm::TargetLibraryInfo *TLI = nullptr;
-    unique_ptr<llvm::TargetLibraryInfo> TLI_holder;
-    if (is_clangtv) {
-      // When used as a clang plugin, this is run as a plain function rather
-      // than a registered pass, so getAnalysis() cannot be used.
-      TLI_holder
-        = make_unique<llvm::TargetLibraryInfo>(llvm::TargetLibraryInfoImpl(
-           llvm::Triple(F.getParent()->getTargetTriple())), &F);
-      TLI = TLI_holder.get();
+    if (TLI_override) {
+      // When used as a clang plugin or from the new pass manager, this is run
+      // as a plain function rather than a registered pass, so getAnalysis()
+      // cannot be used.
+      TLI = (*TLI_override)(F);
     } else {
       TLI = &getAnalysis<llvm::TargetLibraryInfoWrapperPass>().getTLI(F);
     }
 
     auto [I, first] = fns.try_emplace(F.getName().str());
+
     auto fn = llvm2alive(F, *TLI, first ? vector<string_view>()
                                         : I->second.fn.getGlobalVarNames());
     if (!fn) {
@@ -215,20 +303,55 @@ struct TVPass final : public llvm::FunctionPass {
     I->second.fn = move(*fn);
 
     if (opt_print_dot) {
-      auto &f = I->second.fn;
-      ofstream file(f.getName() + '.' + to_string(I->second.order) + ".dot");
-      CFG cfg(f);
-      cfg.printDot(file);
-      ofstream fileDom(f.getName() + '.' + to_string(I->second.order++) +
-                       ".dom.dot");
-      DomTree(f, cfg).printDot(fileDom);
+      string prefix = to_string(I->second.order);
+      I->second.fn.writeDot(prefix.c_str());
     }
 
     if (first || skip_verify)
       return false;
 
-    if (is_clangtv)
-      I->second.fn.setFnCallValidFlag(encode_io_fns_as_unknown);
+    if (parallelMgr) {
+      out_file.flush();
+      auto [pid, osp, index] = parallelMgr->limitedFork();
+
+      if (pid == -1) {
+        perror("fork() failed");
+        exit(-1);
+      }
+
+      if (pid != 0) {
+        /*
+         * parent returns to LLVM immediately; leave a placeholder in
+         * the output that we'll patch up later
+         */
+        *out << "include(" << index << ")\n";
+        /*
+         * TODO: this llvm2alive() call isn't needed for correctness,
+         * but only to make parallel output match sequential
+         * output. we can remove it later if we want.
+         */
+        I->second.fn = *llvm2alive(F, *TLI);
+        return false;
+      }
+
+      if (subprocess_timeout != -1) {
+        ENSURE(signal(SIGALRM, sigalarm_handler) == nullptr);
+        alarm(subprocess_timeout);
+      }
+
+      /*
+       * child now writes to a stringstream provided by the parallel
+       * manager, its output will get pushed to the parent via a pipe
+       * later on
+       */
+      out = osp;
+      set_outs(*out);
+    }
+
+    /*
+     * from here, we must not return back to LLVM if parallelMgr
+     * is non-null; instead we call parallelMgr->finishChild()
+     */
 
     smt_init->reset();
     Transform t;
@@ -239,15 +362,12 @@ struct TVPass final : public llvm::FunctionPass {
     if (!opt_succinct)
       t.print(*out, print_opts);
 
-    if (is_clangtv)
-      I->second.fn.setFnCallValidFlag(false);
-
     {
       auto types = verifier.getTypings();
       if (!types) {
         *out << "Transformation doesn't verify!\n"
                 "ERROR: program doesn't type check!\n\n";
-        return false;
+        goto done;
       }
       assert(types.hasSingleTyping());
     }
@@ -261,7 +381,17 @@ struct TVPass final : public llvm::FunctionPass {
       *out << "Transformation seems to be correct!\n\n";
     }
 
-    I->second.fn = move(t.tgt);
+    // Regenerate tgt because preprocessing may have changed it
+    if (!parallelMgr)
+      I->second.fn = *llvm2alive(F, *TLI);
+
+  done:
+    if (parallelMgr) {
+      llvm_util_init.reset();
+      smt_init.reset();
+      parallelMgr->finishChild(/*is_timeout=*/false);
+      exit(0);
+    }
     return false;
   }
 
@@ -275,27 +405,25 @@ struct TVPass final : public llvm::FunctionPass {
     fnsToVerify.insert(opt_funcs.begin(), opt_funcs.end());
 
     if (!report_dir_created && !opt_report_dir.empty()) {
-      static default_random_engine re;
-      static uniform_int_distribution<unsigned> rand;
-      static bool seeded = false;
-
-      if (!seeded) {
-        random_device rd;
-        re.seed(rd());
-        seeded = true;
+      try {
+        fs::create_directories(opt_report_dir.getValue());
+      } catch (...) {
+        cerr << "Alive2: Couldn't create report directory!" << endl;
+        exit(1);
       }
-
-      fs::create_directories(opt_report_dir.getValue());
       auto &source_file = module.getSourceFileName();
       fs::path fname = source_file.empty() ? "alive.txt" : source_file;
       fname.replace_extension(".txt");
       fs::path path = fs::path(opt_report_dir.getValue()) / fname.filename();
 
-      do {
-        auto newname = fname.stem();
-        newname += "_" + to_string(rand(re)) + ".txt";
-        path.replace_filename(newname);
-      } while (fs::exists(path));
+      if (!opt_overwrite_reports) {
+        // NB there's a low-probability toctou race here
+        do {
+          auto newname = fname.stem();
+          newname += "_" + get_random_str() + ".txt";
+          path.replace_filename(newname);
+        } while (fs::exists(path));
+      }
 
       out_file = ofstream(path);
       out = &out_file;
@@ -320,6 +448,26 @@ struct TVPass final : public llvm::FunctionPass {
       }
     }
 
+    auto &outstream = out_file.is_open() ? out_file : cerr;
+    if (parallel_tv_jobserver) {
+      parallelMgr = make_unique<jobServer>(max_subprocesses, parent_ss,
+                                           outstream);
+    } else if (parallel_tv_unrestricted) {
+      parallelMgr = make_unique<unrestricted>(max_subprocesses, parent_ss,
+                                              outstream);
+    }
+
+    if (parallelMgr) {
+      if (parallelMgr->init()) {
+        out = &parent_ss;
+        set_outs(*out);
+      } else {
+        cerr << "WARNING: Parallel execution of Alive2 Clang plugin is "
+                "unavailable, sorry\n";
+        parallelMgr.reset();
+      }
+    }
+
     showed_stats = false;
     smt::solver_print_queries(opt_smt_verbose);
     smt::solver_tactic_verbose(opt_tactic_verbose);
@@ -328,20 +476,12 @@ struct TVPass final : public llvm::FunctionPass {
     smt::set_memory_limit(opt_max_mem * 1024 * 1024);
     config::skip_smt = opt_smt_skip;
 
-    if (!is_clangtv)
-      config::io_nobuiltin = opt_io_nobuiltin;
-    else {
-      config::io_nobuiltin = true;
-      if (opt_io_nobuiltin)
-        cerr << "Warning: -tv-io-nobuiltin isn't used by clang plugin. I/O"
-                " function calls will be always regarded as unknown fn calls"
-                " except InstCombine.\n";
-    }
-
     config::symexec_print_each_value = opt_se_verbose;
     config::disable_undef_input = opt_disable_undef_input;
     config::disable_poison_input = opt_disable_poison_input;
     config::debug = opt_debug;
+    config::src_unroll_cnt = opt_src_unrolling_factor;
+    config::tgt_unroll_cnt = opt_tgt_unrolling_factor;
     llvm_util::omit_array_size = opt_omit_array_size;
 
     llvm_util_init.emplace(*out, module.getDataLayout());
@@ -350,6 +490,10 @@ struct TVPass final : public llvm::FunctionPass {
   }
 
   bool doFinalization(llvm::Module&) override {
+    if (parallelMgr) {
+      parallelMgr->finishParent();
+    }
+
     if (!showed_stats) {
       showed_stats = true;
       if (opt_smt_stats)
@@ -363,6 +507,16 @@ struct TVPass final : public llvm::FunctionPass {
     llvm_util_init.reset();
     smt_init.reset();
     --initialized;
+
+    if (opt_elapsed_time) {
+      *out << "\n----------------- ELAPSED TIME ------------------\n";
+      float total = 0;
+      for (auto &[name, t]: fns_elapsed_time) {
+        *out << "  " << name << ": " << t << " s\n";
+        total += t;
+      }
+      *out << "  <TOTAL>: " << total << " s\n";
+    }
 
     if (has_failure) {
       if (opt_error_fatal)
@@ -387,9 +541,9 @@ llvm::RegisterPass<TVPass> X("tv", "Translation Validator", false, false);
 
 
 
-#ifdef CLANG_PLUGIN
-/// Classes and functions for running translation validation on clang
-/// Uses new pass manager's callback.
+/// Classes and functions for running translation validation on clang or
+/// opt with new pass manager
+/// Clang plugin uses new pass manager's callback.
 
 struct TVInitPass : public llvm::PassInfoMixin<TVInitPass> {
   llvm::PreservedAnalyses run(llvm::Module &M,
@@ -401,12 +555,16 @@ struct TVInitPass : public llvm::PassInfoMixin<TVInitPass> {
 
 struct TVFinalizePass : public llvm::PassInfoMixin<TVFinalizePass> {
   static bool finalized;
-  llvm::PreservedAnalyses run(llvm::Function &F,
-                              llvm::FunctionAnalysisManager &FAM) {
+  static void finalize(llvm::Module &M) {
     if (!finalized) {
       finalized = true;
-      TVPass().doFinalization(*F.getParent());
+      TVPass().doFinalization(M);
     }
+  }
+
+  llvm::PreservedAnalyses run(llvm::Module &M,
+                              llvm::ModuleAnalysisManager &MAM) {
+    finalize(M);
     return llvm::PreservedAnalyses::all();
   }
 };
@@ -432,29 +590,94 @@ const llvm::Module * unwrapModule(llvm::Any IR) {
   llvm_unreachable("Unknown IR unit");
 }
 
-bool do_skip(const llvm::StringRef &ref) {
-  const vector<string_view> pass_list = {
-    "::TVInitPass", "::TVFinalizePass",
-    "ArgumentPromotionPass", "DeadArgumentEliminationPass",
-    "HotColdSplittingPass", "InlinerPass",
-    "GlobalOptPass", "IPSCCPPass",
-    "ModuleInlinerWrapperPass", // inliner pass wrapper
-    "OpenMPOptPass", // open mp optimization (concurrency)
-    "PostOrderFunctionAttrsPass", // changes fn signatures
-    "InferFunctionAttrsPass", // changes fn signatures
-    "EntryExitInstrumenterPass", // instruments profiler-related fn calls
-    "EliminateAvailableExternallyPass", // Del. available_externally linkage fns
-  };
-  auto sref = ref.str();
-  auto ends_with = [](const string_view &a, const string_view &suffix) {
-    return a.size() >= suffix.size() &&
-           a.substr(a.size() - suffix.size()) == suffix;
-  };
-  return
-    std::find_if(pass_list.begin(), pass_list.end(), [&](string_view elem) {
-        return ends_with(sref, elem);
-      }) != pass_list.end();
+
+const char* skip_pass_list[] = {
+  "{anonymous}::TVInitPass",
+  "{anonymous}::TVFinalizePass",
+  "ArgumentPromotionPass",
+  "DeadArgumentEliminationPass",
+  "EliminateAvailableExternallyPass",
+  "EntryExitInstrumenterPass",
+  "GlobalOptPass",
+  "HotColdSplittingPass",
+  "InferFunctionAttrsPass", // IPO
+  "InlinerPass",
+  "IPSCCPPass",
+  "ModuleInlinerWrapperPass",
+  "OpenMPOptPass",
+  "PostOrderFunctionAttrsPass", // IPO
+};
+
+bool do_skip(const llvm::StringRef &pass0) {
+  auto pass = pass0.str();
+  return any_of(skip_pass_list, end(skip_pass_list),
+                [&](auto skip) { return pass == skip; });
 }
+
+struct TVNewPass : public llvm::PassInfoMixin<TVNewPass> {
+  static bool skip_tv;
+  static string pass_name;
+  // The number of TVNewPass created.
+  static unsigned num_tv_pass_created;
+  bool print_pass_name = false;
+
+
+  llvm::PreservedAnalyses run(llvm::Module &M,
+                              llvm::ModuleAnalysisManager &AM) {
+    auto &FAM = AM.getResult<llvm::FunctionAnalysisManagerModuleProxy>(M)
+                  .getManager();
+    auto get_TLI = [&FAM](llvm::Function &F) {
+      return &FAM.getResult<llvm::TargetLibraryAnalysis>(F);
+    };
+    run(M, get_TLI);
+    return llvm::PreservedAnalyses::all();
+  }
+
+  void run(llvm::Module &M,
+           const function<llvm::TargetLibraryInfo*(llvm::Function&)> &get_TLI) {
+    // Check TVFinalizePass::finalized again because TVNewPass can be
+    // called after TVFinalizePass registered by
+    // registerOptimizerLastEPCallback.
+    // It can happen when a default pipeline (O3, O2, ...) is used.
+    if (TVFinalizePass::finalized)
+      return;
+
+    static unsigned count = 0;
+    if (!out) {
+      // TVInitPass is not called yet.
+      // This can happen at very early passes, such as
+      // ForceFunctionAttrsPass.
+      skip_tv = false;
+      return;
+    }
+
+    ++count;
+    if (print_pass_name) {
+      // print_pass_name is set only when running clang tv
+      *out << "-- " << count << ". " << pass_name
+           << (skip_tv ? " : Skipping\n" : "\n");
+    }
+
+    TVPass tv;
+    tv.skip_verify = skip_tv;
+
+    tv.TLI_override = &get_TLI;
+    // If skip_pass is true, this updates fns map only.
+    tv.runOnModule(M);
+
+    skip_tv = false;
+    if (count == num_tv_pass_created) {
+      // If it is clang tv, num_tv_pass_created should be zero.
+      assert(!is_clangtv);
+      TVFinalizePass::finalize(M);
+    }
+  }
+};
+
+bool TVNewPass::skip_tv = false;
+string TVNewPass::pass_name;
+unsigned TVNewPass::num_tv_pass_created = 0;
+
 
 // Entry point for this plugin
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
@@ -463,47 +686,72 @@ llvmGetPassPluginInfo() {
     LLVM_PLUGIN_API_VERSION, "Alive2 Translation Validation", "",
     [](llvm::PassBuilder &PB) {
       is_clangtv = true;
+      PB.registerPipelineParsingCallback(
+          [](llvm::StringRef Name,
+             llvm::ModulePassManager &MPM,
+             llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+          static bool first_tv = true;
+          if (Name != "tv")
+            return false;
+
+          if (first_tv) {
+            // Assume that this plugin is loaded from opt when tv pass is
+            // explicitly given as an argument
+            is_clangtv = false;
+            first_tv = false;
+            MPM.addPass(TVInitPass());
+          }
+          MPM.addPass(TVNewPass());
+          // Finalization is done by the last TVNewPass
+          TVNewPass::num_tv_pass_created++;
+          return true;
+        });
+      // These two register*EPCallbacks are called when 'default' pipelines
+      // such as O2, O3 are used by either opt or clang.
+      // For clang -O2, these are needed. For opt, these are currently redundant
+      // because we don't support e.g. opt -passes="tv,default<O2>,tv".
+      // But there is no way to distinguish which one (clang vs. opt) is invoked
+      // so simply always add these.
       PB.registerPipelineStartEPCallback(
-        [](llvm::ModulePassManager &MPM) { MPM.addPass(TVInitPass()); }
-      );
+          [](llvm::ModulePassManager &MPM,
+             llvm::PassBuilder::OptimizationLevel) {
+            MPM.addPass(TVInitPass());
+          });
       PB.registerOptimizerLastEPCallback(
           [](llvm::ModulePassManager &MPM,
              llvm::PassBuilder::OptimizationLevel) {
-            MPM.addPass(createModuleToFunctionPassAdaptor(TVFinalizePass()));
+            MPM.addPass(TVFinalizePass());
           });
       auto f = [](llvm::StringRef P, llvm::Any IR,
                   const llvm::PreservedAnalyses &PA) {
-        static int count = 0;
-        if (!out) {
-          // TVInitPass is not called yet.
-          // This can happen at very early passes, such as
-          // ForceFunctionAttrsPass.
-          return;
-        }
-
         if (TVFinalizePass::finalized)
           return;
 
-        bool skip_pass = do_skip(P);
-        *out << "-- " << ++count << ". " << P.str()
-             << (skip_pass ? " : Skipping\n" : "\n");
+        TVNewPass::pass_name = P.str();
+        TVNewPass::skip_tv |= do_skip(TVNewPass::pass_name);
 
-        TVPass tv;
-        tv.skip_verify = skip_pass;
-        // For I/O known calls like printf, it is fine to regard them as valid
-        // 'unknown calls' except when it is InstCombine.
-        tv.encode_io_fns_as_unknown = P != "InstCombinePass" &&
-                                      P != "AggressiveInstCombinePass";
+        if (!is_clangtv)
+          return;
 
-        auto M = const_cast<llvm::Module *>(unwrapModule(IR));
-        for (auto &F: *M)
-          // If skip_pass is true, this updates fns map only.
-          tv.runOnFunction(F);
+        // If it is clang tv, validate each pass
+        TVNewPass tv;
+        tv.print_pass_name = true;
+
+        llvm::TargetLibraryInfoImpl TLIImpl;
+        unique_ptr<llvm::TargetLibraryInfo> TLI_holder;
+
+        auto get_TLI = [&](llvm::Function &F) {
+          TLIImpl = llvm::TargetLibraryInfoImpl(
+              llvm::Triple(F.getParent()->getTargetTriple()));
+          TLI_holder = make_unique<llvm::TargetLibraryInfo>(TLIImpl, &F);
+          return TLI_holder.get();
+        };
+
+        tv.run(*const_cast<llvm::Module *>(unwrapModule(IR)), get_TLI);
       };
       PB.getPassInstrumentationCallbacks()->registerAfterPassCallback(move(f));
     }
   };
 }
-#endif
 
 }

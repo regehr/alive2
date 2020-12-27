@@ -25,7 +25,6 @@ using llvm::LLVMContext;
 
 namespace {
 
-ostream *out;
 unsigned constexpr_idx;
 unsigned copy_idx;
 
@@ -103,6 +102,7 @@ class llvm2alive_ : public llvm::InstVisitor<llvm2alive_, unique_ptr<Instr>> {
   vector<llvm::Instruction*> i_constexprs;
   const vector<string_view> &gvnamesInSrc;
   vector<tuple<Phi*, llvm::PHINode*, unsigned>> todo_phis;
+  ostream *out;
 
   using RetTy = unique_ptr<Instr>;
 
@@ -159,7 +159,7 @@ class llvm2alive_ : public llvm::InstVisitor<llvm2alive_, unique_ptr<Instr>> {
 public:
   llvm2alive_(llvm::Function &f, const llvm::TargetLibraryInfo &TLI,
               const vector<string_view> &gvnamesInSrc)
-      : f(f), TLI(TLI), gvnamesInSrc(gvnamesInSrc) {}
+      : f(f), TLI(TLI), gvnamesInSrc(gvnamesInSrc), out(&get_outs()) {}
 
   ~llvm2alive_() {
     for (auto &inst : i_constexprs) {
@@ -253,11 +253,10 @@ public:
       args.emplace_back(a);
     }
 
-    auto [call_val, known_kind] = known_call(i, TLI, *BB, args);
+    auto [call_val, attrs, param_attrs, valid] = known_call(i, TLI, *BB, args);
     if (call_val)
       RETURN_IDENTIFIER(move(call_val));
 
-    // TODO: support attributes
     auto fn = i.getCalledFunction();
     if (!fn) // TODO: support indirect calls
       return error(i);
@@ -269,7 +268,6 @@ public:
     if (fn->getName().substr(0, 15) == "__llvm_profile_")
       return NOP(i);
 
-    FnAttrs attrs;
     parse_fnattrs(attrs, i.getType(),
                   [&i](auto attr) { return i.hasFnAttr(attr); },
                   [&i](auto attr) { return i.hasRetAttr(attr); });
@@ -281,47 +279,73 @@ public:
 
     const auto &ret = llvm::AttributeList::ReturnIndex;
     if (uint64_t b = max(i.getDereferenceableBytes(ret),
-                         i.getCalledFunction()->getDereferenceableBytes(ret))) {
+                         fn->getDereferenceableBytes(ret))) {
       attrs.set(FnAttrs::Dereferenceable);
-      attrs.setDerefBytes(b);
+      attrs.derefBytes = b;
     }
 
-    string fn_name = '@' + fn->getName().str();
-    FnCall::ValidKind valid = FnCall::Invalid;
-    if (known_kind == FnUnknown)
-      valid = FnCall::Valid;
-    else if (known_kind == FnDependsOnOpt)
-      valid = FnCall::DependsOnFlag;
+    {
+      uint64_t align = 0;
+      llvm::MaybeAlign ra = i.getRetAlign();
+      if (ra)
+        align = ra->value();
 
-    auto call =
-      make_unique<FnCall>(*ty, value_name(i), move(fn_name), move(attrs),
-                          valid);
+      if (fn->hasAttribute(ret, llvm::Attribute::Alignment))
+        align = max(align,
+            fn->getAttribute(ret, llvm::Attribute::Alignment)
+                .getAlignment()->value());
+
+      if (align) {
+        attrs.set(FnAttrs::Align);
+        attrs.align = align;
+      }
+    }
+
+    auto call = make_unique<FnCall>(*ty, value_name(i),
+                                    '@' + fn->getName().str(), move(attrs),
+                                    valid);
     unique_ptr<Instr> ret_val;
 
     // avoid parsing arguments altogether for "unknown known" functions
-    if (known_kind == FnKnown)
+    if (!valid)
       goto end;
 
     for (uint64_t argidx = 0, nargs = i.arg_size(); argidx < nargs; ++argidx) {
       auto *arg = args[argidx];
-      ParamAttrs attr;
+      ParamAttrs attr = argidx < param_attrs.size() ? param_attrs[argidx]
+                                                    : ParamAttrs();
       // TODO: Once attributes at a call site are fully supported, we should
       // call handleAttributes().
 
       if (i.paramHasAttr(argidx, llvm::Attribute::Dereferenceable)) {
-        attr.set(ParamAttrs::Dereferenceable);
-
         uint64_t derefb = 0;
         // dereferenceable at caller
         if (i.getAttributes()
              .hasParamAttr(argidx, llvm::Attribute::Dereferenceable))
           derefb = i.getParamAttr(argidx, llvm::Attribute::Dereferenceable)
                     .getDereferenceableBytes();
-        if (argidx < i.getCalledFunction()->arg_size())
+        if (argidx < fn->arg_size())
           derefb = max(derefb,
-              i.getCalledFunction()->getParamDereferenceableBytes(argidx));
+                       fn->getParamDereferenceableBytes(argidx));
         assert(derefb);
+        attr.set(ParamAttrs::Dereferenceable);
         attr.derefBytes = derefb;
+      }
+
+      if (i.paramHasAttr(argidx, llvm::Attribute::Alignment)) {
+        uint64_t a = 0;
+        // alignment at caller
+        if (i.getAttributes()
+             .hasParamAttr(argidx, llvm::Attribute::Alignment))
+          a = i.getParamAttr(argidx, llvm::Attribute::Alignment)
+               .getAlignment()->value();
+        if (argidx < fn->arg_size() &&
+            fn->hasParamAttribute(argidx, llvm::Attribute::Alignment))
+          a = max(a, fn->getParamAlign(argidx)->value());
+
+        assert(a);
+        attr.set(ParamAttrs::Align);
+        attr.align = a;
       }
 
       if (i.paramHasAttr(argidx, llvm::Attribute::ByVal)) {
@@ -488,7 +512,7 @@ end:
     auto ty = llvm_type2alive(i.getType());
     auto val = get_operand(i.getAggregateOperand());
     auto elt = get_operand(i.getInsertedValueOperand());
-    if (!ty || !val)
+    if (!ty || !val || !elt)
       return error(i);
 
     auto inst = make_unique<InsertValue>(*ty, value_name(i), *val, *elt);
@@ -592,7 +616,8 @@ end:
         continue;
       }
 
-      gep->addIdx(DL().getTypeAllocSize(I.getIndexedType()), *op);
+      gep->addIdx(DL().getTypeAllocSize(I.getIndexedType()).getKnownMinValue(),
+                  *op);
     }
     RETURN_IDENTIFIER(move(gep));
   }
@@ -753,6 +778,7 @@ end:
     case llvm::Intrinsic::bswap:
     case llvm::Intrinsic::ctpop:
     case llvm::Intrinsic::expect:
+    case llvm::Intrinsic::expect_with_probability:
     case llvm::Intrinsic::is_constant:
     case llvm::Intrinsic::fabs: {
       PARSE_UNOP();
@@ -761,7 +787,9 @@ end:
       case llvm::Intrinsic::bitreverse: op = UnaryOp::BitReverse; break;
       case llvm::Intrinsic::bswap:      op = UnaryOp::BSwap; break;
       case llvm::Intrinsic::ctpop:      op = UnaryOp::Ctpop; break;
-      case llvm::Intrinsic::expect:     op = UnaryOp::Copy; break;
+      case llvm::Intrinsic::expect:
+      case llvm::Intrinsic::expect_with_probability:
+        op = UnaryOp::Copy; break;
       case llvm::Intrinsic::is_constant: op = UnaryOp::IsConstant; break;
       case llvm::Intrinsic::fabs:        op = UnaryOp::FAbs; break;
       default: UNREACHABLE();
@@ -842,6 +870,14 @@ end:
         return error(i);
       RETURN_IDENTIFIER(make_unique<Free>(*b, false));
     }
+    case llvm::Intrinsic::trap:
+    {
+      FnAttrs attrs;
+      attrs.set(FnAttrs::NoReturn);
+      attrs.set(FnAttrs::NoWrite);
+      return make_unique<FnCall>(*llvm_type2alive(i.getType()),
+                                 "", "#trap", move(attrs));
+    }
 
     // do nothing intrinsics
     case llvm::Intrinsic::dbg_addr:
@@ -852,6 +888,7 @@ end:
     case llvm::Intrinsic::instrprof_increment:
     case llvm::Intrinsic::instrprof_increment_step:
     case llvm::Intrinsic::instrprof_value_profile:
+    case llvm::Intrinsic::prefetch:
       return NOP(i);
 
     default:
@@ -950,7 +987,6 @@ end:
 
       // non-relevant for correctness
       case LLVMContext::MD_loop:
-      case LLVMContext::MD_misexpect:
       case LLVMContext::MD_prof:
       case LLVMContext::MD_unpredictable:
         break;
@@ -1005,6 +1041,11 @@ end:
       case llvm::Attribute::Dereferenceable:
         attrs.set(ParamAttrs::Dereferenceable);
         attrs.derefBytes = attr.getDereferenceableBytes();
+        continue;
+
+      case llvm::Attribute::Alignment:
+        attrs.set(ParamAttrs::Align);
+        attrs.align = attr.getAlignment()->value();
         continue;
 
       case llvm::Attribute::NoUndef:
@@ -1066,7 +1107,14 @@ end:
 
     if (uint64_t b = f.getDereferenceableBytes(ridx)) {
       attrs.set(FnAttrs::Dereferenceable);
-      attrs.setDerefBytes(b);
+      attrs.derefBytes = b;
+    }
+
+    if (f.hasAttribute(ridx, llvm::Attribute::Alignment)) {
+      unsigned a = f.getAttribute(ridx, llvm::Attribute::Alignment)
+                    .getAlignment()->value();
+      attrs.set(FnAttrs::Align);
+      attrs.align = a;
     }
 
     // create all BBs upfront in topological order
@@ -1208,7 +1256,6 @@ unsigned omit_array_size = -1;
 
 
 initializer::initializer(ostream &os, const llvm::DataLayout &DL) {
-  out = &os;
   init_llvm_utils(os, DL);
 }
 

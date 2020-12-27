@@ -1472,7 +1472,7 @@ Memory::Memory(State &state) : state(&state), escaped_local_blks(*this) {
 
   // Initialize a memory block for null pointer.
   if (has_null_block)
-    alloc(expr::mkUInt(0, bits_size_t), 1, GLOBAL, false, false, 0);
+    alloc(expr::mkUInt(0, bits_size_t), bits_byte / 8, GLOBAL, false, false, 0);
 
   assert(bits_for_offset <= bits_size_t);
 }
@@ -1581,8 +1581,12 @@ expr Memory::mkInput(const char *name, const ParamAttrs &attrs) {
   assert(max_bid < num_nonlocals_src);
   Pointer p(*this, name, false, false, false, attr_to_bitvec(attrs));
   auto bid = p.getShortBid();
+
   if (attrs.has(ParamAttrs::NonNull))
     state->addAxiom(p.isNonZero());
+  if (attrs.has(ParamAttrs::Align))
+    state->addAxiom(p.isAligned(attrs.align));
+
   state->addAxiom(bid.ule(max_bid));
 
   AliasSet alias(*this);
@@ -1855,8 +1859,8 @@ Memory::alloc(const expr &size, unsigned align, BlockKind blockKind,
     }
   } else {
     state->addAxiom(p.blockSize() == size_zext);
+    state->addAxiom(p.isBlockAligned(align, true));
     if (!has_null_block || bid != 0) {
-      state->addAxiom(p.isBlockAligned(align, true));
       state->addAxiom(p.getAllocType() == alloc_ty);
     }
 
@@ -1911,6 +1915,8 @@ void Memory::free(const expr &ptr, bool unconstrained) {
 }
 
 unsigned Memory::getStoreByteSize(const Type &ty) {
+  assert(bits_program_pointer != 0);
+
   if (ty.isPtrType())
     return divide_up(bits_program_pointer, 8);
 

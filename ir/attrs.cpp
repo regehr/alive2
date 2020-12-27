@@ -42,13 +42,17 @@ ostream& operator<<(ostream &os, const FnAttrs &attr) {
   if (attr.has(FnAttrs::NoReturn))
     os << " noreturn";
   if (attr.has(FnAttrs::Dereferenceable))
-    os << " dereferenceable(" << attr.derefBytes << ")";
+    os << " dereferenceable(" << attr.derefBytes << ')';
   if (attr.has(FnAttrs::NonNull))
     os << " nonnull";
   if (attr.has(FnAttrs::NoFree))
     os << " nofree";
   if (attr.has(FnAttrs::NoUndef))
     os << " noundef";
+  if (attr.has(FnAttrs::Align))
+    os << " align(" << attr.align << ')';
+  if (attr.has(FnAttrs::NoThrow))
+    os << " nothrow";
   return os;
 }
 
@@ -82,7 +86,9 @@ bool FnAttrs::operator==(const FnAttrs &rhs) const {
   if (bits != rhs.bits)
     return false;
 
-  if (has(Dereferenceable) && getDerefBytes() != rhs.getDerefBytes())
+  if (has(Dereferenceable) && derefBytes != rhs.derefBytes)
+    return false;
+  if (has(Align) && align != rhs.align)
     return false;
 
   return true;
