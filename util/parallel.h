@@ -95,3 +95,11 @@ public:
   void finishChild(bool is_timeout) override;
   void waitForAllChildren() override;
 };
+
+class null final : public parallel {
+public:
+  bool init(int max_active_children) override;
+  std::tuple<pid_t, std::ostream *, int> limitedFork() override;
+  void finishChild(bool is_timeout) override;
+  void waitForAllChildren() override;
+};

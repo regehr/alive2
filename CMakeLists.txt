@@ -130,6 +130,7 @@ set(UTIL_SRCS
   util/file.cpp
   util/parallel.cpp
   util/parallel_jobserver.cpp
+  util/parallel_null.cpp
   util/parallel_unrestricted.cpp
   util/sort.cpp
   util/stopwatch.cpp
