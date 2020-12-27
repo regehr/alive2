@@ -362,6 +362,9 @@ struct TVPass final : public llvm::ModulePass {
     if (!opt_succinct)
       t.print(*out, print_opts);
 
+    if (is_clangtv)
+      I->second.fn.setFnCallValidFlag(false);
+
     {
       auto types = verifier.getTypings();
       if (!types) {
