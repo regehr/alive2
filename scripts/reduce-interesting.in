@@ -55,10 +55,12 @@ print "we'll use $NPROCS cores.\n";
 my @CFILES;
 
 foreach my $arg (@ARGV) {
-    if (!((-f $arg) && (($arg =~ /\.i$/) || ($arg =~ /\.c$/)))) {
+    if (!((-f $arg) && (($arg =~ /\.ii$/) || ($arg =~ /\.cpp$/) ||
+                        ($arg =~ /\.i$/) || ($arg =~ /\.c$/)))) {
         print "$0 expects a list of at least one preprocessed\n";
-        print "C files each with a '.c' or '.i' extension.\n";
-        print "IMPORTANT: make sure to preprocess using Clang.\n";
+        print "C/C++ files each with a '.c', '.cpp', '.i', or '.ii'";
+        print "extension.\n";
+        print "IMPORTANT: make sure to preprocess using clang or clang++.\n";
         exit(-1);
     }
     push @CFILES, $arg;

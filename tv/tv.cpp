@@ -167,6 +167,18 @@ struct TVLegacyPass final : public llvm::ModulePass {
       return false;
     }
 
+    if (save_temps) {
+      auto fn = get_random_filename(".", "ll");
+      std::error_code EC;
+      llvm::raw_fd_ostream Out(fn, EC);
+      if (EC) {
+        *out << "Error opening output file: " << EC.message() << "!\n";
+        exit(1);
+      }
+      F.getParent()->print(Out, /*AnnotationWriter=*/nullptr);
+      *out << "Saved IR as " << fn << "\n";
+    }
+
     Transform t;
     t.src = move(I->second.fn);
     t.tgt = move(*fn);
@@ -189,18 +201,6 @@ struct TVLegacyPass final : public llvm::ModulePass {
   // If it returns false, the caller can simply move t.tgt to info.fn
   static bool verify(Transform &t, int n, const string &src_tostr) {
     printDot(t.tgt, n);
-
-    if (save_temps) {
-      auto fn = get_random_filename(".", "ll");
-      std::error_code EC;
-      llvm::raw_fd_ostream Out(fn, EC);
-      if (EC) {
-        *out << "Error opening output file: " << EC.message() << "!\n";
-        exit(1);
-      }
-      F.getParent()->print(Out, /*AnnotationWriter=*/nullptr);
-      *out << "Saved IR as " << fn << "\n";
-    }
 
     if (!opt_always_verify) {
       // Compare Alive2 IR and skip if syntactically equal
