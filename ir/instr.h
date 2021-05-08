@@ -175,9 +175,11 @@ public:
 
 class Select final : public Instr {
   Value *cond, *a, *b;
+  FastMathFlags fmath;
 public:
-  Select(Type &type, std::string &&name, Value &cond, Value &a, Value &b)
-    : Instr(type, std::move(name)), cond(&cond), a(&a), b(&b) {}
+  Select(Type &type, std::string &&name, Value &cond, Value &a, Value &b,
+         FastMathFlags fmath = {})
+    : Instr(type, std::move(name)), cond(&cond), a(&a), b(&b), fmath(fmath) {}
 
   Value *getTrueValue() const { return a; }
   Value *getFalseValue() const { return b; }
@@ -444,9 +446,9 @@ class MemInstr : public Instr {
 public:
   MemInstr(Type &type, std::string &&name) : Instr(type, move(name)) {}
 
-  // If this instruction allocates a memory block, return its size.
-  // Return 0 if it doesn't allocate anything.
-  virtual uint64_t getMaxAllocSize() const = 0;
+  // If this instruction allocates a memory block, return its size and
+  //  alignment. Returns 0 if it doesn't allocate anything.
+  virtual std::pair<uint64_t, unsigned> getMaxAllocSize() const = 0;
 
   // If this instruction performs load or store, return its max access size.
   virtual uint64_t getMaxAccessSize() const = 0;
@@ -496,7 +498,7 @@ public:
   bool initDead() const { return initially_dead; }
   void markAsInitiallyDead() { initially_dead = true; }
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxGEPOffset() const override;
   bool canFree() const override;
@@ -527,7 +529,7 @@ public:
   Value& getSize() const { return *size; }
   bool isRealloc() const { return ptr != nullptr; }
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxGEPOffset() const override;
   bool canFree() const override;
@@ -551,7 +553,7 @@ public:
   Value& getNum() const { return *num; }
   Value& getSize() const { return *size; }
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxGEPOffset() const override;
   bool canFree() const override;
@@ -572,7 +574,7 @@ public:
   StartLifetime(Value &ptr) : MemInstr(Type::voidTy, "start_lifetime"),
       ptr(&ptr) {}
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxGEPOffset() const override;
   bool canFree() const override;
@@ -594,7 +596,7 @@ public:
   Free(Value &ptr, bool heaponly = true) : MemInstr(Type::voidTy, "free"),
       ptr(&ptr), heaponly(heaponly) {}
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxGEPOffset() const override;
   bool canFree() const override;
@@ -622,7 +624,7 @@ public:
   auto& getIdxs() const { return idxs; }
   bool isInBounds() const { return inbounds; }
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxGEPOffset() const override;
   bool canFree() const override;
@@ -647,7 +649,7 @@ public:
   Value& getPtr() const { return *ptr; }
   unsigned getAlign() const { return align; }
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxGEPOffset() const override;
   bool canFree() const override;
@@ -673,7 +675,7 @@ public:
   Value& getPtr() const { return *ptr; }
   unsigned getAlign() const { return align; }
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxAccessStride() const;
   uint64_t getMaxGEPOffset() const override;
@@ -700,7 +702,7 @@ public:
   Value& getBytes() const { return *bytes; }
   unsigned getAlign() const { return align; }
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxGEPOffset() const override;
   bool canFree() const override;
@@ -720,7 +722,7 @@ class FillPoison final : public MemInstr {
 public:
   FillPoison(Value &ptr) : MemInstr(Type::voidTy, "fillpoison"), ptr(&ptr) {}
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxGEPOffset() const override;
   bool canFree() const override;
@@ -749,7 +751,7 @@ public:
   unsigned getSrcAlign() const { return align_src; }
   unsigned getDstAlign() const { return align_dst; }
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxGEPOffset() const override;
   bool canFree() const override;
@@ -774,7 +776,7 @@ public:
 
   Value &getBytes() const { return *num; }
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxGEPOffset() const override;
   bool canFree() const override;
@@ -797,7 +799,7 @@ public:
 
   Value *getPointer() const { return ptr; }
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxGEPOffset() const override;
   bool canFree() const override;
@@ -830,7 +832,7 @@ public:
   bool hasAttribute(const FnAttrs::Attribute &i) const { return attrs.has(i); }
   void setApproximated(bool flag) { approx = flag; }
 
-  uint64_t getMaxAllocSize() const override;
+  std::pair<uint64_t, unsigned> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;
   uint64_t getMaxGEPOffset() const override;
   bool canFree() const override;
