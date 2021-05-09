@@ -203,7 +203,7 @@ foreach my $dir (@dirs) {
         
         system("$OPT $p reduced3.ll -S -o reduced3-out.ll");
     } else {
-        print "  oops, can't repro this one standalone\n";
+        print "  oops, can't repro this one standalone <---------------------\n";
         $skip{$dir} = 1;
     }
 
