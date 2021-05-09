@@ -14,6 +14,7 @@ my %sizes;
 my %dups;
 my @dirs;
 my %repro;
+my %skip;
 
 my $ALIVECC = "@CMAKE_BINARY_DIR@/alivecc";
 my $OPTALIVE = "@CMAKE_BINARY_DIR@/opt-alive-test.sh";
@@ -148,6 +149,7 @@ $n = 0;
 my $orig_dir = Cwd::getcwd();
 
 foreach my $dir (@dirs) {
+    next if $skip{$dir};
     chdir $dir or die;
     system("$ALIVECC -c -O2 -mllvm -tv-smt-to=100000 reduced.ll -mllvm -tv-save-temps > out.txt 2>&1");
     open my $INF, "<error.txt" or die;
@@ -157,13 +159,15 @@ foreach my $dir (@dirs) {
     open $INF, "<out.txt" or die;
     my $found = 0;
     my $pass;
+    my $prev_ir;
     my $ir;
     while (my $line = <$INF>) {
 	if ($line =~ /^\-\- [0-9]+\. (.*)$/) {
 	    $pass = $1;
 	    next;
 	}
-	if ($line =~ /^Saved IR as (.*)$/) {
+	if ($line =~ /^Saved target IR as (.*)$/) {
+            $prev_ir = $ir;
 	    $ir = $1;
 	    next;
 	}
@@ -174,7 +178,7 @@ foreach my $dir (@dirs) {
     }
     close $INF;
     die unless $found;
-    die unless defined($ir);
+    die unless defined($prev_ir);
     die unless defined($pass);
     print "$dir: $pass\n";
 
@@ -189,14 +193,19 @@ foreach my $dir (@dirs) {
     close $T3;
     chmod 0755, "test3.sh";
 
-    system("cp $ir reduced3.ll");
-    system("./test3.sh reduced3.ll > out3.txt 2>&1");
-    my $s1 = -s "reduced3.ll";
-    system("$LLVM_REDUCE --in-place --test /bin/bash --test-arg ./test3.sh reduced3.ll > /dev/null 2>&1");
-    my $s2 = -s "reduced3.ll";
-    print "  size before llvm-reduce $s1 and after $s2\n";
-
-    system("$OPT $p reduced3.ll -S -o reduced3-out.ll");
+    system("cp ${prev_ir} reduced3.ll");
+    my $res = system("./test3.sh reduced3.ll >/dev/null 2>&1");
+    if ($res == 0) {
+        my $s1 = -s "reduced3.ll";
+        system("$LLVM_REDUCE --in-place --test /bin/bash --test-arg ./test3.sh reduced3.ll > /dev/null 2>&1");
+        my $s2 = -s "reduced3.ll";
+        print "  size before llvm-reduce $s1 and after $s2\n";
+        
+        system("$OPT $p reduced3.ll -S -o reduced3-out.ll");
+    } else {
+        print "  oops, can't repro this one standalone\n";
+        $skip{$dir} = 1;
+    }
 
     chdir $orig_dir or die;
 }

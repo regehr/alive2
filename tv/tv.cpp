@@ -158,6 +158,18 @@ struct TVLegacyPass final : public llvm::ModulePass {
       return false;
     }
 
+    if (save_temps) {
+      auto filename = get_random_filename(".", "ll");
+      std::error_code EC;
+      llvm::raw_fd_ostream Out(filename, EC);
+      if (EC) {
+        *out << "Error opening output file: " << EC.message() << "!\n";
+        exit(1);
+      }
+      F.getParent()->print(Out, /*AnnotationWriter=*/nullptr);
+      *out << "Saved target IR as " << filename << "\n";
+    }
+
     if (first || skip_verify) {
       I->second.fn = move(*fn);
       if (!opt_always_verify)
@@ -165,18 +177,6 @@ struct TVLegacyPass final : public llvm::ModulePass {
         I->second.fn_tostr = toString(I->second.fn);
       printDot(I->second.fn, I->second.n++);
       return false;
-    }
-
-    if (save_temps) {
-      auto fn = get_random_filename(".", "ll");
-      std::error_code EC;
-      llvm::raw_fd_ostream Out(fn, EC);
-      if (EC) {
-        *out << "Error opening output file: " << EC.message() << "!\n";
-        exit(1);
-      }
-      F.getParent()->print(Out, /*AnnotationWriter=*/nullptr);
-      *out << "Saved IR as " << fn << "\n";
     }
 
     Transform t;
