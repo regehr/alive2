@@ -149,7 +149,6 @@ $n = 0;
 my $orig_dir = Cwd::getcwd();
 
 foreach my $dir (@dirs) {
-    next if $skip{$dir};
     chdir $dir or die;
     system("$ALIVECC -c -O2 -mllvm -tv-smt-to=100000 reduced.ll -mllvm -tv-save-temps > out.txt 2>&1");
     open my $INF, "<error.txt" or die;
@@ -219,6 +218,7 @@ foreach my $err (sort keys %errs) {
     # secondary sort by size
     my %seen;
     foreach my $dir (sort bysize @l) {
+        next if $skip{$dir};
 	my $fp = fingerprint($dir, "reduced3.ll");
 	if (exists($seen{$fp})) {
 	    $dups{$seen{$fp}}++;
@@ -242,6 +242,7 @@ foreach my $err (sort keys %errs) {
     # secondary sort by size
     my %seen;
     foreach my $dir (sort bysize @l) {
+        next if $skip{$dir};
 
 	print $OUTF "Source:<br>\n";
 	highlight($OUTF, "$dir/reduced3.ll");
@@ -252,7 +253,7 @@ foreach my $err (sort keys %errs) {
 	my $d = $dups{$dir};
 	print $OUTF "repro: <tt>$repro{$dir}</tt><br>\n";
 	if ($d > 0) {
-	    print $OUTF "(eliding $d duplicate".
+	    print $OUTF "(eliding $d likely duplicate".
 		(($d > 1) ? "s" : "")
 		.")\n<br>\n";
 	}
