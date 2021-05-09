@@ -22,9 +22,11 @@ my $OPT = "@LLVM_BINARY_DIR@/bin/opt";
 my $LLVM_REDUCE = "@LLVM_BINARY_DIR@/bin/llvm-reduce";
 
 my %passmap = (
-    "SROA" => "-sroa",
-    "InstCombinePass" => "-instcombine",
-    "SimplifyCFGPass" => "-simplifycfg",
+    "SROA" => "--sroa",
+    "InstCombinePass" => "--instcombine",
+    "SimplifyCFGPass" => "--simplifycfg",
+    "CorrelatedValuePropagationPass" => "--correlated-propagation",
+    "JumpThreadingPass" => "--jump-threading",
     );
 
 foreach my $dir (glob "reduce-*") {
