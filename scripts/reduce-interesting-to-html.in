@@ -156,31 +156,27 @@ foreach my $dir (@dirs) {
     close $INF;
     open $INF, "<out.txt" or die;
     my $found = 0;
-    my $last_pass;
     my $pass;
-    my $before;
-    my $after;
-    my $trigger;
+    my $ir;
     while (my $line = <$INF>) {
 	if ($line =~ /^\-\- [0-9]+\. (.*)$/) {
-	    $last_pass = $1;
+	    $pass = $1;
 	    next;
 	}
 	if ($line =~ /^Saved IR as (.*)$/) {
-	    $before = $after;
-	    $after = $1;
+	    $ir = $1;
 	    next;
 	}
 	if ($line =~ /$error/) {
 	    $found = 1;
-	    $trigger = $before;
-	    $pass = $last_pass;
-	    next;
+	    last;
 	}
     }
     close $INF;
     die unless $found;
-    print "$dir: $before, $after, $pass\n";
+    die unless defined($ir);
+    die unless defined($pass);
+    print "$dir: $pass\n";
 
     my $p = $passmap{$pass};
     die unless defined($p);
@@ -193,9 +189,12 @@ foreach my $dir (@dirs) {
     close $T3;
     chmod 0755, "test3.sh";
 
-    system("cp $trigger reduced3.ll");
+    system("cp $ir reduced3.ll");
     system("./test3.sh reduced3.ll > out3.txt 2>&1");
+    my $s1 = -s "reduced3.ll";
     system("$LLVM_REDUCE --in-place --test /bin/bash --test-arg ./test3.sh reduced3.ll > /dev/null 2>&1");
+    my $s2 = -s "reduced3.ll";
+    print "  size before llvm-reduce $s1 and after $s2\n";
 
     system("$OPT $p reduced3.ll -S -o reduced3-out.ll");
 
