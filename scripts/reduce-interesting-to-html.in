@@ -14,6 +14,7 @@ my %sizes;
 my %dups;
 my @dirs;
 my %repro;
+my %skip;
 
 my $ALIVECC = "@CMAKE_BINARY_DIR@/alivecc";
 my $OPTALIVE = "@CMAKE_BINARY_DIR@/opt-alive-test.sh";
@@ -22,9 +23,11 @@ my $OPT = "@LLVM_BINARY_DIR@/bin/opt";
 my $LLVM_REDUCE = "@LLVM_BINARY_DIR@/bin/llvm-reduce";
 
 my %passmap = (
-    "SROA" => "-sroa",
-    "InstCombinePass" => "-instcombine",
-    "SimplifyCFGPass" => "-simplifycfg",
+    "SROA" => "--sroa",
+    "InstCombinePass" => "--instcombine",
+    "SimplifyCFGPass" => "--simplifycfg",
+    "CorrelatedValuePropagationPass" => "--correlated-propagation",
+    "JumpThreadingPass" => "--jump-threading",
     );
 
 foreach my $dir (glob "reduce-*") {
@@ -154,31 +157,29 @@ foreach my $dir (@dirs) {
     close $INF;
     open $INF, "<out.txt" or die;
     my $found = 0;
-    my $last_pass;
     my $pass;
-    my $before;
-    my $after;
-    my $trigger;
+    my $prev_ir;
+    my $ir;
     while (my $line = <$INF>) {
 	if ($line =~ /^\-\- [0-9]+\. (.*)$/) {
-	    $last_pass = $1;
+	    $pass = $1;
 	    next;
 	}
-	if ($line =~ /^Saved IR as (.*)$/) {
-	    $before = $after;
-	    $after = $1;
+	if ($line =~ /^Saved target IR as (.*)$/) {
+            $prev_ir = $ir;
+	    $ir = $1;
 	    next;
 	}
 	if ($line =~ /$error/) {
 	    $found = 1;
-	    $trigger = $before;
-	    $pass = $last_pass;
-	    next;
+	    last;
 	}
     }
     close $INF;
     die unless $found;
-    print "$dir: $before, $after, $pass\n";
+    die unless defined($prev_ir);
+    die unless defined($pass);
+    print "$dir: $pass\n";
 
     my $p = $passmap{$pass};
     die unless defined($p);
@@ -191,11 +192,19 @@ foreach my $dir (@dirs) {
     close $T3;
     chmod 0755, "test3.sh";
 
-    system("cp $trigger reduced3.ll");
-    system("./test3.sh reduced3.ll > out3.txt 2>&1");
-    system("$LLVM_REDUCE --in-place --test /bin/bash --test-arg ./test3.sh reduced3.ll > /dev/null 2>&1");
-
-    system("$OPT $p reduced3.ll -S -o reduced3-out.ll");
+    system("cp ${prev_ir} reduced3.ll");
+    my $res = system("./test3.sh reduced3.ll >/dev/null 2>&1");
+    if ($res == 0) {
+        my $s1 = -s "reduced3.ll";
+        system("$LLVM_REDUCE --in-place --test /bin/bash --test-arg ./test3.sh reduced3.ll > /dev/null 2>&1");
+        my $s2 = -s "reduced3.ll";
+        print "  size before llvm-reduce $s1 and after $s2\n";
+        
+        system("$OPT $p reduced3.ll -S -o reduced3-out.ll");
+    } else {
+        print "  oops, can't repro this one standalone <---------------------\n";
+        $skip{$dir} = 1;
+    }
 
     chdir $orig_dir or die;
 }
@@ -209,6 +218,7 @@ foreach my $err (sort keys %errs) {
     # secondary sort by size
     my %seen;
     foreach my $dir (sort bysize @l) {
+        next if $skip{$dir};
 	my $fp = fingerprint($dir, "reduced3.ll");
 	if (exists($seen{$fp})) {
 	    $dups{$seen{$fp}}++;
@@ -232,6 +242,7 @@ foreach my $err (sort keys %errs) {
     # secondary sort by size
     my %seen;
     foreach my $dir (sort bysize @l) {
+        next if $skip{$dir};
 
 	print $OUTF "Source:<br>\n";
 	highlight($OUTF, "$dir/reduced3.ll");
@@ -242,7 +253,7 @@ foreach my $err (sort keys %errs) {
 	my $d = $dups{$dir};
 	print $OUTF "repro: <tt>$repro{$dir}</tt><br>\n";
 	if ($d > 0) {
-	    print $OUTF "(eliding $d duplicate".
+	    print $OUTF "(eliding $d likely duplicate".
 		(($d > 1) ? "s" : "")
 		.")\n<br>\n";
 	}
