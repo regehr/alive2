@@ -73,6 +73,40 @@ const unsigned N = 100000000;
 const unsigned Z = 100000001;
 const unsigned C = 100000002;
 const unsigned V = 100000003;
+
+// V0 to V31 registers
+const unsigned V0 = 100000004;
+const unsigned V1 = 100000005;
+const unsigned V2 = 100000006;
+const unsigned V3 = 100000007;
+const unsigned V4 = 100000008;
+const unsigned V5 = 100000009;
+const unsigned V6 = 100000010;
+const unsigned V7 = 100000011;
+const unsigned V8 = 100000012;
+const unsigned V9 = 100000013;
+const unsigned V10 = 100000014;
+const unsigned V11 = 100000015;
+const unsigned V12 = 100000016;
+const unsigned V13 = 100000017;
+const unsigned V14 = 100000018;
+const unsigned V15 = 100000019;
+const unsigned V16 = 100000020;
+const unsigned V17 = 100000021;
+const unsigned V18 = 100000022;
+const unsigned V19 = 100000023;
+const unsigned V20 = 100000024;
+const unsigned V21 = 100000025;
+const unsigned V22 = 100000026;
+const unsigned V23 = 100000027;
+const unsigned V24 = 100000028;
+const unsigned V25 = 100000029;
+const unsigned V26 = 100000030;
+const unsigned V27 = 100000031;
+const unsigned V28 = 100000032;
+const unsigned V29 = 100000033;
+const unsigned V30 = 100000034;
+const unsigned V31 = 100000035;
 } // namespace llvm::AArch64
 
 namespace {
@@ -713,6 +747,14 @@ class arm2llvm {
       WideReg = AArch64::SP;
     else if (Reg >= AArch64::W0 && Reg <= AArch64::W28)
       WideReg = Reg - AArch64::W0 + AArch64::X0;
+    // Dealias rules for floating-point registers
+    // https://developer.arm.com/documentation/den0024/a/AArch64-Floating-point-and-NEON/NEON-and-Floating-Point-architecture/Floating-point
+    else if (Reg >= AArch64::H0 && Reg <= AArch64::H31)
+      WideReg = Reg - AArch64::H0 + AArch64::V0;
+    else if (Reg >= AArch64::S0 && Reg <= AArch64::S31)
+      WideReg = Reg - AArch64::S0 + AArch64::V0;
+    else if (Reg >= AArch64::D0 && Reg <= AArch64::D31)
+      WideReg = Reg - AArch64::D0 + AArch64::V0;
     auto RegAddr = RegFile[WideReg];
     assert(RegAddr);
     return RegAddr;
@@ -2582,6 +2624,14 @@ public:
       stringstream Name;
       Name << "X" << Reg - AArch64::X0;
       createRegStorage(Reg, 64, Name.str());
+    }
+
+    // Allocating storage for thirty-two 128 bit NEON registers
+    // https://developer.arm.com/documentation/den0024/a/AArch64-Floating-point-and-NEON?lang=en
+    for (unsigned Reg = AArch64::V0; Reg <= AArch64::V31; ++Reg) {
+      stringstream Name;
+      Name << "V" << Reg - AArch64::V0;
+      createRegStorage(Reg, 128, Name.str());
     }
 
     createRegStorage(AArch64::SP, 64, "SP");

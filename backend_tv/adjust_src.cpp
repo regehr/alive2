@@ -302,10 +302,6 @@ void checkSupport(Instruction &i) {
       *out << "\nERROR: llvm GC instrinsics not supported\n\n";
       exit(-1);
     }
-    if (callee.find("llvm.objc") != string::npos) {
-      *out << "\nERROR: llvm.objc instrinsics not supported\n\n";
-      exit(-1);
-    }
   }
 }
 
