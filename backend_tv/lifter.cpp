@@ -725,37 +725,57 @@ class arm2llvm {
                             LLVMBB);
   }
 
-  [[maybe_unused]] unsigned getRegSize(unsigned Reg) {
-    if (Reg >= AArch64::W0 && Reg <= AArch64::W30)
+  // Returns bitWidth corresponding the registers.
+  unsigned getRegSize(unsigned Reg) {
+    if (Reg >= AArch64::B0 && Reg <= AArch64::B31)
+      return 8;
+    if (Reg >= AArch64::H0 && Reg <= AArch64::H31)
+      return 16;
+    if ((Reg >= AArch64::W0 && Reg <= AArch64::W30) ||
+        (Reg >= AArch64::S0 && Reg <= AArch64::S31))
       return 32;
-    if (Reg >= AArch64::X0 && Reg <= AArch64::X28)
+    if ((Reg >= AArch64::X0 && Reg <= AArch64::X28) ||
+        (Reg >= AArch64::D0 && Reg <= AArch64::D31))
       return 64;
+    if ((Reg >= AArch64::V0 && Reg <= AArch64::V31) ||
+        (Reg >= AArch64::Q0 && Reg <= AArch64::Q31))
+      return 128;
     assert(false && "unhandled register");
+  }
+
+  // Maps ARM registers to backing registers
+  unsigned mapRegToBackingReg(unsigned Reg) {
+    if (Reg == AArch64::WZR)
+      return AArch64::XZR;
+    else if (Reg == AArch64::W29)
+      return AArch64::FP;
+    else if (Reg == AArch64::W30)
+      return AArch64::LR;
+    else if (Reg == AArch64::WSP)
+      return AArch64::SP;
+    else if (Reg >= AArch64::W0 && Reg <= AArch64::W28)
+      return Reg - AArch64::W0 + AArch64::X0;
+    else if (Reg >= AArch64::X0 && Reg <= AArch64::X28)
+      return Reg - AArch64::X0 + AArch64::X0;
+    // Dealias rules for floating-point registers
+    // https://developer.arm.com/documentation/den0024/a/AArch64-Floating-point-and-NEON/NEON-and-Floating-Point-architecture/Floating-point
+    else if (Reg >= AArch64::B0 && Reg <= AArch64::B31)
+      return Reg - AArch64::B0 + AArch64::V0;
+    else if (Reg >= AArch64::H0 && Reg <= AArch64::H31)
+      return Reg - AArch64::H0 + AArch64::V0;
+    else if (Reg >= AArch64::S0 && Reg <= AArch64::S31)
+      return Reg - AArch64::S0 + AArch64::V0;
+    else if (Reg >= AArch64::D0 && Reg <= AArch64::D31)
+      return Reg - AArch64::D0 + AArch64::V0;
+    assert(RegFile[Reg] && "ERROR: Cannot have a register without a backing store"
+                           " register corresponding it.");
+    return Reg;
   }
 
   // return pointer to the backing store for a register, doing the
   // necessary de-aliasing
   Value *dealiasReg(unsigned Reg) {
-    unsigned WideReg = Reg;
-    if (Reg == AArch64::WZR)
-      WideReg = AArch64::XZR;
-    else if (Reg == AArch64::W29)
-      WideReg = AArch64::FP;
-    else if (Reg == AArch64::W30)
-      WideReg = AArch64::LR;
-    else if (Reg == AArch64::WSP)
-      WideReg = AArch64::SP;
-    else if (Reg >= AArch64::W0 && Reg <= AArch64::W28)
-      WideReg = Reg - AArch64::W0 + AArch64::X0;
-    // Dealias rules for floating-point registers
-    // https://developer.arm.com/documentation/den0024/a/AArch64-Floating-point-and-NEON/NEON-and-Floating-Point-architecture/Floating-point
-    else if (Reg >= AArch64::H0 && Reg <= AArch64::H31)
-      WideReg = Reg - AArch64::H0 + AArch64::V0;
-    else if (Reg >= AArch64::S0 && Reg <= AArch64::S31)
-      WideReg = Reg - AArch64::S0 + AArch64::V0;
-    else if (Reg >= AArch64::D0 && Reg <= AArch64::D31)
-      WideReg = Reg - AArch64::D0 + AArch64::V0;
-    auto RegAddr = RegFile[WideReg];
+    auto RegAddr = RegFile[mapRegToBackingReg(Reg)];
     assert(RegAddr);
     return RegAddr;
   }
@@ -777,7 +797,8 @@ class arm2llvm {
   Value *readFromOperand(int idx, int shift = 0) {
     auto op = CurInst->getOperand(idx);
     auto size = getInstSize(CurInst->getOpcode());
-    assert(op.isImm() || op.isReg());
+    // Expr operand is required for a combination of ADRP and ADDXri address calculation
+    assert(op.isImm() || op.isReg() || op.isExpr());
 
     if (!(size == 32 || size == 64)) {
       *out << "\nERROR: only 32 and 64 bit registers supported for now\n\n";
@@ -787,10 +808,36 @@ class arm2llvm {
     Value *V = nullptr;
     if (op.isImm()) {
       V = getIntConst(op.getImm(), size);
-    } else {
+    } else if (op.isReg()) {
       V = readFromReg(op.getReg());
       if (size == 32)
         V = createTrunc(V, getIntTy(32));
+    } else {
+      auto expr = op.getExpr();
+      std::string sss;
+      llvm::raw_string_ostream ss(sss);
+      expr->print(ss, nullptr);
+      if (!sss.starts_with(":lo12:")) {
+        *out << "\nERROR: only :lo12: is supported\n\n";
+        exit(-1);
+      }
+      auto globName = sss.substr(6, string::npos);
+      if (!globals.contains(globName)) {
+        *out << "\nERROR: load mentions '" << globName << "'\n";
+        *out << "which is not a global variable we know about\n\n";
+        exit(-1);
+      }
+      auto got = GOT.find(PrevInst);
+      if (got == GOT.end() || got->second != globName) {
+        *out << "\nERROR: unexpected :lo12:\n\n";
+        exit(-1);
+      }
+      auto glob = globals.find(globName);
+      if (glob == globals.end()) {
+        *out << "\nERROR: global not found\n\n";
+        exit(-1);
+      }
+      V = glob->second;
     }
 
     if (shift != 0)
@@ -800,33 +847,50 @@ class arm2llvm {
   }
 
   void writeToOutputReg(Value *V, bool SExt = false) {
-    auto Reg = CurInst->getOperand(0).getReg();
+    auto destReg = CurInst->getOperand(0).getReg();
 
     // important!
-    if (Reg == AArch64::WZR || Reg == AArch64::XZR)
+    if (destReg == AArch64::WZR || destReg == AArch64::XZR)
       return;
 
-    auto W = V->getType()->getIntegerBitWidth();
-    if (W != 64 && W != 128) {
-      size_t regSize = getInstSize(CurInst->getOpcode());
+    // BitWidth of Value V to be written
+    unsigned int W;
+    // If vector type, compute bitwidth using product of size of each element
+    // and number of elements.
+    if(V->getType()->isVectorTy()) {
+      VectorType* v_type = (VectorType*)V->getType();
+      W = v_type->getScalarSizeInBits() * v_type->getElementCount().getFixedValue();
+    } else {
+      W = V->getType()->getIntegerBitWidth();
+    }
 
-      if (!(regSize == 32 || regSize == 64)) {
-        *out << "\nERROR: only 32 and 64 bit registers supported for now\n\n";
+    // Create LLVM instructions extending the Value V if it is smaller than the
+    // specified backing registers Xn or Vn
+    if (W != 64 && W != 128) {
+      size_t destRegSize = getRegSize(mapRegToBackingReg(destReg));
+
+      if (!(destRegSize == 32 || destRegSize == 64 || destRegSize == 128)) {
+        *out << "\nERROR: only 32, 64 and 128 bit registers supported for now\n\n";
         exit(-1);
       }
 
       // if the s flag is set, the value is smaller than 32 bits, and
       // the register we are storing it in _is_ 32 bits, we sign
       // extend to 32 bits before zero-extending to 64
-      if (SExt && regSize == 32 && W < 32) {
+      // We need to handle the first case without destRegSize since the backing
+      // store does not have a 32 bit register.
+      if (SExt && destReg >= AArch64::W0 && destReg <= AArch64::W30 && W < 32) {
         V = createSExt(V, getIntTy(32));
         V = createZExt(V, getIntTy(64));
-      } else {
+      } else if(destRegSize == 64 && W < 64) {
         auto op = SExt ? Instruction::SExt : Instruction::ZExt;
         V = createCast(V, getIntTy(64), op);
+      } else {
+        // Always zero extend to 128 bits when storing into SIMD/FP registers
+        V = createZExt(V, getIntTy(128));
       }
     }
-    createStore(V, dealiasReg(Reg));
+    createStore(V, dealiasReg(destReg));
   }
 
   Value *getV() {
@@ -997,6 +1061,7 @@ public:
     if (op2.isImm()) {
       auto baseReg = op1.getReg();
       assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+             (baseReg >= AArch64::V0 && baseReg <= AArch64::V31) ||
              (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
              (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
       auto baseAddr = readPtrFromReg(baseReg);
@@ -1021,6 +1086,7 @@ public:
 
     auto baseReg = op1.getReg();
     assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+           (baseReg >= AArch64::V0 && baseReg <= AArch64::V31) ||
            (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
            (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
     auto baseAddr = readPtrFromReg(baseReg);
@@ -2314,10 +2380,14 @@ public:
           exit(-1);
         }
         GOT[CurInst] = globName;
+      } else if(globals.contains(sss)) {
+        // TODO: Rename structure as it holds all labels, with/without relocation
+        //  strings not just labels with :got:
+        GOT[CurInst] = sss;
       } else {
         *out << "\n";
         *out << "\nERROR: Unexpected MCExpr in ADRP\n";
-        *out << "'" << sss << "' but only :got: is currently supported\n";
+        *out << "'" << sss << "' but only :got: and registers without :<>: are currently supported\n";
         exit(-1);
       }
       break;
