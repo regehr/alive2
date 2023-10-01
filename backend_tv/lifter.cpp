@@ -144,6 +144,7 @@ const set<int> instrs_32 = {
 const set<int> instrs_64 = {
     AArch64::ADDXrx,    AArch64::ADDSXrs,   AArch64::ADDSXri,
     AArch64::ADDXrs,    AArch64::ADDXri,    AArch64::ADDSXrx,
+    AArch64::ADDv8i8,
     AArch64::ADCXr,     AArch64::ADCSXr,    AArch64::ASRVXr,
     AArch64::SUBXri,    AArch64::SUBXrs,    AArch64::SUBXrx,
     AArch64::SUBSXrs,   AArch64::SUBSXri,   AArch64::SUBSXrx,
@@ -166,6 +167,7 @@ const set<int> instrs_64 = {
     AArch64::B,         AArch64::CBZW,      AArch64::CBZX,
     AArch64::CBNZW,     AArch64::CBNZX,     AArch64::CCMPXr,
     AArch64::CCMPXi,    AArch64::LDRXui,    AArch64::LDPXi,
+    AArch64::LDRDui,    AArch64::STRDui,
     AArch64::MSR,       AArch64::MRS,       AArch64::LDRSBXui,
     AArch64::LDRSBXui,  AArch64::LDRSHXui,  AArch64::STRXui,
     AArch64::STPXi,     AArch64::CCMNXi,    AArch64::CCMNXr,
@@ -1221,6 +1223,7 @@ public:
     case AArch64::ADDSXrx: {
       auto a = readFromOperand(1);
       Value *b = nullptr;
+      bool break_outer_switch = false;
 
       switch (opcode) {
       case AArch64::ADDWrx:
@@ -1260,8 +1263,16 @@ public:
       }
       default:
         b = readFromOperand(2, getImm(3));
+        if(b->getType()->isPointerTy()) {
+          auto Reg = CurInst->getOperand(0).getReg();
+          if (Reg != AArch64::WZR && Reg != AArch64::XZR)
+            createStore(b, dealiasReg(Reg));
+          break_outer_switch = true;
+          break;
+        }
         break;
       }
+      if(break_outer_switch) break;
 
       if (has_s(opcode)) {
         auto sadd = createSAddOverflow(a, b);
@@ -1311,6 +1322,23 @@ public:
           createBinop(b, getIntConst(size, size), Instruction::URem);
       auto res = createAShr(a, shift_amt);
       writeToOutputReg(res);
+      break;
+    }
+    case AArch64::ADDv8i8: {
+      auto a = readFromOperand(1);
+      // Reads from backing register as a scalar. Create cast to reinterpret bit as
+      // vector type
+      auto a_v8i8 = createCast(a,
+                               VectorType::get(i8, ElementCount::getFixed(8)),
+                               Instruction::BitCast);
+
+      auto b = readFromOperand(2);
+      // Reads from backing register as a scalar. Create cast to reinterpret bit as
+      // vector type
+      auto b_v8i8 = createCast(b,
+                               VectorType::get(i8, ElementCount::getFixed(8)),
+                               Instruction::BitCast);
+      writeToOutputReg(createAdd(a_v8i8, b_v8i8));
       break;
     }
       // SUBrx is a subtract instruction with an extended register.
@@ -2323,6 +2351,22 @@ public:
       }
       break;
     }
+    case AArch64::LDRDui: {
+      MCOperand &op2 = CurInst->getOperand(2);
+      if (op2.isExpr()) {
+        auto expr = op2.getExpr();
+        std::string sss;
+        llvm::raw_string_ostream ss(sss);
+        expr->print(ss, nullptr);
+        *out << "\nERROR: load mentions '" << sss << "' ";
+        *out << "which has not been handled yet\n\n";
+      } else {
+        auto [base, imm] = getParamsLoadImmed();
+        auto loaded = makeLoad(base, imm * 8, 8);
+        writeToOutputReg(loaded);
+      }
+      break;
+    }
     case AArch64::STRBBui: {
       auto [base, imm, val] = getParamsStoreImmed();
       makeStore(base, imm * 1, 1, createTrunc(val, i8));
@@ -2349,6 +2393,11 @@ public:
       break;
     }
     case AArch64::STRXui: {
+      auto [base, imm, val] = getParamsStoreImmed();
+      makeStore(base, imm * 8, 8, val);
+      break;
+    }
+    case AArch64::STRDui: {
       auto [base, imm, val] = getParamsStoreImmed();
       makeStore(base, imm * 8, 8, val);
       break;
