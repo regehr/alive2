@@ -289,11 +289,6 @@ void checkSupport(Instruction &i) {
       *out << "\nERROR: llvm.thread instrinsics not supported\n\n";
       exit(-1);
     }
-    if ((callee.find("llvm.experimental.gc") != string::npos) ||
-        (callee.find("llvm.experimental.stackmap") != string::npos)) {
-      *out << "\nERROR: llvm GC instrinsics not supported\n\n";
-      exit(-1);
-    }
   }
 }
 
