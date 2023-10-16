@@ -389,6 +389,9 @@ class arm2llvm {
   map<unsigned, Value *> RegFile;
   Value *stackMem{nullptr};
   unordered_map<string, GlobalVariable *> globals;
+
+  // Map of ADRP MCInsts to the string representations of the operand variable
+  // names
   unordered_map<MCInst *, string> instExprVarMap;
   bool DebugRegs;
 
@@ -848,9 +851,10 @@ class arm2llvm {
     expr->print(ss, nullptr);
 
     // If the expression starts with a relocation specifier, strip it and map
-    // the rest to a global variable. Assuming there is only one relocation
-    // specifier and it is at the beginning
+    // the rest to a string name of the global variable. Assuming there is only
+    // one relocation specifier, and it is at the beginning
     // (std::regex_constants::match_continuous).
+    // eg: ":lo12:a" becomes  "a"
     if (std::regex_search(sss, sm, re,
                           std::regex_constants::match_continuous)) {
       auto stringVar = sm.suffix();
@@ -873,7 +877,7 @@ class arm2llvm {
   }
 
   // Reads an Expr and gets the global variable corresponding the containing
-  // string variable
+  // string variable. Assuming the Expr consists of a single global variable.
   Value *getExprVar(const MCExpr *expr) {
     Value *globalVar;
     std::string sss;
@@ -901,12 +905,22 @@ class arm2llvm {
         *out << "which is not a global variable we know about\n\n";
         exit(-1);
       }
-      auto exprVar = instExprVarMap.find(PrevInst);
-      if (exprVar == instExprVarMap.end() || exprVar->second != stringVar) {
-        *out << "\nERROR: unexpected relocation specifier " << sm.str()
-             << "\n\n";
+
+      // Look through all visited ADRP instructions to find one in which
+      // stringVar was the operand used.
+      bool foundStringVar = false;
+      for(const auto& exprVar: instExprVarMap) {
+        if(exprVar.second == stringVar) {
+          foundStringVar = true;
+        }
+      }
+
+      if (!foundStringVar) {
+        *out << "\nERROR: Did not use \"" << stringVar << "\" in an ADRP "
+                                                          "instruction\n\n";
         exit(-1);
       }
+
       auto glob = globals.find(stringVar);
       if (glob == globals.end()) {
         *out << "\nERROR: global not found\n\n";
@@ -2331,25 +2345,53 @@ public:
       break;
     }
     case AArch64::LDRHHui: {
-      auto [base, imm] = getParamsLoadImmed();
-      auto loaded = makeLoad(base, imm * 2, 2);
-      writeToOutputReg(loaded);
+      MCOperand &op2 = CurInst->getOperand(2);
+      if (op2.isExpr()) {
+        Value *globalVar = getExprVar(op2.getExpr());
+        auto Reg = CurInst->getOperand(0).getReg();
+        if (Reg != AArch64::WZR && Reg != AArch64::XZR)
+          createStore(globalVar, dealiasReg(Reg));
+      } else {
+        auto [base, imm] = getParamsLoadImmed();
+        auto loaded = makeLoad(base, imm * 2, 2);
+        writeToOutputReg(loaded);
+      }
       break;
     }
     case AArch64::LDRBBui: {
-      auto [base, imm] = getParamsLoadImmed();
-      auto loaded = makeLoad(base, imm * 1, 1);
-      writeToOutputReg(loaded);
+      MCOperand &op2 = CurInst->getOperand(2);
+      if (op2.isExpr()) {
+        Value *globalVar = getExprVar(op2.getExpr());
+        auto Reg = CurInst->getOperand(0).getReg();
+        if (Reg != AArch64::WZR && Reg != AArch64::XZR)
+          createStore(globalVar, dealiasReg(Reg));
+      } else {
+        auto [base, imm] = getParamsLoadImmed();
+        auto loaded = makeLoad(base, imm * 1, 1);
+        writeToOutputReg(loaded);
+      }
+      break;
+    }
+    case AArch64::LDRBui: {
+
       break;
     }
     case AArch64::LDRWui: {
-      auto [base, imm] = getParamsLoadImmed();
-      auto loaded = makeLoad(base, imm * 4, 4);
-      writeToOutputReg(loaded);
+      MCOperand &op2 = CurInst->getOperand(2);
+      if (op2.isExpr()) {
+        Value *globalVar = getExprVar(op2.getExpr());
+        auto Reg = CurInst->getOperand(0).getReg();
+        if (Reg != AArch64::WZR && Reg != AArch64::XZR)
+          createStore(globalVar, dealiasReg(Reg));
+      } else {
+        auto [base, imm] = getParamsLoadImmed();
+        auto loaded = makeLoad(base, imm * 4, 4);
+        writeToOutputReg(loaded);
+      }
       break;
     }
     case AArch64::LDRXui: {
-      auto &op2 = CurInst->getOperand(2);
+      MCOperand &op2 = CurInst->getOperand(2);
       if (op2.isExpr()) {
         Value *globalVar = getExprVar(op2.getExpr());
         auto Reg = CurInst->getOperand(0).getReg();
@@ -2365,12 +2407,10 @@ public:
     case AArch64::LDRDui: {
       MCOperand &op2 = CurInst->getOperand(2);
       if (op2.isExpr()) {
-        auto expr = op2.getExpr();
-        std::string sss;
-        llvm::raw_string_ostream ss(sss);
-        expr->print(ss, nullptr);
-        *out << "\nERROR: load mentions '" << sss << "' ";
-        *out << "which has not been handled yet\n\n";
+        Value *globalVar = getExprVar(op2.getExpr());
+        auto Reg = CurInst->getOperand(0).getReg();
+        if (Reg != AArch64::WZR && Reg != AArch64::XZR)
+          createStore(globalVar, dealiasReg(Reg));
       } else {
         auto [base, imm] = getParamsLoadImmed();
         auto loaded = makeLoad(base, imm * 8, 8);
