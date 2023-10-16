@@ -102,6 +102,7 @@ const set<int> instrs_32 = {
     AArch64::CLZWr,    AArch64::REVWr,   AArch64::CSNEGWr,  AArch64::BICWrs,
     AArch64::BICSWrs,  AArch64::EONWrs,  AArch64::REV16Wr,  AArch64::Bcc,
     AArch64::CCMPWr,   AArch64::CCMPWi,  AArch64::LDRWui,   AArch64::LDRBBui,
+    AArch64::LDRBui,
     AArch64::LDRSBWui, AArch64::LDRSWui, AArch64::LDRSHWui, AArch64::LDRSBWui,
     AArch64::LDRHHui,  AArch64::STRWui,  AArch64::CCMNWi,   AArch64::CCMNWr,
     AArch64::STRBBui,  AArch64::STPWi,   AArch64::STURWi,   AArch64::LDPWi,
@@ -697,10 +698,16 @@ class arm2llvm {
     if (Reg >= AArch64::H0 && Reg <= AArch64::H31)
       return 16;
     if ((Reg >= AArch64::W0 && Reg <= AArch64::W30) ||
-        (Reg >= AArch64::S0 && Reg <= AArch64::S31))
+        (Reg >= AArch64::S0 && Reg <= AArch64::S31) ||
+        Reg == AArch64::WZR ||
+        Reg == AArch64::WSP)
       return 32;
     if ((Reg >= AArch64::X0 && Reg <= AArch64::X28) ||
-        (Reg >= AArch64::D0 && Reg <= AArch64::D31))
+        (Reg >= AArch64::D0 && Reg <= AArch64::D31) ||
+        Reg == AArch64::XZR ||
+        Reg == AArch64::SP ||
+        Reg == AArch64::FP ||
+        Reg == AArch64::LR)
       return 64;
     if (Reg >= AArch64::Q0 && Reg <= AArch64::Q31)
       return 128;
@@ -721,7 +728,7 @@ class arm2llvm {
       return Reg - AArch64::W0 + AArch64::X0;
     else if (Reg >= AArch64::X0 && Reg <= AArch64::X28)
       return Reg - AArch64::X0 + AArch64::X0;
-    // Dealias rules for floating-point registers
+    // Dealias rules for NEON SIMD/floating-point registers
     // https://developer.arm.com/documentation/den0024/a/AArch64-Floating-point-and-NEON/NEON-and-Floating-Point-architecture/Floating-point
     else if (Reg >= AArch64::B0 && Reg <= AArch64::B31)
       return Reg - AArch64::B0 + AArch64::Q0;
@@ -748,7 +755,8 @@ class arm2llvm {
   // always does a full-width read
   Value *readFromReg(unsigned Reg, const string &NameStr = "") {
     auto RegAddr = dealiasReg(Reg);
-    return createLoad(getIntTy(64), RegAddr, NameStr);
+    int regSize = getRegSize(Reg) <= 64?64:128;
+    return createLoad(getIntTy(regSize), RegAddr, NameStr);
   }
 
   Value *readPtrFromReg(unsigned Reg, const string &NameStr = "") {
@@ -1108,7 +1116,6 @@ public:
     if (op2.isImm()) {
       auto baseReg = op1.getReg();
       assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
-             (baseReg >= AArch64::Q0 && baseReg <= AArch64::Q31) ||
              (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
              (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
       auto baseAddr = readPtrFromReg(baseReg);
@@ -1119,8 +1126,13 @@ public:
 
   // offset and size are in bytes
   Value *makeLoad(Value *base, int offset, int size) {
+    // Get offset as a 64-bit LLVM constant
     auto offsetVal = getIntConst(offset, 64);
+
+    // Create a GEP instruction returning pointer to base + offset
     auto ptr = createGEP(getIntTy(8), base, {offsetVal}, "");
+
+    // Load Value val in the pointer returned by the GEP instruction
     return createLoad(getIntTy(8 * size), ptr);
   }
 
@@ -1133,7 +1145,6 @@ public:
 
     auto baseReg = op1.getReg();
     assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
-           (baseReg >= AArch64::Q0 && baseReg <= AArch64::Q31) ||
            (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
            (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
     auto baseAddr = readPtrFromReg(baseReg);
@@ -1157,10 +1168,16 @@ public:
     return make_tuple(baseAddr, op3.getImm(), readFromReg(op1.getReg()));
   }
 
+  // Creates instructions to store val in memory pointed by base + offset
   // offset and size are in bytes
   void makeStore(Value *base, int offset, int size, Value *val) {
+    // Get offset as a 64-bit LLVM constant
     auto offsetVal = getIntConst(offset, 64);
+
+    // Create a GEP instruction returning pointer to base + offset
     auto ptr = createGEP(getIntTy(8), base, {offsetVal}, "");
+
+    // Store Value val in the pointer returned by the GEP instruction
     createStore(val, ptr);
   }
 
@@ -2373,7 +2390,17 @@ public:
       break;
     }
     case AArch64::LDRBui: {
-
+      MCOperand &op2 = CurInst->getOperand(2);
+      if (op2.isExpr()) {
+        Value *globalVar = getExprVar(op2.getExpr());
+        auto Reg = CurInst->getOperand(0).getReg();
+        if (Reg != AArch64::WZR && Reg != AArch64::XZR)
+          createStore(globalVar, dealiasReg(Reg));
+      } else {
+        auto [base, imm] = getParamsLoadImmed();
+        auto loaded = makeLoad(base, imm * 1, 1);
+        writeToOutputReg(loaded);
+      }
       break;
     }
     case AArch64::LDRWui: {
