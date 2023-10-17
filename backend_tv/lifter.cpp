@@ -920,6 +920,7 @@ class arm2llvm {
       for(const auto& exprVar: instExprVarMap) {
         if(exprVar.second == stringVar) {
           foundStringVar = true;
+          break;
         }
       }
 
@@ -1124,12 +1125,14 @@ public:
     assert(false && "expected immediate or expression for operand 2 of a load");
   }
 
+  // Creates instructions to store val in memory pointed by base + offset
   // offset and size are in bytes
   Value *makeLoad(Value *base, int offset, int size) {
     // Get offset as a 64-bit LLVM constant
     auto offsetVal = getIntConst(offset, 64);
 
-    // Create a GEP instruction returning pointer to base + offset
+    // Create a GEP instruction based on a byte addressing basis (8 bits)
+    // returning pointer to base + offset
     auto ptr = createGEP(getIntTy(8), base, {offsetVal}, "");
 
     // Load Value val in the pointer returned by the GEP instruction
@@ -1174,7 +1177,8 @@ public:
     // Get offset as a 64-bit LLVM constant
     auto offsetVal = getIntConst(offset, 64);
 
-    // Create a GEP instruction returning pointer to base + offset
+    // Create a GEP instruction based on a byte addressing basis (8 bits)
+    // returning pointer to base + offset
     auto ptr = createGEP(getIntTy(8), base, {offsetVal}, "");
 
     // Store Value val in the pointer returned by the GEP instruction
@@ -1279,7 +1283,7 @@ public:
     case AArch64::ADDSXrs:
     case AArch64::ADDSXri:
     case AArch64::ADDSXrx: {
-      auto a = readFromOperand(1);
+      Value *a = nullptr;
       Value *b = nullptr;
       bool break_outer_switch = false;
 
@@ -1322,6 +1326,7 @@ public:
       default:
         b = readFromOperand(2, getImm(3));
         if (b->getType()->isPointerTy()) {
+          // This control path is for PC-Relative addressing.
           auto Reg = CurInst->getOperand(0).getReg();
           if (Reg != AArch64::WZR && Reg != AArch64::XZR)
             createStore(b, dealiasReg(Reg));
@@ -1330,8 +1335,12 @@ public:
         }
         break;
       }
+      // Let the PC-Relative addressing control path break here instead of the
+      // end of the case as we do not want any more instructions created.
       if (break_outer_switch)
         break;
+
+      a = readFromOperand(1);
 
       if (has_s(opcode)) {
         auto sadd = createSAddOverflow(a, b);
