@@ -88,30 +88,30 @@ const set<int> s_flag = {
 };
 
 const set<int> instrs_32 = {
-    AArch64::ADDWrx,   AArch64::ADDSWrs, AArch64::ADDSWri,  AArch64::ADDWrs,
-    AArch64::ADDWri,   AArch64::ADDSWrx, AArch64::ADCWr,    AArch64::ADCSWr,
-    AArch64::ASRVWr,   AArch64::SUBWri,  AArch64::SUBWrs,   AArch64::SUBWrx,
-    AArch64::SUBSWrs,  AArch64::SUBSWri, AArch64::SUBSWrx,  AArch64::SBFMWri,
-    AArch64::CSELWr,   AArch64::ANDWri,  AArch64::ANDWrr,   AArch64::ANDWrs,
-    AArch64::ANDSWri,  AArch64::ANDSWrr, AArch64::ANDSWrs,  AArch64::MADDWrrr,
-    AArch64::MSUBWrrr, AArch64::EORWri,  AArch64::CSINVWr,  AArch64::CSINCWr,
-    AArch64::MOVZWi,   AArch64::MOVNWi,  AArch64::MOVKWi,   AArch64::LSLVWr,
-    AArch64::LSRVWr,   AArch64::ORNWrs,  AArch64::UBFMWri,  AArch64::BFMWri,
-    AArch64::ORRWrs,   AArch64::ORRWri,  AArch64::SDIVWr,   AArch64::UDIVWr,
-    AArch64::EXTRWrri, AArch64::EORWrs,  AArch64::RORVWr,   AArch64::RBITWr,
-    AArch64::CLZWr,    AArch64::REVWr,   AArch64::CSNEGWr,  AArch64::BICWrs,
-    AArch64::BICSWrs,  AArch64::EONWrs,  AArch64::REV16Wr,  AArch64::Bcc,
-    AArch64::CCMPWr,   AArch64::CCMPWi,  AArch64::LDRWui,   AArch64::LDRBBui,
-    AArch64::LDRBui,
-    AArch64::LDRSBWui, AArch64::LDRSWui, AArch64::LDRSHWui, AArch64::LDRSBWui,
-    AArch64::LDRHHui,  AArch64::STRWui,  AArch64::CCMNWi,   AArch64::CCMNWr,
-    AArch64::STRBBui,  AArch64::STPWi,   AArch64::STURWi,   AArch64::LDPWi,
-    AArch64::STRWpre};
+    AArch64::ADDWrx,   AArch64::ADDSWrs,  AArch64::ADDSWri,  AArch64::ADDWrs,
+    AArch64::ADDWri,   AArch64::ADDSWrx,  AArch64::ADCWr,    AArch64::ADCSWr,
+    AArch64::ASRVWr,   AArch64::SUBWri,   AArch64::SUBWrs,   AArch64::SUBWrx,
+    AArch64::SUBSWrs,  AArch64::SUBSWri,  AArch64::SUBSWrx,  AArch64::SBFMWri,
+    AArch64::CSELWr,   AArch64::ANDWri,   AArch64::ANDWrr,   AArch64::ANDWrs,
+    AArch64::ANDSWri,  AArch64::ANDSWrr,  AArch64::ANDSWrs,  AArch64::MADDWrrr,
+    AArch64::MSUBWrrr, AArch64::EORWri,   AArch64::CSINVWr,  AArch64::CSINCWr,
+    AArch64::MOVZWi,   AArch64::MOVNWi,   AArch64::MOVKWi,   AArch64::LSLVWr,
+    AArch64::LSRVWr,   AArch64::ORNWrs,   AArch64::UBFMWri,  AArch64::BFMWri,
+    AArch64::ORRWrs,   AArch64::ORRWri,   AArch64::SDIVWr,   AArch64::UDIVWr,
+    AArch64::EXTRWrri, AArch64::EORWrs,   AArch64::RORVWr,   AArch64::RBITWr,
+    AArch64::CLZWr,    AArch64::REVWr,    AArch64::CSNEGWr,  AArch64::BICWrs,
+    AArch64::BICSWrs,  AArch64::EONWrs,   AArch64::REV16Wr,  AArch64::Bcc,
+    AArch64::CCMPWr,   AArch64::CCMPWi,   AArch64::LDRWui,   AArch64::LDRBBui,
+    AArch64::LDRBui,   AArch64::LDRSBWui, AArch64::LDRSWui,  AArch64::LDRSHWui,
+    AArch64::LDRSBWui, AArch64::LDRHHui,  AArch64::LDRHui,   AArch64::STRWui,
+    AArch64::CCMNWi,   AArch64::CCMNWr,   AArch64::STRBBui,  AArch64::STRBui,
+    AArch64::STPWi,    AArch64::STRHHui,  AArch64::STRHui,   AArch64::STURWi,
+    AArch64::LDPWi,    AArch64::STRWpre};
 
 const set<int> instrs_64 = {
     AArch64::ADDXrx,    AArch64::ADDSXrs,   AArch64::ADDSXri,
     AArch64::ADDXrs,    AArch64::ADDXri,    AArch64::ADDSXrx,
-    AArch64::ADDv8i8,   AArch64::ADCXr,     AArch64::ADCSXr,
+    AArch64::ADDv4i16,  AArch64::ADDv8i8,   AArch64::ADCXr,     AArch64::ADCSXr,
     AArch64::ASRVXr,    AArch64::SUBXri,    AArch64::SUBXrs,
     AArch64::SUBXrx,    AArch64::SUBSXrs,   AArch64::SUBSXri,
     AArch64::SUBSXrx,   AArch64::SBFMXri,   AArch64::CSELXr,
@@ -901,7 +901,7 @@ class arm2llvm {
 
     // If the expression starts with a relocation specifier, strip it and look
     // for the rest (variable in the Expr) in the instExprVarMap and globals.
-    // Assuming there is only one relocation specifier and it is at the
+    // Assuming there is only one relocation specifier, and it is at the
     // beginning (std::regex_constants::match_continuous).
     if (std::regex_search(sss, sm, re,
                           std::regex_constants::match_continuous)) {
@@ -1172,7 +1172,7 @@ public:
   }
 
   // Creates instructions to store val in memory pointed by base + offset
-  // offset and size are in bytes
+  //  and size are in bytes
   void makeStore(Value *base, int offset, int size, Value *val) {
     // Get offset as a 64-bit LLVM constant
     auto offsetVal = getIntConst(offset, 64);
@@ -1392,21 +1392,44 @@ public:
       writeToOutputReg(res);
       break;
     }
-    case AArch64::ADDv8i8: {
+    case AArch64::ADDv8i8:
+    case AArch64::ADDv4i16: {
       auto a = readFromOperand(1);
-      // Reads from backing register as a scalar. Create cast to reinterpret bit
-      // as vector type
-      auto a_v8i8 =
-          createCast(a, VectorType::get(i8, ElementCount::getFixed(8)),
-                     Instruction::BitCast);
+      CastInst *a_vector = nullptr;
+      CastInst *b_vector = nullptr;
 
-      auto b = readFromOperand(2);
-      // Reads from backing register as a scalar. Create cast to reinterpret bit
-      // as vector type
-      auto b_v8i8 =
-          createCast(b, VectorType::get(i8, ElementCount::getFixed(8)),
-                     Instruction::BitCast);
-      writeToOutputReg(createAdd(a_v8i8, b_v8i8));
+      switch (opcode) {
+        case AArch64::ADDv8i8: {
+          // Reads from backing register as a scalar. Create cast to reinterpret bit as vector type
+          a_vector =
+              createCast(a, VectorType::get(i8, ElementCount::getFixed(8)),
+                         Instruction::BitCast);
+
+          auto b = readFromOperand(2);
+          // Reads from backing register as a scalar. Create cast to reinterpret bit as vector type
+          b_vector =
+              createCast(b, VectorType::get(i8, ElementCount::getFixed(8)),
+                         Instruction::BitCast);
+          break;
+        }
+        case AArch64::ADDv4i16: {
+          // Reads from backing register as a scalar. Create cast to reinterpret bit
+          // as vector type
+          a_vector =
+              createCast(a, VectorType::get(i16, ElementCount::getFixed(4)),
+                         Instruction::BitCast);
+
+          auto b = readFromOperand(2);
+          // Reads from backing register as a scalar. Create cast to reinterpret bit
+          // as vector type
+          b_vector =
+              createCast(b, VectorType::get(i16, ElementCount::getFixed(4)),
+                         Instruction::BitCast);
+        }
+        break;
+      }
+
+      writeToOutputReg(createAdd(a_vector, b_vector));
       break;
     }
       // SUBrx is a subtract instruction with an extended register.
@@ -2384,6 +2407,20 @@ public:
       }
       break;
     }
+    case AArch64::LDRHui: {
+      MCOperand &op2 = CurInst->getOperand(2);
+      if (op2.isExpr()) {
+        Value *globalVar = getExprVar(op2.getExpr());
+        auto Reg = CurInst->getOperand(0).getReg();
+        if (Reg != AArch64::WZR && Reg != AArch64::XZR)
+          createStore(globalVar, dealiasReg(Reg));
+      } else {
+        auto [base, imm] = getParamsLoadImmed();
+        auto loaded = makeLoad(base, imm * 2, 2);
+        writeToOutputReg(loaded);
+      }
+      break;
+    }
     case AArch64::LDRBBui: {
       MCOperand &op2 = CurInst->getOperand(2);
       if (op2.isExpr()) {
@@ -2460,6 +2497,11 @@ public:
       break;
     }
     case AArch64::STRHHui: {
+      auto [base, imm, val] = getParamsStoreImmed();
+      makeStore(base, imm * 2, 2, createTrunc(val, i16));
+      break;
+    }
+    case AArch64::STRHui: {
       auto [base, imm, val] = getParamsStoreImmed();
       makeStore(base, imm * 2, 2, createTrunc(val, i16));
       break;
