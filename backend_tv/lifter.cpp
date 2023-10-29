@@ -433,7 +433,7 @@ class arm2llvm {
   // field in the instruction)
   Value *reg_shift(Value *value, int encodedShift) {
     int shift_type = (encodedShift >> 6) & 0x7;
-    auto W = value->getType()->getIntegerBitWidth();
+    auto W = getBitWidth(value);
     auto exp = getIntConst(encodedShift & 0x3f, W);
 
     switch (shift_type) {
@@ -593,7 +593,7 @@ class arm2llvm {
   }
 
   Value *createLShr(Value *a, Value *b) {
-    auto W = b->getType()->getIntegerBitWidth();
+    auto W = getBitWidth(b);
     auto mask = getIntConst(W - 1, W);
     auto masked =
         BinaryOperator::Create(Instruction::And, mask, b, nextName(), LLVMBB);
@@ -606,7 +606,7 @@ class arm2llvm {
   }
 
   Value *createAShr(Value *a, Value *b) {
-    auto W = b->getType()->getIntegerBitWidth();
+    auto W = getBitWidth(b);
     auto mask = getIntConst(W - 1, W);
     auto masked =
         BinaryOperator::Create(Instruction::And, mask, b, nextName(), LLVMBB);
@@ -619,7 +619,7 @@ class arm2llvm {
   }
 
   Value *createShl(Value *a, Value *b) {
-    auto W = b->getType()->getIntegerBitWidth();
+    auto W = getBitWidth(b);
     auto mask = getIntConst(W - 1, W);
     auto masked =
         BinaryOperator::Create(Instruction::And, mask, b, nextName(), LLVMBB);
@@ -665,7 +665,7 @@ class arm2llvm {
       return createTrunc(v, ty);
     } else {
       auto *shift =
-          createLShr(v, getIntConst(n2, v->getType()->getIntegerBitWidth()));
+          createLShr(v, getIntConst(n2, getBitWidth(v)));
       auto *ty = getIntTy(1 + n1 - n2);
       return createTrunc(shift, ty);
     }
@@ -689,6 +689,53 @@ class arm2llvm {
                        const string &NameStr = "") {
     return CastInst::Create(op, v, t, (NameStr == "") ? nextName() : NameStr,
                             LLVMBB);
+  }
+
+  // Creates LLVM IR instructions by takes two values with the same number of bits,
+  // bit casting them to vectors of numElements elements of size elementTypeInBits
+  // and adding them.
+  BinaryOperator *createVectorAdd(Value *a, Value *b, int elementTypeInBits, int numElements) {
+    assert(getBitWidth(a) == getBitWidth(b) &&
+           "Expected values of same bit width");
+
+    // Create cast to reinterpret bits as a vector type
+    CastInst *a_vector =
+        createCast(a,
+                   VectorType::get(getIntTy(elementTypeInBits),
+                                   ElementCount::getFixed(numElements)),
+                   Instruction::BitCast);
+
+    // Create cast to reinterpret bits as a vector type
+    CastInst *b_vector =
+        createCast(b,
+                   VectorType::get(getIntTy(elementTypeInBits),
+                                   ElementCount::getFixed(numElements)),
+                   Instruction::BitCast);
+
+    return BinaryOperator::Create(Instruction::Add,
+                                  a_vector,
+                                  b_vector,
+                                  nextName(),
+                                  LLVMBB);
+  }
+
+  // Returns Bit Width of Value V
+  static unsigned int getBitWidth(Value *V) {
+    unsigned int bitWidth = 0;
+
+    // If vector type, compute bitwidth using product of size of each element
+    // and number of elements.
+    if (V->getType()->isVectorTy()) {
+      auto *v_type = (VectorType *)V->getType();
+      bitWidth = v_type->getScalarSizeInBits() *
+          v_type->getElementCount().getFixedValue();
+    } else {
+      bitWidth = V->getType()->getIntegerBitWidth();
+    }
+
+    assert(bitWidth && "Could not determine bit width of value\n");
+
+    return bitWidth;
   }
 
   // Returns bitWidth corresponding the registers.
@@ -804,16 +851,7 @@ class arm2llvm {
       return;
 
     // BitWidth of Value V to be written
-    unsigned int W;
-    // If vector type, compute bitwidth using product of size of each element
-    // and number of elements.
-    if (V->getType()->isVectorTy()) {
-      VectorType *v_type = (VectorType *)V->getType();
-      W = v_type->getScalarSizeInBits() *
-          v_type->getElementCount().getFixedValue();
-    } else {
-      W = V->getType()->getIntegerBitWidth();
-    }
+    unsigned int W = getBitWidth(V);
 
     // Create LLVM instructions extending the Value V if it is smaller than the
     // specified backing registers Xn or Vn
@@ -1033,11 +1071,11 @@ class arm2llvm {
 
   tuple<Value *, tuple<Value *, Value *, Value *, Value *>>
   addWithCarry(Value *l, Value *r, Value *carryIn) {
-    assert(l->getType()->getIntegerBitWidth() ==
-           r->getType()->getIntegerBitWidth());
-    assert(carryIn->getType()->getIntegerBitWidth() == 1);
+    assert(getBitWidth(l) ==
+           getBitWidth(r));
+    assert(getBitWidth(carryIn) == 1);
 
-    auto size = l->getType()->getIntegerBitWidth();
+    auto size = getBitWidth(l);
 
     // Deal with size+1 bit integers so that we can easily calculate the c/v
     // PSTATE bits.
@@ -1065,34 +1103,34 @@ class arm2llvm {
   };
 
   void setV(Value *V) {
-    assert(V->getType()->getIntegerBitWidth() == 1);
+    assert(getBitWidth(V) == 1);
     createStore(V, dealiasReg(AArch64::V));
   }
 
   void setZ(Value *V) {
-    assert(V->getType()->getIntegerBitWidth() == 1);
+    assert(getBitWidth(V) == 1);
     createStore(V, dealiasReg(AArch64::Z));
   }
 
   void setN(Value *V) {
-    assert(V->getType()->getIntegerBitWidth() == 1);
+    assert(getBitWidth(V) == 1);
     createStore(V, dealiasReg(AArch64::N));
   }
 
   void setC(Value *V) {
-    assert(V->getType()->getIntegerBitWidth() == 1);
+    assert(getBitWidth(V) == 1);
     createStore(V, dealiasReg(AArch64::C));
   }
 
   void setZUsingResult(Value *V) {
-    auto W = V->getType()->getIntegerBitWidth();
+    auto W = getBitWidth(V);
     auto zero = getIntConst(0, W);
     auto z = createICmp(ICmpInst::Predicate::ICMP_EQ, V, zero);
     setZ(z);
   }
 
   void setNUsingResult(Value *V) {
-    auto W = V->getType()->getIntegerBitWidth();
+    auto W = getBitWidth(V);
     auto zero = getIntConst(0, W);
     auto n = createICmp(ICmpInst::Predicate::ICMP_SLT, V, zero);
     setN(n);
@@ -1395,41 +1433,27 @@ public:
     case AArch64::ADDv8i8:
     case AArch64::ADDv4i16: {
       auto a = readFromOperand(1);
-      CastInst *a_vector = nullptr;
-      CastInst *b_vector = nullptr;
+      auto b = readFromOperand(2);
+      int elementTypeInBits;
+      int numElements;
 
       switch (opcode) {
-        case AArch64::ADDv8i8: {
-          // Reads from backing register as a scalar. Create cast to reinterpret bit as vector type
-          a_vector =
-              createCast(a, VectorType::get(i8, ElementCount::getFixed(8)),
-                         Instruction::BitCast);
-
-          auto b = readFromOperand(2);
-          // Reads from backing register as a scalar. Create cast to reinterpret bit as vector type
-          b_vector =
-              createCast(b, VectorType::get(i8, ElementCount::getFixed(8)),
-                         Instruction::BitCast);
-          break;
-        }
-        case AArch64::ADDv4i16: {
-          // Reads from backing register as a scalar. Create cast to reinterpret bit
-          // as vector type
-          a_vector =
-              createCast(a, VectorType::get(i16, ElementCount::getFixed(4)),
-                         Instruction::BitCast);
-
-          auto b = readFromOperand(2);
-          // Reads from backing register as a scalar. Create cast to reinterpret bit
-          // as vector type
-          b_vector =
-              createCast(b, VectorType::get(i16, ElementCount::getFixed(4)),
-                         Instruction::BitCast);
-        }
+      case AArch64::ADDv8i8: {
+        numElements = 8;
+        elementTypeInBits = 8;
+        break;
+      }
+      case AArch64::ADDv4i16: {
+        numElements = 4;
+        elementTypeInBits = 16;
+        break;
+      }
+      default:
+        assert(false && "missed case");
         break;
       }
 
-      writeToOutputReg(createAdd(a_vector, b_vector));
+      writeToOutputReg(createVectorAdd(a, b, elementTypeInBits, numElements));
       break;
     }
       // SUBrx is a subtract instruction with an extended register.
@@ -1802,7 +1826,7 @@ public:
 
       auto ssub = createSSubOverflow(lhs, imm_rhs);
       auto result = createExtractValue(ssub, {0});
-      auto zero_val = getIntConst(0, result->getType()->getIntegerBitWidth());
+      auto zero_val = getIntConst(0, getBitWidth(result));
 
       auto new_n = createICmp(ICmpInst::Predicate::ICMP_SLT, result, zero_val);
       auto new_z = createICmp(ICmpInst::Predicate::ICMP_EQ, lhs, imm_rhs);
@@ -2627,7 +2651,7 @@ public:
       assert(operand != nullptr && "operand is null");
       auto cond_val =
           createICmp(ICmpInst::Predicate::ICMP_EQ, operand,
-                     getIntConst(0, operand->getType()->getIntegerBitWidth()));
+                     getIntConst(0, getBitWidth(operand)));
       auto dst_true = getBB(Fn, CurInst->getOperand(1));
       assert(MCBB->getSuccs().size() == 2 && "expected 2 successors");
 
@@ -2648,7 +2672,7 @@ public:
       assert(operand != nullptr && "operand is null");
       auto cond_val =
           createICmp(ICmpInst::Predicate::ICMP_NE, operand,
-                     getIntConst(0, operand->getType()->getIntegerBitWidth()));
+                     getIntConst(0, getBitWidth(operand)));
 
       auto dst_true = getBB(Fn, CurInst->getOperand(1));
       assert(MCBB->getSuccs().size() == 2 && "expected 2 successors");
