@@ -141,7 +141,8 @@ const set<int> instrs_64 = {
     AArch64::ADRP,      AArch64::STRXpre,
 };
 
-const set<int> instrs_128 = {AArch64::FMOVXDr, AArch64::INSvi64gpr};
+const set<int> instrs_128 = {AArch64::FMOVXDr, AArch64::INSvi64gpr,
+                             AArch64::LDPQi, AArch64::STPQi, AArch64::ADDv8i16};
 
 bool has_s(int instr) {
   return s_flag.contains(instr);
@@ -379,7 +380,7 @@ class arm2llvm {
     return Type::getIntNTy(Ctx, bits);
   }
 
-  Value *getIntConst(uint64_t val, int bits) {
+  Value *getIntConst(uint64_t val, u_int64_t bits) {
     return ConstantInt::get(Ctx, llvm::APInt(bits, val));
   }
 
@@ -781,7 +782,7 @@ class arm2llvm {
     return createLoad(PointerType::get(Ctx, 0), RegAddr, NameStr);
   }
 
-  void updateReg(Value *v, int reg) {
+  void updateReg(Value *v, u_int64_t reg) {
     createStore(v, dealiasReg(reg));
   }
 
@@ -795,8 +796,8 @@ class arm2llvm {
     // calculation
     assert(op.isImm() || op.isReg() || op.isExpr());
 
-    if (!(size == 32 || size == 64)) {
-      *out << "\nERROR: only 32 and 64 bit registers supported for now\n\n";
+    if (!(size == 32 || size == 64 || size == 128)) {
+      *out << "\nERROR: Only 32, 64 and 128 bit registers supported\n\n";
       exit(-1);
     }
 
@@ -805,8 +806,14 @@ class arm2llvm {
       V = getIntConst(op.getImm(), size);
     } else if (op.isReg()) {
       V = readFromReg(op.getReg());
-      if (size == 32)
+      if (size == 32) {
+        // Always truncate since backing registers are either 64 or 128 bits
         V = createTrunc(V, getIntTy(32));
+      } else if (size == 64 && getBitWidth(V) == 128) {
+        // Only truncate if the backing register read from is 128 bits
+        // i.e. If value V is 128 bits
+        V = createTrunc(V, getIntTy(64));
+      }
     } else {
       V = getExprVar(op.getExpr());
     }
@@ -1171,7 +1178,7 @@ public:
 
   // Creates instructions to store val in memory pointed by base + offset
   //  and size are in bytes
-  void storeToMemory(Value *base, int offset, int size, Value *val) {
+  void storeToMemory(Value *base, u_int64_t offset, u_int64_t size, Value *val) {
     // Get offset as a 64-bit LLVM constant
     auto offsetVal = getIntConst(offset, 64);
 
@@ -1380,26 +1387,33 @@ public:
     }
 
     case AArch64::ADDv8i8:
-    case AArch64::ADDv4i16: {
+    case AArch64::ADDv4i16:
+    case AArch64::ADDv8i16: {
       auto a = readFromOperand(1);
       auto b = readFromOperand(2);
       int elementTypeInBits;
       int numElements;
 
       switch (opcode) {
-      case AArch64::ADDv8i8: {
-        numElements = 8;
-        elementTypeInBits = 8;
-        break;
-      }
-      case AArch64::ADDv4i16: {
-        numElements = 4;
-        elementTypeInBits = 16;
-        break;
-      }
-      default:
-        assert(false && "missed case");
-        break;
+        case AArch64::ADDv8i8: {
+          numElements = 8;
+          elementTypeInBits = 8;
+          break;
+        }
+        case AArch64::ADDv4i16: {
+          numElements = 4;
+          elementTypeInBits = 16;
+          break;
+        }
+        case AArch64::ADDv8i16: {
+          numElements = 8;
+          elementTypeInBits = 16;
+          break;
+        }
+        default: {
+          assert(false && "missed case");
+          break;
+        }
       }
 
       writeToOutputReg(createVectorAdd(a, b, elementTypeInBits, numElements));
@@ -2473,7 +2487,8 @@ public:
     }
 
     case AArch64::LDPWi:
-    case AArch64::LDPXi: {
+    case AArch64::LDPXi:
+    case AArch64::LDPQi: {
       auto &op0 = CurInst->getOperand(0);
       auto &op1 = CurInst->getOperand(1);
       auto &op2 = CurInst->getOperand(2);
@@ -2487,7 +2502,27 @@ public:
              (baseReg == AArch64::XZR));
       auto baseAddr = readPtrFromReg(baseReg);
 
-      auto size = (opcode == AArch64::LDPWi) ? 4 : 8;
+      int size = 0;
+      switch (opcode) {
+        case AArch64::LDPWi: {
+          size = 4;
+          break;
+        }
+        case AArch64::LDPXi: {
+          size = 8;
+          break;
+        }
+        case AArch64::LDPQi: {
+          size = 16;
+          break;
+        }
+        default: {
+          *out << "\nError Unknown opcode\n";
+          visitError(I);
+        }
+      }
+      assert(size != 0);
+
       auto imm = op3.getImm();
       auto out1 = op0.getReg();
       auto out2 = op1.getReg();
@@ -2503,7 +2538,8 @@ public:
     }
 
     case AArch64::STPXi:
-    case AArch64::STPWi: {
+    case AArch64::STPWi:
+    case AArch64::STPQi: {
       auto &op0 = CurInst->getOperand(0);
       auto &op1 = CurInst->getOperand(1);
       auto &op2 = CurInst->getOperand(2);
@@ -2516,16 +2552,36 @@ public:
              (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
              (baseReg == AArch64::FP));
       auto baseAddr = readPtrFromReg(baseReg);
-
-      auto size = (opcode == AArch64::STPWi) ? 4 : 8;
-      auto imm = op3.getImm();
       auto val1 = readFromReg(op0.getReg());
-      if (size == 4)
-        val1 = createTrunc(val1, i32);
-      storeToMemory(baseAddr, imm * size, size, val1);
       auto val2 = readFromReg(op1.getReg());
-      if (size == 4)
-        val2 = createTrunc(val2, i32);
+
+      auto imm = op3.getImm();
+
+      u_int64_t size = 0;
+      switch (opcode) {
+        case AArch64::STPWi: {
+          size = 4;
+          val1 = createTrunc(val1, i32);
+          val2 = createTrunc(val2, i32);
+          break;
+        }
+        case AArch64::STPXi: {
+          size = 8;
+          break;
+        }
+        case AArch64::STPQi: {
+          size = 16;
+          break;
+        }
+        default: {
+          *out << "\nError Unknown opcode\n";
+          visitError(I);
+          break;
+        }
+      }
+      assert(size != 0);
+
+      storeToMemory(baseAddr, imm * size, size, val1);
       storeToMemory(baseAddr, (imm + 1) * size, size, val2);
       break;
     }
