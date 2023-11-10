@@ -142,7 +142,8 @@ const set<int> instrs_64 = {
 };
 
 const set<int> instrs_128 = {AArch64::FMOVXDr, AArch64::INSvi64gpr,
-                             AArch64::LDPQi, AArch64::STPQi, AArch64::ADDv8i16};
+                             AArch64::LDPQi, AArch64::STPQi, AArch64::ADDv8i16,
+                             AArch64::LDRQui, AArch64::STRQui};
 
 bool has_s(int instr) {
   return s_flag.contains(instr);
@@ -1186,7 +1187,7 @@ public:
   }
 
   // Creates instructions to store val in memory pointed by base + offset
-  //  and size are in bytes
+  // offset and size are in bytes
   void storeToMemory(Value *base, u_int64_t offset, u_int64_t size,
                      Value *val) {
     // Get offset as a 64-bit LLVM constant
@@ -2376,7 +2377,8 @@ public:
     case AArch64::LDRHui:
     case AArch64::LDRWui:
     case AArch64::LDRXui:
-    case AArch64::LDRDui: {
+    case AArch64::LDRDui:
+    case AArch64::LDRQui: {
       unsigned size;
       if (opcode == AArch64::LDRBBui || opcode == AArch64::LDRBui)
         size = 1;
@@ -2386,6 +2388,8 @@ public:
         size = 4;
       else if (opcode == AArch64::LDRXui || opcode == AArch64::LDRDui)
         size = 8;
+      else if (opcode == AArch64::LDRQui)
+        size = 16;
       else
         assert(false);
 
@@ -2468,6 +2472,11 @@ public:
     case AArch64::STRDui: {
       auto [base, imm, val] = getParamsStoreImmed();
       storeToMemory(base, imm * 8, 8, val);
+      break;
+    }
+    case AArch64::STRQui: {
+      auto [base, imm, val] = getParamsStoreImmed();
+      storeToMemory(base, imm * 16, 16, val);
       break;
     }
 
