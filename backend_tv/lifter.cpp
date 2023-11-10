@@ -141,9 +141,9 @@ const set<int> instrs_64 = {
     AArch64::STURXi,    AArch64::ADRP,      AArch64::STRXpre,
 };
 
-const set<int> instrs_128 = {AArch64::FMOVXDr, AArch64::INSvi64gpr,
-                             AArch64::LDPQi, AArch64::STPQi, AArch64::ADDv8i16,
-                             AArch64::LDRQui, AArch64::STRQui};
+const set<int> instrs_128 = {
+    AArch64::FMOVXDr,  AArch64::INSvi64gpr, AArch64::LDPQi, AArch64::STPQi,
+    AArch64::ADDv8i16, AArch64::LDRQui,     AArch64::STRQui};
 
 bool has_s(int instr) {
   return s_flag.contains(instr);
@@ -2685,7 +2685,7 @@ public:
       // TODO: check FP and LR? vector registers??
       assertSame(initialSP, readFromReg(AArch64::SP));
       for (unsigned r = 19; r <= 28; ++r)
-	assertSame(initialReg[r], readFromReg(AArch64::X0 + r));
+        assertSame(initialReg[r], readFromReg(AArch64::X0 + r));
 
       auto *retTyp = srcFn.getReturnType();
       if (retTyp->isVoidTy()) {
