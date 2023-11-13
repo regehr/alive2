@@ -236,6 +236,14 @@ class arm2llvm {
     assert(false && "basic block not found in getBBByName()");
   }
 
+  static bool isSIMDandFPReg(MCOperand &op) {
+    assert(op.isReg() && "[isSIMDandFPReg] expected register operand");
+    unsigned reg = op.getReg();
+    return (reg >= AArch64::Q0 && reg <= AArch64::Q31) ||
+           (reg >= AArch64::D0 && reg <= AArch64::D31) ||
+           (reg >= AArch64::S0 && reg <= AArch64::S31);
+  }
+
   Type *getIntTy(unsigned int bits) {
     // just trying to catch silly errors, remove this sometime
     assert(bits > 0 && bits <= 128);
@@ -264,25 +272,32 @@ class arm2llvm {
   };
 
   const set<int> instrs_32 = {
-      AArch64::ADDWrx,   AArch64::ADDSWrs,  AArch64::ADDSWri, AArch64::ADDWrs,
-      AArch64::ADDWri,   AArch64::ADDSWrx,  AArch64::ADCWr,   AArch64::ADCSWr,
-      AArch64::ASRVWr,   AArch64::SUBWri,   AArch64::SUBWrs,  AArch64::SUBWrx,
-      AArch64::SUBSWrs,  AArch64::SUBSWri,  AArch64::SUBSWrx, AArch64::SBFMWri,
-      AArch64::CSELWr,   AArch64::ANDWri,   AArch64::ANDWrr,  AArch64::ANDWrs,
-      AArch64::ANDSWri,  AArch64::ANDSWrr,  AArch64::ANDSWrs, AArch64::MADDWrrr,
-      AArch64::MSUBWrrr, AArch64::EORWri,   AArch64::CSINVWr, AArch64::CSINCWr,
-      AArch64::MOVZWi,   AArch64::MOVNWi,   AArch64::MOVKWi,  AArch64::LSLVWr,
-      AArch64::LSRVWr,   AArch64::ORNWrs,   AArch64::UBFMWri, AArch64::BFMWri,
-      AArch64::ORRWrs,   AArch64::ORRWri,   AArch64::SDIVWr,  AArch64::UDIVWr,
-      AArch64::EXTRWrri, AArch64::EORWrs,   AArch64::RORVWr,  AArch64::RBITWr,
-      AArch64::CLZWr,    AArch64::REVWr,    AArch64::CSNEGWr, AArch64::BICWrs,
-      AArch64::BICSWrs,  AArch64::EONWrs,   AArch64::REV16Wr, AArch64::Bcc,
-      AArch64::CCMPWr,   AArch64::CCMPWi,   AArch64::LDRWui,  AArch64::LDRBBui,
-      AArch64::LDRBui,   AArch64::LDRSBWui, AArch64::LDRSWui, AArch64::LDRSHWui,
-      AArch64::LDRSBWui, AArch64::LDRHHui,  AArch64::LDRHui,  AArch64::STRWui,
-      AArch64::CCMNWi,   AArch64::CCMNWr,   AArch64::STRBBui, AArch64::STRBui,
-      AArch64::STPWi,    AArch64::STRHHui,  AArch64::STRHui,  AArch64::STURWi,
-      AArch64::LDPWi,    AArch64::STRWpre};
+      AArch64::ADDWrx,   AArch64::ADDSWrs,  AArch64::ADDSWri,
+      AArch64::ADDWrs,   AArch64::ADDWri,   AArch64::ADDSWrx,
+      AArch64::ADCWr,    AArch64::ADCSWr,   AArch64::ASRVWr,
+      AArch64::SUBWri,   AArch64::SUBWrs,   AArch64::SUBWrx,
+      AArch64::SUBSWrs,  AArch64::SUBSWri,  AArch64::SUBSWrx,
+      AArch64::SBFMWri,  AArch64::CSELWr,   AArch64::ANDWri,
+      AArch64::ANDWrr,   AArch64::ANDWrs,   AArch64::ANDSWri,
+      AArch64::ANDSWrr,  AArch64::ANDSWrs,  AArch64::MADDWrrr,
+      AArch64::MSUBWrrr, AArch64::EORWri,   AArch64::CSINVWr,
+      AArch64::CSINCWr,  AArch64::MOVZWi,   AArch64::MOVNWi,
+      AArch64::MOVKWi,   AArch64::LSLVWr,   AArch64::LSRVWr,
+      AArch64::ORNWrs,   AArch64::UBFMWri,  AArch64::BFMWri,
+      AArch64::ORRWrs,   AArch64::ORRWri,   AArch64::SDIVWr,
+      AArch64::UDIVWr,   AArch64::EXTRWrri, AArch64::EORWrs,
+      AArch64::RORVWr,   AArch64::RBITWr,   AArch64::CLZWr,
+      AArch64::REVWr,    AArch64::CSNEGWr,  AArch64::BICWrs,
+      AArch64::BICSWrs,  AArch64::EONWrs,   AArch64::REV16Wr,
+      AArch64::Bcc,      AArch64::CCMPWr,   AArch64::CCMPWi,
+      AArch64::LDRWui,   AArch64::LDRSui,   AArch64::LDRBBui,
+      AArch64::LDRBui,   AArch64::LDRSBWui, AArch64::LDRSWui,
+      AArch64::LDRSHWui, AArch64::LDRSBWui, AArch64::LDRHHui,
+      AArch64::LDRHui,   AArch64::STRWui,   AArch64::CCMNWi,
+      AArch64::CCMNWr,   AArch64::STRBBui,  AArch64::STRBui,
+      AArch64::STPWi,    AArch64::STRHHui,  AArch64::STRHui,
+      AArch64::STURWi,   AArch64::STRSui,   AArch64::LDPWi,
+      AArch64::STRWpre};
 
   const set<int> instrs_64 = {
       AArch64::ADDXrx,    AArch64::ADDSXrs,   AArch64::ADDSXri,
@@ -315,11 +330,13 @@ class arm2llvm {
       AArch64::LDRSBXui,  AArch64::LDRSHXui,  AArch64::STRXui,
       AArch64::STPXi,     AArch64::CCMNXi,    AArch64::CCMNXr,
       AArch64::STURXi,    AArch64::ADRP,      AArch64::STRXpre,
+      AArch64::XTNv8i8,
   };
 
-  const set<int> instrs_128 = {
-      AArch64::FMOVXDr,  AArch64::INSvi64gpr, AArch64::LDPQi, AArch64::STPQi,
-      AArch64::ADDv8i16, AArch64::LDRQui,     AArch64::STRQui};
+  const set<int> instrs_128 = {AArch64::FMOVXDr,  AArch64::INSvi64gpr,
+                               AArch64::LDPQi,    AArch64::STPQi,
+                               AArch64::ADDv8i16, AArch64::UADDLv8i8_v8i16,
+                               AArch64::LDRQui,   AArch64::STRQui};
 
   bool has_s(int instr) {
     return s_flag.contains(instr);
@@ -451,6 +468,10 @@ class arm2llvm {
     auto uadd_decl = Intrinsic::getDeclaration(
         LiftedModule, Intrinsic::uadd_with_overflow, a->getType());
     return CallInst::Create(uadd_decl, {a, b}, nextName(), LLVMBB);
+  }
+
+  ExtractElementInst *createExtractElement(Value *v, Value *idx) {
+    return ExtractElementInst::Create(v, idx, nextName(), LLVMBB);
   }
 
   ExtractValueInst *createExtractValue(Value *v, ArrayRef<unsigned> idxs) {
@@ -620,22 +641,32 @@ class arm2llvm {
            "Expected values of same bit width");
 
     // Create cast to reinterpret bits as a vector type
-    CastInst *a_vector =
+    Value *a_vector =
         createCast(a,
                    VectorType::get(getIntTy(elementTypeInBits),
                                    ElementCount::getFixed(numElements)),
                    Instruction::BitCast);
 
     // Create cast to reinterpret bits as a vector type
-    CastInst *b_vector =
+    Value *b_vector =
         createCast(b,
                    VectorType::get(getIntTy(elementTypeInBits),
                                    ElementCount::getFixed(numElements)),
                    Instruction::BitCast);
 
-    return BinaryOperator::Create(Instruction::Add,
-                                  a_vector,
-                                  b_vector,
+    // Vector extension for instructions that require it
+    switch (CurInst->getOpcode()) {
+    case AArch64::UADDLv8i8_v8i16:
+      a_vector = createZExt(
+          a_vector, VectorType::get(getIntTy(2 * elementTypeInBits),
+                                    ElementCount::getFixed(numElements)));
+      b_vector = createZExt(
+          b_vector, VectorType::get(getIntTy(2 * elementTypeInBits),
+                                    ElementCount::getFixed(numElements)));
+      break;
+    }
+
+    return BinaryOperator::Create(Instruction::Add, a_vector, b_vector,
                                   nextName(), LLVMBB);
   }
 
@@ -718,8 +749,7 @@ class arm2llvm {
   // always does a full-width read
   Value *readFromReg(unsigned Reg, const string &NameStr = "") {
     auto RegAddr = dealiasReg(Reg);
-    return createLoad(getIntTy(getRegSize(mapRegToBackingReg(Reg))),
-                      RegAddr,
+    return createLoad(getIntTy(getRegSize(mapRegToBackingReg(Reg))), RegAddr,
                       NameStr);
   }
 
@@ -786,7 +816,7 @@ class arm2llvm {
     unsigned int W = getBitWidth(V);
     size_t destRegSize = getRegSize(mapRegToBackingReg(destReg));
 
-    if(V->getType()->isVectorTy()) {
+    if (V->getType()->isVectorTy()) {
       // Cast to integer type before storing into register
       V = createCast(V, getIntTy(W), Instruction::BitCast);
     }
@@ -1404,13 +1434,18 @@ public:
 
     case AArch64::ADDv8i8:
     case AArch64::ADDv4i16:
-    case AArch64::ADDv8i16: {
+    case AArch64::ADDv8i16:
+    case AArch64::UADDLv8i8_v8i16: {
       auto a = readFromOperand(1);
       auto b = readFromOperand(2);
       int elementTypeInBits;
       int numElements;
 
       switch (opcode) {
+      case AArch64::UADDLv8i8_v8i16: {
+        a = createTrunc(a, getIntTy(64));
+        b = createTrunc(b, getIntTy(64));
+      }
       case AArch64::ADDv8i8: {
         numElements = 8;
         elementTypeInBits = 8;
@@ -1427,7 +1462,7 @@ public:
         break;
       }
       default: {
-        assert(false && "missed case in ADDv8i16");
+        assert(false && "missed case");
         break;
       }
       }
@@ -2418,6 +2453,7 @@ public:
     case AArch64::LDRHHui:
     case AArch64::LDRHui:
     case AArch64::LDRWui:
+    case AArch64::LDRSui:
     case AArch64::LDRXui:
     case AArch64::LDRDui:
     case AArch64::LDRQui: {
@@ -2426,7 +2462,7 @@ public:
         size = 1;
       else if (opcode == AArch64::LDRHHui || opcode == AArch64::LDRHui)
         size = 2;
-      else if (opcode == AArch64::LDRWui)
+      else if (opcode == AArch64::LDRWui || opcode == AArch64::LDRSui)
         size = 4;
       else if (opcode == AArch64::LDRXui || opcode == AArch64::LDRDui)
         size = 8;
@@ -2502,6 +2538,11 @@ public:
       break;
     }
     case AArch64::STRWui: {
+      auto [base, imm, val] = getParamsStoreImmed();
+      storeToMemory(base, imm * 4, 4, createTrunc(val, i32));
+      break;
+    }
+    case AArch64::STRSui: {
       auto [base, imm, val] = getParamsStoreImmed();
       storeToMemory(base, imm * 4, 4, createTrunc(val, i32));
       break;
@@ -2840,6 +2881,62 @@ public:
         createBranch(cond_val, dst_false, dst_true);
       else
         createBranch(cond_val, dst_true, dst_false);
+      break;
+    }
+    case AArch64::XTNv8i8: {
+      auto &op0 = CurInst->getOperand(0);
+      auto &op1 = CurInst->getOperand(1);
+      assert(isSIMDandFPReg(op0) && isSIMDandFPReg(op0));
+
+      // The source value is always a vector with total width of 128 bits
+      // The destination value is always a vector with total of 64 bits but we
+      // need to read the full 128 bit SIMD&FP register and change the value
+      // appropriately
+      Value *src = readFromReg(op1.getReg());
+      assert(getBitWidth(src) == 128 &&
+             "Source value is not a vector with 128 bits");
+
+      // elementSize is in bits
+      u_int64_t elementSize, numElements, part;
+      switch (opcode) {
+      case AArch64::XTNv8i8:
+        numElements = 8;
+        elementSize = 8;
+        part = 0;
+        break;
+      default:
+        *out << "\nError Unknown opcode\n";
+        visitError();
+        break;
+      }
+
+      // BitCast src to a vector of numElements x (2*elementSize)
+      assert(numElements * (2 * elementSize) == 128 &&
+             "BitCasting to wrong type");
+      Value *src_vector =
+          createCast(src,
+                     VectorType::get(getIntTy(2 * elementSize),
+                                     ElementCount::getFixed(numElements)),
+                     Instruction::BitCast);
+      Value *new_dest_vector = createTrunc(
+          src_vector, VectorType::get(getIntTy(elementSize),
+                                      ElementCount::getFixed(numElements)));
+
+      if (part == 1) {
+        // Have to preserve the lower 64 bits so, read from register and insert
+        // to the upper 64 bits
+        Value *dest = readFromReg(op0.getReg());
+        Value *original_dest_vector = createCast(
+            dest, VectorType::get(getIntTy(64), ElementCount::getFixed(2)),
+            Instruction::BitCast);
+
+        new_dest_vector = createInsertElement(
+            original_dest_vector, new_dest_vector, getIntConst(1, 32));
+      }
+
+      // Write 64 bit or 128 bit register to output
+      // 64 bit will be zero-extended to 128 bit by this function
+      updateOutputReg(new_dest_vector);
       break;
     }
 
