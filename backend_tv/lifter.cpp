@@ -236,7 +236,7 @@ class arm2llvm {
     assert(false && "basic block not found in getBBByName()");
   }
 
-  Type *getIntTy(int bits) {
+  Type *getIntTy(unsigned int bits) {
     // just trying to catch silly errors, remove this sometime
     assert(bits > 0 && bits <= 128);
     return Type::getIntNTy(Ctx, bits);
@@ -611,7 +611,7 @@ class arm2llvm {
                             LLVMBB);
   }
 
-  // Creates LLVM IR instructions by takes two values with the same number of
+  // Creates LLVM IR instructions which takes two values with the same number of
   // bits, bit casting them to vectors of numElements elements of size
   // elementTypeInBits and adding them.
   BinaryOperator *createVectorAdd(Value *a, Value *b, int elementTypeInBits,
@@ -633,7 +633,9 @@ class arm2llvm {
                                    ElementCount::getFixed(numElements)),
                    Instruction::BitCast);
 
-    return BinaryOperator::Create(Instruction::Add, a_vector, b_vector,
+    return BinaryOperator::Create(Instruction::Add,
+                                  a_vector,
+                                  b_vector,
                                   nextName(), LLVMBB);
   }
 
@@ -716,8 +718,9 @@ class arm2llvm {
   // always does a full-width read
   Value *readFromReg(unsigned Reg, const string &NameStr = "") {
     auto RegAddr = dealiasReg(Reg);
-    int regSize = getRegSize(Reg) <= 64 ? 64 : 128;
-    return createLoad(getIntTy(regSize), RegAddr, NameStr);
+    return createLoad(getIntTy(getRegSize(mapRegToBackingReg(Reg))),
+                      RegAddr,
+                      NameStr);
   }
 
   Value *readPtrFromReg(unsigned Reg, const string &NameStr = "") {
@@ -781,17 +784,24 @@ class arm2llvm {
 
     // BitWidth of Value V to be written
     unsigned int W = getBitWidth(V);
+    size_t destRegSize = getRegSize(mapRegToBackingReg(destReg));
+
+    if(V->getType()->isVectorTy()) {
+      // Cast to integer type before storing into register
+      V = createCast(V, getIntTy(W), Instruction::BitCast);
+    }
 
     // Create LLVM instructions extending the Value V if it is smaller than the
     // specified backing registers Xn or Vn
-    if (W != 64 && W != 128) {
-      size_t destRegSize = getRegSize(mapRegToBackingReg(destReg));
-
+    if (W != destRegSize) {
       if (!(destRegSize == 32 || destRegSize == 64 || destRegSize == 128)) {
         *out << "\nERROR: only 32, 64, and 128 bit registers supported for "
                 "now\n\n";
         exit(-1);
       }
+
+      assert(!V->getType()->isVectorTy() && "Value should not be vector type "
+                                            "before extension");
 
       // if the s flag is set, the value is smaller than 32 bits, and
       // the register we are storing it in _is_ 32 bits, we sign
@@ -2503,7 +2513,7 @@ public:
     }
     case AArch64::STRDui: {
       auto [base, imm, val] = getParamsStoreImmed();
-      storeToMemory(base, imm * 8, 8, val);
+      storeToMemory(base, imm * 8, 8, createTrunc(val, i64));
       break;
     }
     case AArch64::STRQui: {
