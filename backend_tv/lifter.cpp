@@ -3143,6 +3143,12 @@ public:
     CallInst::Create(fTy, F, {N, Z, C, V}, "", LLVMBB);
   }
 
+  void printGlobals() {
+    for (auto &g : globals) {
+      *out << g.first << " = " << g.second << "\n";
+    }
+  }
+
   Function *run() {
     auto i8 = getIntTy(8);
     auto i32 = getIntTy(32);
@@ -3162,7 +3168,7 @@ public:
     // default to adding instructions to the entry block
     LLVMBB = BBs[0].first;
 
-    // create globals
+    // Create globals found in the MachineFunction
     for (const auto &[name, size] : MF.globals) {
       auto *AT = ArrayType::get(i8, size);
       auto *g = new GlobalVariable(*LiftedModule, AT, false,
@@ -3170,6 +3176,21 @@ public:
                                    nullptr, name);
       g->setAlignment(MaybeAlign(16));
       globals[name] = g;
+    }
+
+    // Create globals not found in the MachineFunction
+    // iterate through globals of the LLVM srnFn's parent module
+    for (auto &srcFnGlobal : srcFn.getParent()->globals()) {
+      // If the global has not been created yet, create it
+      if (globals[srcFnGlobal.getName().str()] == nullptr) {
+        auto *AT = ArrayType::get(
+            i8, srcFnGlobal.getValueType()->getPrimitiveSizeInBits() / 8);
+        auto *g = new GlobalVariable(*LiftedModule, AT, false,
+                                     GlobalValue::LinkageTypes::ExternalLinkage,
+                                     nullptr, srcFnGlobal.getName());
+        g->setAlignment(MaybeAlign(16));
+        globals[srcFnGlobal.getName().str()] = g;
+      }
     }
 
     // number of 8-byte stack slots for paramters
@@ -3324,9 +3345,8 @@ public:
 
 // We're overriding MCStreamerWrapper to generate an MCFunction
 // from the arm assembly. MCStreamerWrapper provides callbacks to handle
-// different parts of the assembly file. The main callbacks that we're
-// using right now are emitInstruction and emitLabel to access the
-// instruction and labels in the arm assembly.
+// different parts of the assembly file. The callbacks that we're
+// using right now are all emit* functions.
 class MCStreamerWrapper final : public MCStreamer {
   enum ASMLine { none = 0, label = 1, non_term_instr = 2, terminator = 3 };
 
