@@ -333,7 +333,8 @@ class arm2llvm {
       AArch64::STRXui,    AArch64::STPXi,     AArch64::CCMNXi,
       AArch64::CCMNXr,    AArch64::STURXi,    AArch64::ADRP,
       AArch64::STRXpre,   AArch64::XTNv8i8,   AArch64::FADDDrr,
-      AArch64::FSUBDrr,   AArch64::FCMPDrr};
+      AArch64::FSUBDrr,   AArch64::FCMPDrr,   AArch64::NOTv8i8,
+  };
 
   const set<int> instrs_128 = {
       AArch64::FMOVXDr,         AArch64::LDPQi,           AArch64::STPQi,
@@ -3080,6 +3081,38 @@ public:
       // Write 64 bit or 128 bit register to output
       // 64 bit will be zero-extended to 128 bit by this function
       updateOutputReg(new_dest_vector);
+      break;
+    }
+    // TODO: Find a test case for and add NOTv16i8 which is similar to NOTv8i8.
+    case AArch64::NOTv8i8: {
+      // Getting registers
+      auto &op0 = CurInst->getOperand(0);
+      auto &op1 = CurInst->getOperand(1);
+
+      assert(isSIMDandFPReg(op0) && isSIMDandFPReg(op1) &&
+             "NOTv8i8: Expected SIMD&FP registers");
+
+      // Read source value and create an integer value for -1 with 64 bits
+      auto src = readFromReg(op1.getReg());
+      auto neg_one = getIntConst(-1, 64);
+
+      // Truncate source value to 64 bits
+      auto truncd_src = createTrunc(src, getIntTy(64));
+
+      // Bit-cast the truncated source value and -1 to a vector of 8 x 8-bit
+      auto src_vector = createCast(
+          truncd_src, VectorType::get(getIntTy(8), ElementCount::getFixed(8)),
+          Instruction::BitCast);
+      auto neg_one_vector = createCast(
+          neg_one, VectorType::get(getIntTy(8), ElementCount::getFixed(8)),
+          Instruction::BitCast);
+
+      // Perform bitwise NOT operation on the source value by XORing it with -1
+      auto result = createXor(src_vector, neg_one_vector);
+
+      // Write to destination registerF
+      updateOutputReg(result);
+
       break;
     }
 
