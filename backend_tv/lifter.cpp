@@ -254,6 +254,44 @@ class arm2llvm {
     return ConstantInt::get(Ctx, llvm::APInt(bits, val));
   }
 
+  // Create and return a ConstantVector out of the vector of Constant vals
+  Value *getVectorConst(const std::vector<Constant *>& vals) {
+    return ConstantVector::get(vals);
+  }
+
+  // Takes an LLVM Type*, constructs a mask value of this type with
+  // mask value = W - 1 where W is the bitwidth of the element type if a vector
+  // type or the bitwidth of the type if an integer
+  Value *getMaskByType(Type *llvm_ty) {
+    assert((llvm_ty->isIntegerTy() || llvm_ty->isVectorTy()) &&
+           "getMaskByType only handles integer or vector type right now\n");
+    Value *mask_value;
+
+    if (llvm_ty->isIntegerTy()) {
+      auto W = llvm_ty->getIntegerBitWidth();
+      mask_value = getIntConst(W - 1, W);
+    } else if (llvm_ty->isVectorTy()) {
+      VectorType *shift_value_type = ((VectorType *)llvm_ty);
+      auto W_element = shift_value_type->getScalarSizeInBits();
+      auto numElements = shift_value_type->getElementCount().getFixedValue();
+      vector<Constant *> widths;
+
+      // Push numElements x (W_element-1)'s to the vector widths
+      for (unsigned int i = 0; i < numElements; i++) {
+        widths.push_back(ConstantInt::get(Ctx, llvm::APInt(W_element,
+                                                           W_element-1)));
+      }
+
+      // Get a ConstantVector of the widths
+      mask_value = getVectorConst(widths);
+    } else {
+      *out << "ERROR: getMaskByType encountered unhandled/unknown type\n";
+      exit(-1);
+    }
+
+    return mask_value;
+  }
+
   [[noreturn]] void visitError() {
     out->flush();
     string str(instrPrinter->getOpcodeName(CurInst->getOpcode()));
@@ -559,8 +597,13 @@ class arm2llvm {
   }
 
   Value *createLShr(Value *a, Value *b) {
-    auto W = getBitWidth(b);
-    auto mask = getIntConst(W - 1, W);
+    assert(a->getType() == b->getType() && "Expected values of same type");
+
+    // Get an LLVM mask for b to get shift value less than bit width of a
+    // In LLVM shift >= bitwidth -> poison
+    auto mask = getMaskByType(a->getType());
+    assert(a->getType() == mask->getType() && "Expected values of same type");
+
     auto masked =
         BinaryOperator::Create(Instruction::And, mask, b, nextName(), LLVMBB);
     return BinaryOperator::Create(Instruction::LShr, a, masked, nextName(),
@@ -572,8 +615,13 @@ class arm2llvm {
   }
 
   Value *createAShr(Value *a, Value *b) {
-    auto W = getBitWidth(b);
-    auto mask = getIntConst(W - 1, W);
+    assert(a->getType() == b->getType() && "Expected values of same type");
+
+    // Get an LLVM mask for b to get shift value less than bit width of a
+    // In LLVM shift >= bitwidth -> poison
+    auto mask = getMaskByType(a->getType());
+    assert(a->getType() == mask->getType() && "Expected values of same type");
+
     auto masked =
         BinaryOperator::Create(Instruction::And, mask, b, nextName(), LLVMBB);
     return BinaryOperator::Create(Instruction::AShr, a, masked, nextName(),
@@ -585,8 +633,13 @@ class arm2llvm {
   }
 
   Value *createShl(Value *a, Value *b) {
-    auto W = getBitWidth(b);
-    auto mask = getIntConst(W - 1, W);
+    assert(a->getType() == b->getType() && "Expected values of same type");
+
+    // Get an LLVM mask for b to get shift value less than bit width of a
+    // In LLVM shift >= bitwidth -> poison
+    auto mask = getMaskByType(a->getType());
+    assert(a->getType() == mask->getType() && "Expected values of same type");
+
     auto masked =
         BinaryOperator::Create(Instruction::And, mask, b, nextName(), LLVMBB);
     return BinaryOperator::Create(Instruction::Shl, a, masked, nextName(),
