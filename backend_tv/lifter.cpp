@@ -255,7 +255,7 @@ class arm2llvm {
   }
 
   // Create and return a ConstantVector out of the vector of Constant vals
-  Value *getVectorConst(const std::vector<Constant *>& vals) {
+  Value *getVectorConst(const std::vector<Constant *> &vals) {
     return ConstantVector::get(vals);
   }
 
@@ -278,8 +278,8 @@ class arm2llvm {
 
       // Push numElements x (W_element-1)'s to the vector widths
       for (unsigned int i = 0; i < numElements; i++) {
-        widths.push_back(ConstantInt::get(Ctx, llvm::APInt(W_element,
-                                                           W_element-1)));
+        widths.push_back(
+            ConstantInt::get(Ctx, llvm::APInt(W_element, W_element - 1)));
       }
 
       // Get a ConstantVector of the widths
@@ -372,6 +372,7 @@ class arm2llvm {
       AArch64::CCMNXr,    AArch64::STURXi,    AArch64::ADRP,
       AArch64::STRXpre,   AArch64::XTNv8i8,   AArch64::FADDDrr,
       AArch64::FSUBDrr,   AArch64::FCMPDrr,   AArch64::NOTv8i8,
+      AArch64::CNTv8i8,
   };
 
   const set<int> instrs_128 = {
@@ -3145,12 +3146,10 @@ public:
     }
     // TODO: Find a test case for and add NOTv16i8 which is similar to NOTv8i8.
     case AArch64::NOTv8i8: {
-      // Getting registers
-      auto &op0 = CurInst->getOperand(0);
+      // Getting source register
       auto &op1 = CurInst->getOperand(1);
 
-      assert(isSIMDandFPReg(op0) && isSIMDandFPReg(op1) &&
-             "NOTv8i8: Expected SIMD&FP registers");
+      assert(isSIMDandFPReg(op1) && "NOTv8i8: Expected SIMD&FP registers");
 
       // Read source value and create an integer value for -1 with 64 bits
       auto src = readFromReg(op1.getReg());
@@ -3172,6 +3171,67 @@ public:
 
       // Write to destination registerF
       updateOutputReg(result);
+
+      break;
+    }
+    case AArch64::CNTv8i8: {
+      // Getting source register
+      auto &op1 = CurInst->getOperand(1);
+
+      assert(isSIMDandFPReg(op1) && "CNTv8i8: Expected SIMD&FP registers");
+
+      // Computing Hammming weight in a tree pattern
+      // Read source value
+      auto src = readFromReg(op1.getReg());
+
+      // Truncate source value to 64 bits
+      Value *old_src = createTrunc(src, getIntTy(64));
+
+      for (unsigned int i = 0; i < 3; i++) {
+        auto elementTypeInBits = (unsigned int)pow(2, i + 1);
+        auto numElements = (unsigned int)pow(2, 5 - i);
+
+        // Create an LLVM vector by which to shift src
+        vector<Constant *> shift_values;
+        vector<Constant *> mask_values;
+
+        // Get values for the shift and mask vectors
+        for (unsigned int j = 0; j < numElements; j++) {
+          // shift value is 2^i for each element
+          shift_values.push_back(ConstantInt::get(
+              Ctx, llvm::APInt(elementTypeInBits, elementTypeInBits / 2)));
+
+          // mask value is 2^(2^i) - 1 for each element
+          mask_values.push_back(ConstantInt::get(
+              Ctx,
+              llvm::APInt(elementTypeInBits,
+                          (unsigned int)pow(2, elementTypeInBits / 2) - 1)));
+        }
+
+        // Bit-cast the source value to a vector of numElements x
+        // elementTypeInBits
+        auto new_src_vector =
+            createCast(old_src,
+                       VectorType::get(getIntTy(elementTypeInBits),
+                                       ElementCount::getFixed(numElements)),
+                       Instruction::BitCast);
+        // Shift each element right by 2^i bits to bring upper bits to lower
+        // half
+        auto shifted_src_vector =
+            createLShr(new_src_vector, getVectorConst(shift_values));
+
+        // Mask the src and shifted_src by 2^(2^i) - 1
+        auto masked0_src =
+            createAnd(new_src_vector, getVectorConst(mask_values));
+        auto masked1_src =
+            createAnd(shifted_src_vector, getVectorConst(mask_values));
+
+        // Perform bitwise ADD operation on the masked source values
+        old_src = createAdd(masked0_src, masked1_src);
+      }
+
+      // Store the result in the destination register
+      updateOutputReg(old_src);
 
       break;
     }
