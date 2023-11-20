@@ -381,7 +381,9 @@ class arm2llvm {
       AArch64::ADDv4i32,        AArch64::ADDv16i8,        AArch64::SUBv8i16,
       AArch64::USUBLv8i8_v8i16, AArch64::SUBv2i64,        AArch64::SUBv4i32,
       AArch64::SUBv16i8,        AArch64::LDRQui,          AArch64::STRQui,
-      AArch64::FMOVDi,          AArch64::FMOVSi,          AArch64::FMOVWSr};
+      AArch64::FMOVDi,          AArch64::FMOVSi,          AArch64::FMOVWSr,
+      AArch64::CNTv16i8,
+  };
 
   bool has_s(int instr) {
     return s_flag.contains(instr);
@@ -3174,22 +3176,29 @@ public:
 
       break;
     }
-    case AArch64::CNTv8i8: {
+    case AArch64::CNTv8i8:
+    case AArch64::CNTv16i8: {
       // Getting source register
       auto &op1 = CurInst->getOperand(1);
 
-      assert(isSIMDandFPReg(op1) && "CNTv8i8: Expected SIMD&FP registers");
+      assert(isSIMDandFPReg(op1) && "CNT: Expected SIMD&FP registers");
 
-      // Computing Hammming weight in a tree pattern
+      // Computing Hammming weight for each element in a tree pattern
       // Read source value
-      auto src = readFromReg(op1.getReg());
+      auto old_src = readFromReg(op1.getReg());
+      unsigned int numElements_power;
 
-      // Truncate source value to 64 bits
-      Value *old_src = createTrunc(src, getIntTy(64));
+      if (opcode == AArch64::CNTv8i8) {
+        // Truncate source value to 64 bits
+        old_src = createTrunc(old_src, getIntTy(64));
+        numElements_power = 5;
+      } else if (opcode == AArch64::CNTv16i8) {
+        numElements_power = 6;
+      }
 
       for (unsigned int i = 0; i < 3; i++) {
         auto elementTypeInBits = (unsigned int)pow(2, i + 1);
-        auto numElements = (unsigned int)pow(2, 5 - i);
+        auto numElements = (unsigned int)pow(2, numElements_power - i);
 
         // Create an LLVM vector by which to shift src
         vector<Constant *> shift_values;
