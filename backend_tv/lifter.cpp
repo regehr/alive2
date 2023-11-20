@@ -255,7 +255,7 @@ class arm2llvm {
   }
 
   // Create and return a ConstantVector out of the vector of Constant vals
-  Value *getVectorConst(const std::vector<Constant *>& vals) {
+  Value *getVectorConst(const std::vector<Constant *> &vals) {
     return ConstantVector::get(vals);
   }
 
@@ -278,8 +278,8 @@ class arm2llvm {
 
       // Push numElements x (W_element-1)'s to the vector widths
       for (unsigned int i = 0; i < numElements; i++) {
-        widths.push_back(ConstantInt::get(Ctx, llvm::APInt(W_element,
-                                                           W_element-1)));
+        widths.push_back(
+            ConstantInt::get(Ctx, llvm::APInt(W_element, W_element - 1)));
       }
 
       // Get a ConstantVector of the widths
@@ -372,6 +372,7 @@ class arm2llvm {
       AArch64::CCMNXr,    AArch64::STURXi,    AArch64::ADRP,
       AArch64::STRXpre,   AArch64::XTNv8i8,   AArch64::FADDDrr,
       AArch64::FSUBDrr,   AArch64::FCMPDrr,   AArch64::NOTv8i8,
+      AArch64::CNTv8i8,
   };
 
   const set<int> instrs_128 = {
@@ -380,7 +381,9 @@ class arm2llvm {
       AArch64::ADDv4i32,        AArch64::ADDv16i8,        AArch64::SUBv8i16,
       AArch64::USUBLv8i8_v8i16, AArch64::SUBv2i64,        AArch64::SUBv4i32,
       AArch64::SUBv16i8,        AArch64::LDRQui,          AArch64::STRQui,
-      AArch64::FMOVDi,          AArch64::FMOVSi,          AArch64::FMOVWSr};
+      AArch64::FMOVDi,          AArch64::FMOVSi,          AArch64::FMOVWSr,
+      AArch64::CNTv16i8,
+  };
 
   bool has_s(int instr) {
     return s_flag.contains(instr);
@@ -512,6 +515,12 @@ class arm2llvm {
     auto uadd_decl = Intrinsic::getDeclaration(
         LiftedModule, Intrinsic::uadd_with_overflow, a->getType());
     return CallInst::Create(uadd_decl, {a, b}, nextName(), LLVMBB);
+  }
+
+  CallInst *createCTPOP(Value *v) {
+    auto ctpop_decl =
+        Intrinsic::getDeclaration(LiftedModule, Intrinsic::ctpop, v->getType());
+    return CallInst::Create(ctpop_decl, {v}, nextName(), LLVMBB);
   }
 
   ExtractElementInst *createExtractElement(Value *v, Value *idx) {
@@ -3144,38 +3153,77 @@ public:
       break;
     }
     // TODO: Find a test case for and add NOTv16i8 which is similar to NOTv8i8.
-    case AArch64::NOTv8i8: {
-      // Getting registers
-      auto &op0 = CurInst->getOperand(0);
+    case AArch64::NOTv8i8:
+    case AArch64::CNTv8i8:
+    case AArch64::CNTv16i8: {
+      // Getting source register
       auto &op1 = CurInst->getOperand(1);
 
-      assert(isSIMDandFPReg(op0) && isSIMDandFPReg(op1) &&
-             "NOTv8i8: Expected SIMD&FP registers");
+      assert(isSIMDandFPReg(op1) && "ERROR: Expected SIMD&FP registers");
 
-      // Read source value and create an integer value for -1 with 64 bits
+      // Read source value
       auto src = readFromReg(op1.getReg());
-      auto neg_one = getIntConst(-1, 64);
+      u_int64_t elementSize, numElements;
 
-      // Truncate source value to 64 bits
-      auto truncd_src = createTrunc(src, getIntTy(64));
+      switch (opcode) {
+      case AArch64::NOTv8i8:
+      case AArch64::CNTv8i8: {
+        src = createTrunc(src, getIntTy(64));
+        elementSize = 8;
+        numElements = 8;
+        break;
+      }
+      case AArch64::NOTv16i8:
+      case AArch64::CNTv16i8: {
+        elementSize = 8;
+        numElements = 16;
+        break;
+      }
+      default: {
+        *out << "\nError Unknown opcode\n";
+        visitError();
+        break;
+      }
+      }
 
       // Bit-cast the truncated source value and -1 to a vector of 8 x 8-bit
       auto src_vector = createCast(
-          truncd_src, VectorType::get(getIntTy(8), ElementCount::getFixed(8)),
+          src, VectorType::get(i8, ElementCount::getFixed(numElements)),
           Instruction::BitCast);
-      auto neg_one_vector = createCast(
-          neg_one, VectorType::get(getIntTy(8), ElementCount::getFixed(8)),
-          Instruction::BitCast);
+      Value *result;
 
-      // Perform bitwise NOT operation on the source value by XORing it with -1
-      auto result = createXor(src_vector, neg_one_vector);
+      // Performing the operation
+      switch (opcode) {
+      case AArch64::NOTv8i8:
+      case AArch64::NOTv16i8: {
+        // Create an integer value for -1
+        auto neg_one = getIntConst(-1, numElements * elementSize);
+        auto neg_one_vector = createCast(
+            neg_one, VectorType::get(i8, ElementCount::getFixed(numElements)),
+            Instruction::BitCast);
 
-      // Write to destination registerF
+        // Perform bitwise NOT operation on the source value by XORing it with
+        // -1
+        result = createXor(src_vector, neg_one_vector);
+        break;
+      }
+      case AArch64::CNTv8i8:
+      case AArch64::CNTv16i8: {
+        // Create an intrinsic for CTPOP
+        result = createCTPOP(src_vector);
+        break;
+      }
+      default: {
+        *out << "\nError Unknown opcode\n";
+        visitError();
+        break;
+      }
+      }
+
+      // Write to destination register
       updateOutputReg(result);
-
       break;
     }
-
     default:
       *out << funcToString(&Fn);
       *out << "\nError "
