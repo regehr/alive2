@@ -751,8 +751,10 @@ class arm2llvm {
       auto *v_type = (VectorType *)V->getType();
       bitWidth = v_type->getScalarSizeInBits() *
                  v_type->getElementCount().getFixedValue();
-    } else {
+    } else if (V->getType()->isIntegerTy()) {
       bitWidth = V->getType()->getIntegerBitWidth();
+    } else {
+      assert(false && "Unhandled type");
     }
 
     assert(bitWidth && "Could not determine bit width of value\n");
@@ -2707,9 +2709,15 @@ public:
       MCOperand &op2 = CurInst->getOperand(2);
       if (op2.isExpr()) {
         Value *globalVar = getExprVar(op2.getExpr());
-        auto reg = CurInst->getOperand(0).getReg();
-        if (reg != AArch64::WZR && reg != AArch64::XZR)
-          updateReg(globalVar, reg);
+        if (opcode == AArch64::LDRBBui || opcode == AArch64::LDRHHui) {
+          auto loaded = makeLoad(globalVar, 0, size);
+          updateOutputReg(loaded);
+        } else {
+          auto reg = CurInst->getOperand(0).getReg();
+          if (reg != AArch64::WZR && reg != AArch64::XZR) {
+            updateReg(globalVar, reg);
+          }
+        }
       } else {
         auto [base, imm] = getParamsLoadImmed();
         auto loaded = makeLoad(base, imm * size, size);
@@ -2750,11 +2758,7 @@ public:
       storeToMemory(base, imm * 1, 1, createTrunc(val, i8));
       break;
     }
-    case AArch64::STRHHui: {
-      auto [base, imm, val] = getParamsStoreImmed();
-      storeToMemory(base, imm * 2, 2, createTrunc(val, i16));
-      break;
-    }
+    case AArch64::STRHHui:
     case AArch64::STRHui: {
       auto [base, imm, val] = getParamsStoreImmed();
       storeToMemory(base, imm * 2, 2, createTrunc(val, i16));
@@ -2770,11 +2774,7 @@ public:
       storeToMemory(base, imm * 1, 8, val);
       break;
     }
-    case AArch64::STRWui: {
-      auto [base, imm, val] = getParamsStoreImmed();
-      storeToMemory(base, imm * 4, 4, createTrunc(val, i32));
-      break;
-    }
+    case AArch64::STRWui:
     case AArch64::STRSui: {
       auto [base, imm, val] = getParamsStoreImmed();
       storeToMemory(base, imm * 4, 4, createTrunc(val, i32));
