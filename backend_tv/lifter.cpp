@@ -3217,8 +3217,8 @@ public:
       updateOutputReg(new_dest_vector);
       break;
     }
-    // TODO: Find a test case for and add NOTv16i8 which is similar to NOTv8i8.
     case AArch64::NOTv8i8:
+    case AArch64::NOTv16i8:
     case AArch64::CNTv8i8:
     case AArch64::CNTv16i8: {
       // Getting source register
@@ -3262,7 +3262,11 @@ public:
       case AArch64::NOTv8i8:
       case AArch64::NOTv16i8: {
         // Create an integer value for -1
-        auto neg_one = getIntConst(-1, numElements * elementSize);
+        vector<Constant *> neg_one_vals;
+        for (unsigned int i = 0; i < numElements / elementSize; i++)
+          // For some reason, creating a 128 bit -1 is not working...
+          neg_one_vals.push_back(ConstantInt::get(Ctx, llvm::APInt(64, -1)));
+        auto neg_one = getVectorConst(neg_one_vals);
         auto neg_one_vector = createCast(
             neg_one, VectorType::get(i8, ElementCount::getFixed(numElements)),
             Instruction::BitCast);
