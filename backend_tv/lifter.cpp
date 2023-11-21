@@ -2728,7 +2728,8 @@ public:
       MCOperand &op2 = CurInst->getOperand(2);
       if (op2.isExpr()) {
         Value *globalVar = getExprVar(op2.getExpr());
-        if (opcode == AArch64::LDRBBui || opcode == AArch64::LDRHHui) {
+        if (opcode == AArch64::LDRBBui || opcode == AArch64::LDRHHui ||
+            opcode == AArch64::LDRWui) {
           auto loaded = makeLoad(globalVar, 0, size);
           updateOutputReg(loaded);
         } else {
