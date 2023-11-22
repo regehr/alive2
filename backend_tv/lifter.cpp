@@ -332,11 +332,11 @@ class arm2llvm {
       AArch64::LDRBBui,  AArch64::LDRBui,   AArch64::LDRSBWui,
       AArch64::LDRSWui,  AArch64::LDRSHWui, AArch64::LDRSBWui,
       AArch64::LDRHHui,  AArch64::LDRHui,   AArch64::STRWui,
-      AArch64::CCMNWi,   AArch64::CCMNWr,   AArch64::STRBBui,
-      AArch64::STRBui,   AArch64::STPWi,    AArch64::STRHHui,
-      AArch64::STRHui,   AArch64::STURWi,   AArch64::STRSui,
-      AArch64::LDPWi,    AArch64::STRWpre,  AArch64::FADDSrr,
-      AArch64::FSUBSrr,  AArch64::FCMPSrr,
+      AArch64::STRWroX,  AArch64::CCMNWi,   AArch64::CCMNWr,
+      AArch64::STRBBui,  AArch64::STRBui,   AArch64::STPWi,
+      AArch64::STRHHui,  AArch64::STRHui,   AArch64::STURWi,
+      AArch64::STRSui,   AArch64::LDPWi,    AArch64::STRWpre,
+      AArch64::FADDSrr,  AArch64::FSUBSrr,  AArch64::FCMPSrr,
   };
 
   const set<int> instrs_64 = {
@@ -367,14 +367,14 @@ class arm2llvm {
       AArch64::CBNZW,     AArch64::CBNZX,     AArch64::CCMPXr,
       AArch64::CCMPXi,    AArch64::LDRXui,    AArch64::LDRXpost,
       AArch64::LDPXpost,  AArch64::LDPXi,     AArch64::LDRDui,
-      AArch64::STRDui,    AArch64::MSR,       AArch64::MRS,
-      AArch64::LDRSBXui,  AArch64::LDRSBXui,  AArch64::LDRSHXui,
-      AArch64::STRXui,    AArch64::STPXi,     AArch64::CCMNXi,
-      AArch64::CCMNXr,    AArch64::STURXi,    AArch64::ADRP,
-      AArch64::STRXpre,   AArch64::XTNv8i8,   AArch64::FADDDrr,
-      AArch64::FSUBDrr,   AArch64::FCMPDrr,   AArch64::NOTv8i8,
-      AArch64::CNTv8i8,   AArch64::ANDv8i8,   AArch64::ORRv8i8,
-      AArch64::EORv8i8,
+      AArch64::LDRXroX,   AArch64::STRDui,    AArch64::MSR,
+      AArch64::MRS,       AArch64::LDRSBXui,  AArch64::LDRSBXui,
+      AArch64::LDRSHXui,  AArch64::STRXui,    AArch64::STRXroX,
+      AArch64::STPXi,     AArch64::CCMNXi,    AArch64::CCMNXr,
+      AArch64::STURXi,    AArch64::ADRP,      AArch64::STRXpre,
+      AArch64::XTNv8i8,   AArch64::FADDDrr,   AArch64::FSUBDrr,
+      AArch64::FCMPDrr,   AArch64::NOTv8i8,   AArch64::CNTv8i8,
+      AArch64::ANDv8i8,   AArch64::ORRv8i8,   AArch64::EORv8i8,
   };
 
   const set<int> instrs_128 = {
@@ -1389,6 +1389,36 @@ public:
     return createLoad(getIntTy(8 * size), ptr);
   }
 
+  tuple<Value *, Value *, Value *> getParamsStoreReg() {
+    auto &op0 = CurInst->getOperand(0);
+    auto &op1 = CurInst->getOperand(1);
+    auto &op2 = CurInst->getOperand(2);
+    assert(op0.isReg() && op1.isReg() && op2.isReg());
+
+    auto baseReg = op1.getReg();
+    auto offsetReg = op2.getReg();
+    assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+           (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
+           (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
+    assert((offsetReg >= AArch64::X0 && offsetReg <= AArch64::X28) ||
+           (offsetReg == AArch64::FP) || (offsetReg == AArch64::XZR) ||
+           (offsetReg >= AArch64::W0 && offsetReg <= AArch64::W28) ||
+           (offsetReg == AArch64::WZR));
+    auto baseAddr = readPtrFromReg(baseReg);
+    auto offset = readFromReg(offsetReg);
+    return make_tuple(baseAddr, offset, readFromReg(op0.getReg()));
+  }
+
+  void storeToMemoryValOffset(Value *base, Value *offset, u_int64_t size,
+                              Value *val) {
+    // Create a GEP instruction based on a byte addressing basis (8 bits)
+    // returning pointer to base + offset
+    auto ptr = createGEP(getIntTy(8), base, {offset}, "");
+
+    // Store Value val in the pointer returned by the GEP instruction
+    createStore(val, ptr);
+  }
+
   tuple<Value *, int, Value *> getParamsStoreImmed() {
     auto &op0 = CurInst->getOperand(0);
     auto &op1 = CurInst->getOperand(1);
@@ -1406,8 +1436,8 @@ public:
 
   // Creates instructions to store val in memory pointed by base + offset
   // offset and size are in bytes
-  void storeToMemory(Value *base, u_int64_t offset, u_int64_t size,
-                     Value *val) {
+  void storeToMemoryImmOffset(Value *base, u_int64_t offset, u_int64_t size,
+                              Value *val) {
     // Get offset as a 64-bit LLVM constant
     auto offsetVal = getIntConst(offset, 64);
 
@@ -2901,12 +2931,21 @@ public:
       updateReg(added, ptrReg);
       break;
     }
-    case AArch64::LDRWroX: {
+    case AArch64::LDRWroX:
+    case AArch64::LDRXroX: {
       unsigned size;
-      if (opcode == AArch64::LDRWroX)
+
+      switch (opcode) {
+      case AArch64::LDRWroX:
         size = 4;
-      else
-        assert(false);
+        break;
+      case AArch64::LDRXroX:
+        size = 8;
+        break;
+      default:
+        *out << "\nError Unknown opcode\n";
+        visitError();
+      }
 
       auto [base, offset] = getParamsLoadReg();
       auto loaded = makeLoadWithOffset(base, offset, size);
@@ -2915,44 +2954,44 @@ public:
     }
     case AArch64::STRBBui: {
       auto [base, imm, val] = getParamsStoreImmed();
-      storeToMemory(base, imm * 1, 1, createTrunc(val, i8));
+      storeToMemoryImmOffset(base, imm * 1, 1, createTrunc(val, i8));
       break;
     }
     case AArch64::STRHHui:
     case AArch64::STRHui: {
       auto [base, imm, val] = getParamsStoreImmed();
-      storeToMemory(base, imm * 2, 2, createTrunc(val, i16));
+      storeToMemoryImmOffset(base, imm * 2, 2, createTrunc(val, i16));
       break;
     }
     case AArch64::STURWi: {
       auto [base, imm, val] = getParamsStoreImmed();
-      storeToMemory(base, imm * 1, 4, createTrunc(val, i32));
+      storeToMemoryImmOffset(base, imm * 1, 4, createTrunc(val, i32));
       break;
     }
     case AArch64::STURXi: {
       auto [base, imm, val] = getParamsStoreImmed();
-      storeToMemory(base, imm * 1, 8, val);
+      storeToMemoryImmOffset(base, imm * 1, 8, val);
       break;
     }
     case AArch64::STRWui:
     case AArch64::STRSui: {
       auto [base, imm, val] = getParamsStoreImmed();
-      storeToMemory(base, imm * 4, 4, createTrunc(val, i32));
+      storeToMemoryImmOffset(base, imm * 4, 4, createTrunc(val, i32));
       break;
     }
     case AArch64::STRXui: {
       auto [base, imm, val] = getParamsStoreImmed();
-      storeToMemory(base, imm * 8, 8, val);
+      storeToMemoryImmOffset(base, imm * 8, 8, val);
       break;
     }
     case AArch64::STRDui: {
       auto [base, imm, val] = getParamsStoreImmed();
-      storeToMemory(base, imm * 8, 8, createTrunc(val, i64));
+      storeToMemoryImmOffset(base, imm * 8, 8, createTrunc(val, i64));
       break;
     }
     case AArch64::STRQui: {
       auto [base, imm, val] = getParamsStoreImmed();
-      storeToMemory(base, imm * 16, 16, val);
+      storeToMemoryImmOffset(base, imm * 16, 16, val);
       break;
     }
 
@@ -2981,10 +3020,26 @@ public:
       if (getInstSize(opcode) == 32)
         valToStore = createTrunc(valToStore, i32);
 
-      storeToMemory(shiftedPtr, 0, 8, valToStore);
+      storeToMemoryImmOffset(shiftedPtr, 0, 8, valToStore);
       break;
     }
+    case AArch64::STRWroX:
+    case AArch64::STRXroX: {
+      auto [base, offset, val] = getParamsStoreReg();
 
+      switch (opcode) {
+      case AArch64::STRWroX:
+        storeToMemoryValOffset(base, offset, 4, createTrunc(val, i32));
+        break;
+      case AArch64::STRXroX:
+        storeToMemoryValOffset(base, offset, 8, val);
+        break;
+      default:
+        *out << "\nError Unknown opcode\n";
+        visitError();
+      }
+      break;
+    }
     case AArch64::LDPWi:
     case AArch64::LDPXi:
     case AArch64::LDPQi: {
@@ -3080,8 +3135,8 @@ public:
       }
       assert(size != 0);
 
-      storeToMemory(baseAddr, imm * size, size, val1);
-      storeToMemory(baseAddr, (imm + 1) * size, size, val2);
+      storeToMemoryImmOffset(baseAddr, imm * size, size, val1);
+      storeToMemoryImmOffset(baseAddr, (imm + 1) * size, size, val2);
       break;
     }
 
@@ -3140,8 +3195,8 @@ public:
 
       auto imm = op4.getImm();
       unsigned size = 8;
-      storeToMemory(baseAddr, imm * size, size, val1);
-      storeToMemory(baseAddr, (imm + 1) * size, size, val2);
+      storeToMemoryImmOffset(baseAddr, imm * size, size, val1);
+      storeToMemoryImmOffset(baseAddr, (imm + 1) * size, size, val2);
       break;
     }
 
