@@ -1343,7 +1343,7 @@ public:
     return make_pair(baseAddr, offset);
   }
 
-  Value *makeLoad(Value *base, Value *offset, int size) {
+  Value *makeLoadWithOffset(Value *base, Value *offset, int size) {
     // Create a GEP instruction based on a byte addressing basis (8 bits)
     // returning pointer to base + offset
     auto ptr = createGEP(getIntTy(8), base, {offset}, "");
@@ -1368,7 +1368,7 @@ public:
 
   // Creates instructions to store val in memory pointed by base + offset
   // offset and size are in bytes
-  Value *makeLoad(Value *base, int offset, int size) {
+  Value *makeLoadWithOffset(Value *base, int offset, int size) {
     // Get offset as a 64-bit LLVM constant
     auto offsetVal = getIntConst(offset, 64);
 
@@ -2797,7 +2797,7 @@ public:
       else
         assert(false);
 
-      auto loaded = makeLoad(base, imm * size, size);
+      auto loaded = makeLoadWithOffset(base, imm * size, size);
       updateOutputReg(loaded, /*SExt=*/true);
       break;
     }
@@ -2830,7 +2830,7 @@ public:
         Value *globalVar = getExprVar(op2.getExpr());
         if (opcode == AArch64::LDRBBui || opcode == AArch64::LDRHHui ||
             opcode == AArch64::LDRWui) {
-          auto loaded = makeLoad(globalVar, 0, size);
+          auto loaded = makeLoadWithOffset(globalVar, 0, size);
           updateOutputReg(loaded);
         } else {
           auto reg = CurInst->getOperand(0).getReg();
@@ -2840,7 +2840,7 @@ public:
         }
       } else {
         auto [base, imm] = getParamsLoadImmed();
-        auto loaded = makeLoad(base, imm * size, size);
+        auto loaded = makeLoadWithOffset(base, imm * size, size);
         updateOutputReg(loaded);
       }
       break;
@@ -2864,7 +2864,7 @@ public:
       auto ptrReg = op0.getReg();
       auto addr = readPtrFromReg(ptrReg);
       auto imm = op3.getImm();
-      auto loaded = makeLoad(addr, imm * size, size);
+      auto loaded = makeLoadWithOffset(addr, imm * size, size);
       updateReg(loaded, destReg);
       auto offsetVal = getIntConst(imm, 64);
       auto toUpdate = readFromReg(ptrReg);
@@ -2878,16 +2878,9 @@ public:
         size = 4;
       else
         assert(false);
-      auto &op0 = CurInst->getOperand(0);
-      auto &op1 = CurInst->getOperand(1);
-      auto &op2 = CurInst->getOperand(2);
-      auto &op3 = CurInst->getOperand(3);
-      auto &op4 = CurInst->getOperand(4);
-      assert(op0.isReg() && op1.isReg() && op2.isReg());
-      assert(op3.isImm() && op4.isImm());
 
       auto [base, offset] = getParamsLoadReg();
-      auto loaded = makeLoad(base, offset, size);
+      auto loaded = makeLoadWithOffset(base, offset, size);
       updateOutputReg(loaded);
       break;
     }
@@ -3004,11 +2997,11 @@ public:
       auto out1 = op0.getReg();
       auto out2 = op1.getReg();
       if (out1 != AArch64::XZR && out1 != AArch64::WZR) {
-        auto loaded = makeLoad(baseAddr, imm * size, size);
+        auto loaded = makeLoadWithOffset(baseAddr, imm * size, size);
         updateReg(loaded, out1);
       }
       if (out2 != AArch64::XZR && out2 != AArch64::WZR) {
-        auto loaded = makeLoad(baseAddr, (imm + 1) * size, size);
+        auto loaded = makeLoadWithOffset(baseAddr, (imm + 1) * size, size);
         updateReg(loaded, out2);
       }
       break;
@@ -3081,8 +3074,8 @@ public:
       auto addr = readPtrFromReg(baseReg);
       auto r1 = op1.getReg();
       auto r2 = op2.getReg();
-      auto loaded1 = makeLoad(addr, 0, size);
-      auto loaded2 = makeLoad(addr, size, size);
+      auto loaded1 = makeLoadWithOffset(addr, 0, size);
+      auto loaded2 = makeLoadWithOffset(addr, size, size);
       updateReg(loaded1, r1);
       updateReg(loaded2, r2);
 
