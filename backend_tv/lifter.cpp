@@ -328,15 +328,15 @@ class arm2llvm {
       AArch64::REVWr,    AArch64::CSNEGWr,  AArch64::BICWrs,
       AArch64::BICSWrs,  AArch64::EONWrs,   AArch64::REV16Wr,
       AArch64::Bcc,      AArch64::CCMPWr,   AArch64::CCMPWi,
-      AArch64::LDRWui,   AArch64::LDRSui,   AArch64::LDRBBui,
-      AArch64::LDRBui,   AArch64::LDRSBWui, AArch64::LDRSWui,
-      AArch64::LDRSHWui, AArch64::LDRSBWui, AArch64::LDRHHui,
-      AArch64::LDRHui,   AArch64::STRWui,   AArch64::CCMNWi,
-      AArch64::CCMNWr,   AArch64::STRBBui,  AArch64::STRBui,
-      AArch64::STPWi,    AArch64::STRHHui,  AArch64::STRHui,
-      AArch64::STURWi,   AArch64::STRSui,   AArch64::LDPWi,
-      AArch64::STRWpre,  AArch64::FADDSrr,  AArch64::FSUBSrr,
-      AArch64::FCMPSrr};
+      AArch64::LDRWui,   AArch64::LDRWroX,  AArch64::LDRSui,
+      AArch64::LDRBBui,  AArch64::LDRBui,   AArch64::LDRSBWui,
+      AArch64::LDRSWui,  AArch64::LDRSHWui, AArch64::LDRSBWui,
+      AArch64::LDRHHui,  AArch64::LDRHui,   AArch64::STRWui,
+      AArch64::CCMNWi,   AArch64::CCMNWr,   AArch64::STRBBui,
+      AArch64::STRBui,   AArch64::STPWi,    AArch64::STRHHui,
+      AArch64::STRHui,   AArch64::STURWi,   AArch64::STRSui,
+      AArch64::LDPWi,    AArch64::STRWpre,  AArch64::FADDSrr,
+      AArch64::FSUBSrr,  AArch64::FCMPSrr};
 
   const set<int> instrs_64 = {
       AArch64::ADDXrx,    AArch64::ADDSXrs,   AArch64::ADDSXri,
@@ -372,7 +372,8 @@ class arm2llvm {
       AArch64::CCMNXr,    AArch64::STURXi,    AArch64::ADRP,
       AArch64::STRXpre,   AArch64::XTNv8i8,   AArch64::FADDDrr,
       AArch64::FSUBDrr,   AArch64::FCMPDrr,   AArch64::NOTv8i8,
-      AArch64::CNTv8i8,AArch64::ANDv8i8, AArch64::ORRv8i8, AArch64::EORv8i8,
+      AArch64::CNTv8i8,   AArch64::ANDv8i8,   AArch64::ORRv8i8,
+      AArch64::EORv8i8,
   };
 
   const set<int> instrs_128 = {
@@ -384,7 +385,8 @@ class arm2llvm {
       AArch64::FMOVDi,          AArch64::FMOVSi,          AArch64::FMOVWSr,
       AArch64::CNTv16i8,        AArch64::MOVIv2d_ns,      AArch64::MOVIv4i32,
       AArch64::EXTv16i8,        AArch64::DUPv2i64gpr,     AArch64::MOVIv2i32,
-      AArch64::DUPv4i32gpr,     AArch64::ANDv16i8, AArch64::ORRv16i8, AArch64::EORv16i8,
+      AArch64::DUPv4i32gpr,     AArch64::ANDv16i8,        AArch64::ORRv16i8,
+      AArch64::EORv16i8,
   };
 
   bool has_s(int instr) {
@@ -1320,6 +1322,34 @@ public:
 
   int64_t getImm(int idx) {
     return CurInst->getOperand(idx).getImm();
+  }
+
+  tuple<Value *, Value *> getParamsLoadReg() {
+    auto &op0 = CurInst->getOperand(0);
+    auto &op1 = CurInst->getOperand(1);
+    auto &op2 = CurInst->getOperand(2);
+    assert(op0.isReg() && op1.isReg() && op2.isReg());
+    auto baseReg = op1.getReg();
+    auto offsetReg = op2.getReg();
+    assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+           (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
+           (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
+    assert((offsetReg >= AArch64::X0 && offsetReg <= AArch64::X28) ||
+           (offsetReg == AArch64::FP) || (offsetReg == AArch64::XZR) ||
+           (offsetReg >= AArch64::W0 && offsetReg <= AArch64::W28) ||
+           (offsetReg == AArch64::WZR));
+    auto baseAddr = readPtrFromReg(baseReg);
+    auto offset = readFromReg(offsetReg);
+    return make_pair(baseAddr, offset);
+  }
+
+  Value *makeLoad(Value *base, Value *offset, int size) {
+    // Create a GEP instruction based on a byte addressing basis (8 bits)
+    // returning pointer to base + offset
+    auto ptr = createGEP(getIntTy(8), base, {offset}, "");
+
+    // Load Value val in the pointer returned by the GEP instruction
+    return createLoad(getIntTy(8 * size), ptr);
   }
 
   tuple<Value *, int> getParamsLoadImmed() {
@@ -2842,7 +2872,25 @@ public:
       updateReg(added, ptrReg);
       break;
     }
+    case AArch64::LDRWroX: {
+      unsigned size;
+      if (opcode == AArch64::LDRWroX)
+        size = 4;
+      else
+        assert(false);
+      auto &op0 = CurInst->getOperand(0);
+      auto &op1 = CurInst->getOperand(1);
+      auto &op2 = CurInst->getOperand(2);
+      auto &op3 = CurInst->getOperand(3);
+      auto &op4 = CurInst->getOperand(4);
+      assert(op0.isReg() && op1.isReg() && op2.isReg());
+      assert(op3.isImm() && op4.isImm());
 
+      auto [base, offset] = getParamsLoadReg();
+      auto loaded = makeLoad(base, offset, size);
+      updateOutputReg(loaded);
+      break;
+    }
     case AArch64::STRBBui: {
       auto [base, imm, val] = getParamsStoreImmed();
       storeToMemory(base, imm * 1, 1, createTrunc(val, i8));
