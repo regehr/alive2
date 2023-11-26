@@ -929,7 +929,8 @@ class arm2llvm {
         V = createTrunc(V, getIntTy(64));
       }
     } else {
-      V = getExprVar(op.getExpr());
+      auto [val, storePtr] = getExprVar(op.getExpr());
+      V = val;
     }
     return V;
   }
@@ -1022,8 +1023,10 @@ class arm2llvm {
 
   // Reads an Expr and gets the global variable corresponding the containing
   // string variable. Assuming the Expr consists of a single global variable.
-  Value *getExprVar(const MCExpr *expr) {
+  pair<Value *, bool> getExprVar(const MCExpr *expr) {
     Value *globalVar;
+    // Default to true meaning store the ptr global value
+    bool storePtr = true;
     std::string sss;
 
     // Matched strings
@@ -1042,8 +1045,13 @@ class arm2llvm {
     if (std::regex_search(sss, sm, re,
                           std::regex_constants::match_continuous)) {
       auto stringVar = sm.suffix();
-      //      for (auto x:sm) { *out << x << " "; }
-      //      *out << stringVar << "\n";
+      // Check the relocation specifiers to determine whether to store ptr
+      // global value in the register or load the value from the global
+      if(!sm.empty() && (sm[0] == ":lo12:")) {
+        storePtr = false;
+      }
+      //  for (auto x:sm) { *out << x << " "; }
+      //  *out << stringVar << "\n";
       if (!globals.contains(stringVar)) {
         *out << "\nERROR: instruction mentions '" << stringVar << "'\n";
         *out << "which is not a global variable we know about\n\n";
@@ -1082,7 +1090,7 @@ class arm2llvm {
       globalVar = glob->second;
     }
 
-    return globalVar;
+    return make_pair(globalVar, storePtr);
   }
 
   Value *getV() {
@@ -3098,9 +3106,8 @@ public:
 
       MCOperand &op2 = CurInst->getOperand(2);
       if (op2.isExpr()) {
-        Value *globalVar = getExprVar(op2.getExpr());
-        if (opcode == AArch64::LDRBBui || opcode == AArch64::LDRHHui ||
-            opcode == AArch64::LDRWui) { // || opcode == AArch64::LDRXui) {
+        auto [globalVar, storePtr] = getExprVar(op2.getExpr());
+        if (!storePtr) {
           auto loaded = makeLoadWithOffset(globalVar, 0, size);
           updateOutputReg(loaded);
         } else {
