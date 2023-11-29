@@ -4393,8 +4393,14 @@ public:
     // default to adding instructions to the entry block
     LLVMBB = BBs[0].first;
 
-    // Create globals found in the MachineFunction
+    // Create globals found in assembly
+    // If you comment this loop out, global tests 0-100 crash since the size
+    // of the global cannot be determined...
+
+    // This loop looks through keys in MF.globals (which is populated using
+    // emitCommonSymbol and emitELFSize) and creates a global value for each
     for (const auto &[name, size] : MF.globals) {
+      // Gets 2nd argument to ArrayType::get from the size provided by assembly
       auto *AT = ArrayType::get(i8, size);
       auto *g = new GlobalVariable(*LiftedModule, AT, false,
                                    GlobalValue::LinkageTypes::ExternalLinkage,
@@ -4403,12 +4409,19 @@ public:
       globals[name] = g;
     }
 
-    // Create globals not found in the MachineFunction
-    // iterate through globals of the LLVM srnFn's parent module
+    // Create globals not found in the assembly
+    // If you comment this loop out, global tests 101 and above crash since the
+    // assembly does not have a global which is reference in the instructions...
+
+    // This loop looks through globals in the source LLVM IR and creates a global
+    // value for those that were not found in the assembly (If a global is in the
+    // assembly, it would have been created by the first loop)
     for (auto &srcFnGlobal : srcFn.getParent()->globals()) {
       // If the global has not been created yet, create it
       auto name = srcFnGlobal.getName();
       if (globals[name.str()] == nullptr) {
+        // Gets 2nd argument to ArrayType::get from the size in bytes of the
+        // source global value
         auto *AT = ArrayType::get(
             i8, srcFnGlobal.getValueType()->getPrimitiveSizeInBits() / 8);
         auto *g = new GlobalVariable(*LiftedModule, AT, false,
