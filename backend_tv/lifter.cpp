@@ -606,7 +606,9 @@ class arm2llvm {
       AArch64::DUPv4i16lane,
       AArch64::DUPv2i32lane,
       AArch64::LDPQi,
+      AArch64::LDRQroX,
       AArch64::STPQi,
+      AArch64::STRQroX,
       AArch64::ADDv8i16,
       AArch64::ADDv2i64,
       AArch64::ADDv4i32,
@@ -1771,50 +1773,36 @@ public:
            (offsetReg == AArch64::WZR));
 
     int extTyp, shiftAmt;
-    switch (CurInst->getOpcode()) {
-    case AArch64::LDRBBroW: {
+    if ((offsetReg >= AArch64::W0 && offsetReg <= AArch64::W28) ||
+        offsetReg == AArch64::WZR) {
       extTyp = extendTypeVal ? SXTW : UXTW;
+    } else if ((offsetReg >= AArch64::X0 && offsetReg <= AArch64::X28) ||
+               offsetReg == AArch64::FP || offsetReg == AArch64::XZR) {
+      // The manual assigns a value LSL to extTyp if extendTypeVal is 1
+      // which for a value of 64 bits, is the same as UXTX
+      extTyp = extendTypeVal ? SXTX : UXTX;
+    }
+
+    switch (CurInst->getOpcode()) {
+    case AArch64::LDRBBroW:
+    case AArch64::LDRBBroX:
       shiftAmt = 0;
       break;
-    }
-    case AArch64::LDRHHroW: {
-      extTyp = extendTypeVal ? SXTW : UXTW;
+    case AArch64::LDRHHroW:
+    case AArch64::LDRHHroX:
       shiftAmt = shiftAmtVal ? 1 : 0;
       break;
-    }
     case AArch64::LDRWroW:
-      extTyp = extendTypeVal ? SXTW : UXTW;
+    case AArch64::LDRWroX:
       shiftAmt = shiftAmtVal ? 2 : 0;
       break;
     case AArch64::LDRXroW:
-      extTyp = extendTypeVal ? SXTW : UXTW;
-      shiftAmt = shiftAmtVal ? 3 : 0;
-      break;
-    case AArch64::LDRBBroX: {
-      // The manual assigns a value LSL to extTyp if extendTypeVal is 1
-      // which for a value of 64 bits, is the same as UXTX
-      extTyp = extendTypeVal ? SXTX : UXTX;
-      shiftAmt = 0;
-      break;
-    }
-    case AArch64::LDRHHroX: {
-      // The manual assigns a value LSL to extTyp if extendTypeVal is 1
-      // which for a value of 64 bits, is the same as UXTX
-      extTyp = extendTypeVal ? SXTX : UXTX;
-      shiftAmt = shiftAmtVal ? 1 : 0;
-      break;
-    }
-    case AArch64::LDRWroX:
-      // The manual assigns a value LSL to extTyp if extendTypeVal is 1
-      // which for a value of 64 bits, is the same as UXTX
-      extTyp = extendTypeVal ? SXTX : UXTX;
-      shiftAmt = shiftAmtVal ? 2 : 0;
-      break;
     case AArch64::LDRXroX:
-      // The manual assigns a value LSL to extTyp if extendTypeVal is 1
-      // which for a value of 64 bits, is the same as UXTX
-      extTyp = extendTypeVal ? SXTX : UXTX;
       shiftAmt = shiftAmtVal ? 3 : 0;
+      break;
+    case AArch64::LDRQroW:
+    case AArch64::LDRQroX:
+      shiftAmt = shiftAmtVal ? 4 : 0;
       break;
     default:
       *out << "\nError Unknown opcode\n";
@@ -1888,46 +1876,36 @@ public:
            (offsetReg == AArch64::WZR));
 
     int extTyp, shiftAmt;
+    if ((offsetReg >= AArch64::W0 && offsetReg <= AArch64::W28) ||
+        offsetReg == AArch64::WZR) {
+      extTyp = extendTypeVal ? SXTW : UXTW;
+    } else if ((offsetReg >= AArch64::X0 && offsetReg <= AArch64::X28) ||
+               offsetReg == AArch64::FP || offsetReg == AArch64::XZR) {
+      // The manual assigns a value LSL to extTyp if extendTypeVal is 1
+      // which for a value of 64 bits, is the same as UXTX
+      extTyp = extendTypeVal ? SXTX : UXTX;
+    }
+
     switch (CurInst->getOpcode()) {
     case AArch64::STRBBroW:
-      extTyp = extendTypeVal ? SXTW : UXTW;
+    case AArch64::STRBBroX:
       shiftAmt = 0;
       break;
     case AArch64::STRHHroW:
-      extTyp = extendTypeVal ? SXTW : UXTW;
+    case AArch64::STRHHroX:
       shiftAmt = shiftAmtVal ? 1 : 0;
       break;
     case AArch64::STRWroW:
-      extTyp = extendTypeVal ? SXTW : UXTW;
+    case AArch64::STRWroX:
       shiftAmt = shiftAmtVal ? 2 : 0;
       break;
     case AArch64::STRXroW:
-      extTyp = extendTypeVal ? SXTW : UXTW;
-      shiftAmt = shiftAmtVal ? 3 : 0;
-      break;
-    case AArch64::STRBBroX:
-      // The manual assigns a value LSL to extTyp if extendTypeVal is 1
-      // which for a value of 64 bits, is the same as UXTX
-      extTyp = extendTypeVal ? SXTX : UXTX;
-      shiftAmt = 0;
-      break;
-    case AArch64::STRHHroX:
-      // The manual assigns a value LSL to extTyp if extendTypeVal is 1
-      // which for a value of 64 bits, is the same as UXTX
-      extTyp = extendTypeVal ? SXTX : UXTX;
-      shiftAmt = shiftAmtVal ? 1 : 0;
-      break;
-    case AArch64::STRWroX:
-      // The manual assigns a value LSL to extTyp if extendTypeVal is 1
-      // which for a value of 64 bits, is the same as UXTX
-      extTyp = extendTypeVal ? SXTX : UXTX;
-      shiftAmt = shiftAmtVal ? 2 : 0;
-      break;
     case AArch64::STRXroX:
-      // The manual assigns a value LSL to extTyp if extendTypeVal is 1
-      // which for a value of 64 bits, is the same as UXTX
-      extTyp = extendTypeVal ? SXTX : UXTX;
       shiftAmt = shiftAmtVal ? 3 : 0;
+      break;
+    case AArch64::STRQroW:
+    case AArch64::STRQroX:
+      shiftAmt = shiftAmtVal ? 4 : 0;
       break;
     default:
       *out << "\nError Unknown opcode\n";
@@ -3846,7 +3824,8 @@ public:
     case AArch64::LDRWroW:
     case AArch64::LDRWroX:
     case AArch64::LDRXroW:
-    case AArch64::LDRXroX: {
+    case AArch64::LDRXroX:
+    case AArch64::LDRQroX: {
       unsigned size;
 
       switch (opcode) {
@@ -3865,6 +3844,10 @@ public:
       case AArch64::LDRXroW:
       case AArch64::LDRXroX:
         size = 8;
+        break;
+      case AArch64::LDRQroW:
+      case AArch64::LDRQroX:
+        size = 16;
         break;
       default:
         *out << "\nError Unknown opcode\n";
@@ -3954,7 +3937,8 @@ public:
     case AArch64::STRWroW:
     case AArch64::STRWroX:
     case AArch64::STRXroW:
-    case AArch64::STRXroX: {
+    case AArch64::STRXroX:
+    case AArch64::STRQroX: {
       auto [base, offset, val] = getParamsStoreReg();
 
       switch (opcode) {
@@ -3973,6 +3957,10 @@ public:
       case AArch64::STRXroW:
       case AArch64::STRXroX:
         storeToMemoryValOffset(base, offset, 8, val);
+        break;
+      case AArch64::STRQroW:
+      case AArch64::STRQroX:
+        storeToMemoryValOffset(base, offset, 16, val);
         break;
       default:
         *out << "\nError Unknown opcode\n";
