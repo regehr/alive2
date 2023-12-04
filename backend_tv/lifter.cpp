@@ -761,6 +761,10 @@ class arm2llvm {
     return new FPToSIInst(v, ty, nextName(), LLVMBB);
   }
 
+  CastInst *createPtrToInt(Value *v, Type *ty) {
+    return new PtrToIntInst(v, ty, nextName(), LLVMBB);
+  }
+
   ExtractElementInst *createExtractElement(Value *v, Value *idx) {
     return ExtractElementInst::Create(v, idx, nextName(), LLVMBB);
   }
@@ -1231,7 +1235,8 @@ class arm2llvm {
   // string variable. Assuming the Expr consists of a single global variable.
   pair<Value *, bool> getExprVar(const MCExpr *expr) {
     Value *globalVar;
-    // Default to true meaning store the ptr global value
+    // Default to true meaning store the ptr global value rather than loading
+    // the value from the global
     bool storePtr = true;
     std::string sss;
 
@@ -3799,10 +3804,8 @@ public:
           auto loaded = makeLoadWithOffset(globalVar, 0, size);
           updateOutputReg(loaded);
         } else {
-          auto reg = CurInst->getOperand(0).getReg();
-          if (reg != AArch64::WZR && reg != AArch64::XZR) {
-            updateReg(globalVar, reg);
-          }
+          Value *ptrToInt = createPtrToInt(globalVar, getIntTy(size * 8));
+          updateOutputReg(ptrToInt);
         }
       } else {
         auto [base, imm] = getParamsLoadImmed();
@@ -4723,7 +4726,7 @@ public:
         auto *g = new GlobalVariable(
             *LiftedModule, srcFnGlobal.getValueType(), false,
             GlobalValue::LinkageTypes::ExternalLinkage, nullptr, name);
-        g->setAlignment(MaybeAlign(16));
+        g->setAlignment(MaybeAlign(srcFnGlobal.getAlign()));
         globals[srcFnGlobal.getName().str()] = g;
       }
     }
