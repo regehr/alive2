@@ -129,7 +129,7 @@ public:
   MCInstPrinter *IP;
   MCRegisterInfo *MRI;
   vector<MCBasicBlock> BBs;
-  unordered_map<string, int64_t> globals;
+  unordered_map<string, pair<uint64_t, uint64_t>> globals;
 
   MCFunction() {}
 
@@ -4694,13 +4694,13 @@ public:
 
     // This loop looks through keys in MF.globals (which is populated using
     // emitCommonSymbol and emitELFSize) and creates a global value for each
-    for (const auto &[name, size] : MF.globals) {
+    for (const auto &[name, size_alignment_pair] : MF.globals) {
       // Gets 2nd argument to ArrayType::get from the size provided by assembly
-      auto *AT = ArrayType::get(i8, size);
+      auto *AT = ArrayType::get(i8, size_alignment_pair.first);
       auto *g = new GlobalVariable(*LiftedModule, AT, false,
                                    GlobalValue::LinkageTypes::ExternalLinkage,
                                    nullptr, name);
-      g->setAlignment(MaybeAlign(16));
+      g->setAlignment(MaybeAlign(size_alignment_pair.second));
       globals[name] = g;
     }
 
@@ -5009,8 +5009,9 @@ public:
     *out << "[emitCommonSymbol]\n";
     std::string sss;
     llvm::raw_string_ostream ss(sss);
-    *out << "  creating " << Size << " byte global ELF object " << name << "\n";
-    MF.globals[name] = Size;
+    *out << "  creating " << Size << " byte global ELF object " << name
+         << " with " << ByteAlignment.value() << " byte alignment\n";
+    MF.globals[name] = make_pair(Size, ByteAlignment.value());
     Symbol->print(ss, nullptr);
     *out << sss << " "
          << "size = " << Size << " Align = " << ByteAlignment.value() << "\n\n";
@@ -5032,7 +5033,7 @@ public:
     if (Value && Value->evaluateAsAbsolute(size)) {
       *out << "  creating " << size << " byte global ELF object " << name
            << "\n";
-      MF.globals[name] = size;
+      MF.globals[name] = make_pair(size, 16);
     } else {
       *out << "  can't get ELF size of " << name << "\n";
     }
@@ -5044,9 +5045,10 @@ public:
     *out << "[emitValueToAlignment]\n";
 
     if (curLabel) {
-      if (MF.globals[(string)curLabel->getName()]) {
-        *out << "  Associating " << Alignment.value() << " byte alignment with "
-             << (string)curLabel->getName() << "\n";
+      if (MF.globals.contains((string)curLabel->getName())) {
+        *out << "  Associating " << Alignment.value() / 8
+             << " byte alignment with " << (string)curLabel->getName() << "\n";
+        MF.globals[(string)curLabel->getName()].second = Alignment.value() / 8;
       } else {
         *out << "  " << (string)curLabel->getName()
              << " not a part of globals\n";
