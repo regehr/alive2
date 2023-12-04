@@ -157,22 +157,6 @@ public:
     assert(false && "block not found");
   }
 
-  string findTargetLabel(MCInst &Inst) {
-    auto num_operands = Inst.getNumOperands();
-    for (unsigned i = 0; i < num_operands; ++i) {
-      auto op = Inst.getOperand(i);
-      if (op.isExpr()) {
-        auto expr = op.getExpr();
-        if (expr->getKind() == MCExpr::ExprKind::SymbolRef) {
-          const MCSymbolRefExpr &SRE = cast<MCSymbolRefExpr>(*expr);
-          const MCSymbol &Sym = SRE.getSymbol();
-          return Sym.getName().str();
-        }
-      }
-    }
-    assert(false && "could not find target label in ARM branch instruction");
-  }
-
   void checkEntryBlock() {
     // LLVM doesn't let the entry block be a jump target, but assembly
     // does; we can fix that up by adding an extra block at the start
@@ -2686,11 +2670,11 @@ public:
       case AArch64::USHLLv4i32_shift:
       case AArch64::USHLLv8i16_shift:
       case AArch64::USHLLv16i8_shift:
-	// OK this is a little weird. at this level, the distinction
-	// between ushll and ushll2 is that the former specifies a
-	// 64-bit operand and the latter specifies a 128-bit operand
-	// and then the shift is implied.
-	a = createRawLShr(a, getIntConst(64, 128));
+        // OK this is a little weird. at this level, the distinction
+        // between ushll and ushll2 is that the former specifies a
+        // 64-bit operand and the latter specifies a 128-bit operand
+        // and then the shift is implied.
+        a = createRawLShr(a, getIntConst(64, 128));
       case AArch64::USHLLv4i16_shift:
       case AArch64::USHLLv2i32_shift:
       case AArch64::USHLLv8i8_shift:
@@ -4909,6 +4893,12 @@ class MCStreamerWrapper final : public MCStreamer {
   enum ASMLine { none = 0, label = 1, non_term_instr = 2, terminator = 3 };
 
 private:
+  // curLabel which is set in emitLabel allows tracking the label being
+  // processed allowing the emit* functions to know which label to associate the
+  // directive with if the directive does not have an MCSymbol field
+  // eg: .*align directive which is parsed using the emitValueToAlignment
+  // function.
+  MCSymbol *curLabel{nullptr};
   MCBasicBlock *curBB{nullptr};
   unsigned prev_line{0};
   MCInstrAnalysis *IA;
@@ -5048,9 +5038,31 @@ public:
     }
   }
 
+  virtual void emitValueToAlignment(Align Alignment, int64_t Value = 0,
+                                    unsigned int ValueSize = 1,
+                                    unsigned int MaxBytesToEmit = 0) override {
+    *out << "[emitValueToAlignment]\n";
+
+    if (curLabel) {
+      if (MF.globals[(string)curLabel->getName()]) {
+        *out << "  Associating " << Alignment.value() << " byte alignment with "
+             << (string)curLabel->getName() << "\n";
+      } else {
+        *out << "  " << (string)curLabel->getName()
+             << " not a part of globals\n";
+      }
+    } else {
+      *out << "No label to associate with alignment"
+           << "\n";
+    }
+  }
+
   virtual void emitLabel(MCSymbol *Symbol, SMLoc Loc) override {
+    curLabel = Symbol;
+
     string Lab = Symbol->getName().str();
     *out << "[[emitLabel " << Lab << "]]\n";
+
     if (Lab == ".Lfunc_end0")
       FunctionEnded = true;
     if (!FunctionEnded) {
