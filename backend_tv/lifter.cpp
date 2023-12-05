@@ -311,7 +311,8 @@ class arm2llvm {
       AArch64::LDRWroX,    AArch64::LDRSui,     AArch64::LDRBBui,
       AArch64::LDRBui,     AArch64::LDRSBWui,   AArch64::LDRSWui,
       AArch64::LDRSHWui,   AArch64::LDRSBWui,   AArch64::LDRHHui,
-      AArch64::LDRHui,     AArch64::LDURBBi,    AArch64::LDURHHi,
+      AArch64::LDRHui,     AArch64::LDURBi,     AArch64::LDURBBi,
+      AArch64::LDURHi,     AArch64::LDURHHi,    AArch64::LDURSi,
       AArch64::LDURWi,     AArch64::STRWui,     AArch64::STRBBroW,
       AArch64::STRBBroX,   AArch64::STRHHroW,   AArch64::STRHHroX,
       AArch64::STRWroW,    AArch64::STRWroX,    AArch64::CCMNWi,
@@ -417,6 +418,7 @@ class arm2llvm {
       AArch64::LDRDui,
       AArch64::LDRXroW,
       AArch64::LDRXroX,
+      AArch64::LDURDi,
       AArch64::LDURXi,
       AArch64::STRDui,
       AArch64::MSR,
@@ -513,6 +515,7 @@ class arm2llvm {
       AArch64::DUPv2i32lane,
       AArch64::LDPQi,
       AArch64::LDRQroX,
+      AArch64::LDURQi,
       AArch64::STPQi,
       AArch64::STRQroX,
       AArch64::ADDv8i16,
@@ -3808,19 +3811,26 @@ public:
       }
       break;
     }
+    case AArch64::LDURBi:
     case AArch64::LDURBBi:
+    case AArch64::LDURHi:
     case AArch64::LDURHHi:
+    case AArch64::LDURSi:
     case AArch64::LDURWi:
-    case AArch64::LDURXi: {
+    case AArch64::LDURDi:
+    case AArch64::LDURXi:
+    case AArch64::LDURQi: {
       unsigned size;
-      if (opcode == AArch64::LDURBBi)
+      if (opcode == AArch64::LDURBBi || opcode == AArch64::LDURBi)
         size = 1;
-      else if (opcode == AArch64::LDURHHi)
+      else if (opcode == AArch64::LDURHHi || opcode == AArch64::LDURHi)
         size = 2;
-      else if (opcode == AArch64::LDURWi)
+      else if (opcode == AArch64::LDURWi || opcode == AArch64::LDURSi)
         size = 4;
-      else if (opcode == AArch64::LDURXi)
+      else if (opcode == AArch64::LDURXi || opcode == AArch64::LDURDi)
         size = 8;
+      else if (opcode == AArch64::LDURQi)
+        size = 16;
       else
         assert(false);
 
