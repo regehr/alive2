@@ -688,10 +688,11 @@ class arm2llvm {
     return s_flag.contains(instr);
   }
 
-  /// decodeLogicalImmediate - Decode a logical immediate value in the form
+  /// decodeBitMasks - Decode a logical immediate value in the form
   /// "N:immr:imms" (where the immr and imms fields are each 6 bits) into the
-  /// integer value it represents with regSize bits.
-  uint64_t decodeLogicalImmediate(uint64_t val, unsigned regSize) {
+  /// integer value it represents with regSize bits. Implementation of the
+  /// DecodeBitMasks function from the ARMv8 manual.
+  pair<uint64_t, uint64_t> decodeBitMasks(uint64_t val, unsigned regSize) {
     // Extract the N, imms, and immr fields.
     unsigned N = (val >> 12) & 1;
     unsigned immr = (val >> 6) & 0x3f;
@@ -699,21 +700,27 @@ class arm2llvm {
 
     assert((regSize == 64 || N == 0) && "undefined logical immediate encoding");
     int len = 31 - llvm::countl_zero((N << 6) | (~imms & 0x3f));
-    assert(len >= 0 && "undefined logical immediate encoding");
+    assert(len >= 0 && len <= 6 && "undefined logical immediate encoding");
     unsigned size = (1 << len);
     unsigned R = immr & (size - 1);
     unsigned S = imms & (size - 1);
-    assert(S != size - 1 && "undefined logical immediate encoding");
-    uint64_t pattern = (1ULL << (S + 1)) - 1;
+    unsigned d = ((S - R) & (size - 1));
+    assert(S != size - 1 && d <= size - 1 &&
+           "undefined logical immediate encoding");
+    uint64_t wmask = (1ULL << (S + 1)) - 1;
+    uint64_t tmask = (1ULL << min(d + 1, (unsigned)63)) - 1;
+    // Rotate wmask right R times to get wmask
     for (unsigned i = 0; i < R; ++i)
-      pattern = ((pattern & 1) << (size - 1)) | (pattern >> 1);
+      wmask = ((wmask & 1) << (size - 1)) | (wmask >> 1);
 
-    // Replicate the pattern to fill the regSize.
+    // Replicate the wmask to fill the regSize.
     while (size != regSize) {
-      pattern |= (pattern << size);
+      wmask |= (wmask << size);
+      tmask |= (tmask << size);
       size *= 2;
     }
-    return pattern;
+
+    return make_pair(wmask, tmask);
   }
 
   unsigned getInstSize(int instr) {
@@ -2330,8 +2337,8 @@ public:
       auto size = getInstSize(opcode);
       Value *rhs = nullptr;
       if (CurInst->getOperand(2).isImm()) {
-        auto imm = decodeLogicalImmediate(getImm(2), size);
-        rhs = getIntConst(imm, size);
+        auto mask_pair = decodeBitMasks(getImm(2), size);
+        rhs = getIntConst(mask_pair.first, size);
       } else {
         rhs = readFromOperand(2);
       }
@@ -2493,7 +2500,7 @@ public:
       if ((size == 32 && imms == 31) || (size == 64 && imms == 63)) {
         auto dst = createMaskedAShr(src, r);
         updateOutputReg(dst);
-        return;
+        break;
       }
 
       // SXTB
@@ -2501,7 +2508,7 @@ public:
         auto trunc = createTrunc(src, i8);
         auto dst = createSExt(trunc, ty);
         updateOutputReg(dst);
-        return;
+        break;
       }
 
       // SXTH
@@ -2509,7 +2516,7 @@ public:
         auto trunc = createTrunc(src, i16);
         auto dst = createSExt(trunc, ty);
         updateOutputReg(dst);
-        return;
+        break;
       }
 
       // SXTW
@@ -2517,7 +2524,7 @@ public:
         auto trunc = createTrunc(src, i32);
         auto dst = createSExt(trunc, ty);
         updateOutputReg(dst);
-        return;
+        break;
       }
 
       // SBFIZ
@@ -2535,7 +2542,7 @@ public:
         auto res = createSelect(bitfield_lsb_set, insert_ones, masked);
         auto shifted_res = createMaskedShl(res, getIntConst(pos, size));
         updateOutputReg(shifted_res);
-        return;
+        break;
       }
       // FIXME: this requires checking if SBFX is preferred.
       // For now, assume this is always SBFX
@@ -2553,7 +2560,7 @@ public:
       auto shifted_res =
           createRawAShr(l_shifted, getIntConst(size - width + pos, size));
       updateOutputReg(shifted_res);
-      return;
+      break;
     }
 
     case AArch64::CCMPWi:
@@ -2605,8 +2612,8 @@ public:
       assert(CurInst->getOperand(1).isReg() && CurInst->getOperand(2).isImm());
 
       auto a = readFromOperand(1);
-      auto decoded_immediate = decodeLogicalImmediate(getImm(2), size);
-      auto imm_val = getIntConst(decoded_immediate,
+      auto mask_pair = decodeBitMasks(getImm(2), size);
+      auto imm_val = getIntConst(mask_pair.first,
                                  size); // FIXME, need to decode immediate val
       if (!a || !imm_val)
         visitError();
@@ -2800,21 +2807,21 @@ public:
       if (size == 32 && imms != 31 && imms + 1 == immr) {
         auto dst = createMaskedShl(src, getIntConst(31 - imms, size));
         updateOutputReg(dst);
-        return;
+        break;
       }
 
       // LSL is preferred when imms != 63 and imms + 1 == immr
       if (size == 64 && imms != 63 && imms + 1 == immr) {
         auto dst = createMaskedShl(src, getIntConst(63 - imms, size));
         updateOutputReg(dst);
-        return;
+        break;
       }
 
       // LSR is preferred when imms == 31 or 63 (size - 1)
       if (imms == size - 1) {
         auto dst = createMaskedLShr(src, getIntConst(immr, size));
         updateOutputReg(dst);
-        return;
+        break;
       }
 
       // UBFIZ
@@ -2825,7 +2832,7 @@ public:
         auto masked = createAnd(src, getIntConst(mask, size));
         auto shifted = createMaskedShl(masked, getIntConst(pos, size));
         updateOutputReg(shifted);
-        return;
+        break;
       }
 
       // UXTB
@@ -2833,7 +2840,7 @@ public:
         auto mask = ((uint64_t)1 << 8) - 1;
         auto masked = createAnd(src, getIntConst(mask, size));
         updateOutputReg(masked);
-        return;
+        break;
       }
 
       // UXTH
@@ -2841,7 +2848,7 @@ public:
         auto mask = ((uint64_t)1 << 16) - 1;
         auto masked = createAnd(src, getIntConst(mask, size));
         updateOutputReg(masked);
-        return;
+        break;
       }
 
       // UBFX
@@ -2855,7 +2862,7 @@ public:
       auto masked = createAnd(src, getIntConst(mask, size));
       auto shifted_res = createMaskedLShr(masked, getIntConst(pos, size));
       updateOutputReg(shifted_res);
-      return;
+      break;
     }
 
     case AArch64::BFMWri:
@@ -2879,7 +2886,7 @@ public:
             createAnd(dst, getIntConst((uint64_t)(-1) << bits, size));
         auto res = createOr(cleared, shifted);
         updateOutputReg(res);
-        return;
+        break;
       }
 
       auto bits = imms + 1;
@@ -2903,7 +2910,7 @@ public:
       // place the bitfield
       auto res = createOr(masked, moved);
       updateOutputReg(res);
-      return;
+      break;
     }
 
     case AArch64::ORRWri:
@@ -2911,8 +2918,8 @@ public:
       auto size = getInstSize(opcode);
       auto lhs = readFromOperand(1);
       auto imm = getImm(2);
-      auto decoded = decodeLogicalImmediate(imm, size);
-      auto result = createOr(lhs, getIntConst(decoded, size));
+      auto mask_pair = decodeBitMasks(imm, size);
+      auto result = createOr(lhs, getIntConst(mask_pair.first, size));
       updateOutputReg(result);
       break;
     }
