@@ -568,6 +568,10 @@ class arm2llvm {
       AArch64::LDPQi,
       AArch64::LDRQroX,
       AArch64::LDURQi,
+      AArch64::LD1i8,
+      AArch64::LD1i16,
+      AArch64::LD1i32,
+      AArch64::LD1i64,
       AArch64::STPQi,
       AArch64::STRQroX,
       AArch64::ADDv8i16,
@@ -3274,11 +3278,64 @@ public:
       default:
         *out << "\nError Unknown opcode\n";
         visitError();
+        break;
       }
 
       auto [base, offset] = getParamsLoadReg();
       auto loaded = makeLoadWithOffset(base, offset, size);
       updateOutputReg(loaded);
+      break;
+    }
+    case AArch64::LD1i8:
+    case AArch64::LD1i16:
+    case AArch64::LD1i32:
+    case AArch64::LD1i64: {
+      auto &op1 = CurInst->getOperand(1);
+      auto &op2 = CurInst->getOperand(2);
+      auto &op3 = CurInst->getOperand(3);
+      assert(op1.isReg() && op3.isReg());
+      assert(op2.isImm());
+
+      auto src = readFromReg(op1.getReg());
+      auto index = getImm(2);
+      auto baseReg = op3.getReg();
+      assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+             (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
+             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
+      auto base = readPtrFromReg(baseReg);
+
+      unsigned numElts, eltSize;
+
+      switch (opcode) {
+      case AArch64::LD1i8:
+        numElts = 16;
+        eltSize = 8;
+        break;
+      case AArch64::LD1i16:
+        numElts = 8;
+        eltSize = 16;
+        break;
+      case AArch64::LD1i32:
+        numElts = 4;
+        eltSize = 32;
+        break;
+      case AArch64::LD1i64:
+        numElts = 2;
+        eltSize = 64;
+        break;
+      default:
+        *out << "\nError Unknown opcode\n";
+        visitError();
+        break;
+      }
+
+      auto loaded = makeLoadWithOffset(base, 0, eltSize / 8);
+      auto casted =
+          createBitCast(src, VectorType::get(getIntTy(eltSize),
+                                             ElementCount::getFixed(numElts)));
+      auto updated =
+          createInsertElement(casted, loaded, getIntConst(index, 32));
+      updateOutputReg(updated);
       break;
     }
     case AArch64::STRBBui: {
