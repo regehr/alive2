@@ -1,6 +1,3 @@
-; ModuleID = '<stdin>'
-source_filename = "<stdin>"
-
 @GlobLd128 = external dso_local local_unnamed_addr global [20 x fp128], align 16
 @GlobSt128 = external dso_local local_unnamed_addr global [20 x fp128], align 16
 

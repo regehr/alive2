@@ -576,6 +576,14 @@ class arm2llvm {
       AArch64::LD1i16,
       AArch64::LD1i32,
       AArch64::LD1i64,
+      AArch64::LD1Rv8b,
+      AArch64::LD1Rv16b,
+      AArch64::LD1Rv4h,
+      AArch64::LD1Rv8h,
+      AArch64::LD1Rv2s,
+      AArch64::LD1Rv4s,
+      AArch64::LD1Rv1d,
+      AArch64::LD1Rv2d,
       AArch64::STPQi,
       AArch64::STRQroX,
       AArch64::ADDv8i16,
@@ -3301,7 +3309,7 @@ public:
       assert(op1.isReg() && op3.isReg());
       assert(op2.isImm());
 
-      auto src = readFromReg(op1.getReg());
+      auto dst = readFromReg(op1.getReg());
       auto index = getImm(2);
       auto baseReg = op3.getReg();
       assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
@@ -3336,11 +3344,94 @@ public:
 
       auto loaded = makeLoadWithOffset(base, 0, eltSize / 8);
       auto casted =
-          createBitCast(src, VectorType::get(getIntTy(eltSize),
+          createBitCast(dst, VectorType::get(getIntTy(eltSize),
                                              ElementCount::getFixed(numElts)));
       auto updated =
           createInsertElement(casted, loaded, getIntConst(index, 32));
       updateOutputReg(updated);
+      break;
+    }
+    case AArch64::LD1Rv8b:
+    case AArch64::LD1Rv16b:
+    case AArch64::LD1Rv4h:
+    case AArch64::LD1Rv8h:
+    case AArch64::LD1Rv2s:
+    case AArch64::LD1Rv4s:
+    case AArch64::LD1Rv2d: {
+      auto &op0 = CurInst->getOperand(0);
+      auto &op1 = CurInst->getOperand(1);
+
+      assert(op0.isReg() && op1.isReg());
+
+      // Read source
+      auto dst = readFromReg(op0.getReg());
+      if (getRegSize(op0.getReg()) == 64) {
+        dst = createTrunc(dst, i64);
+      }
+      auto baseReg = op1.getReg();
+      assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+             (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
+             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
+
+      auto base = readPtrFromReg(baseReg);
+
+      unsigned numElts, eltSize;
+
+      switch (opcode) {
+      case AArch64::LD1Rv8b:
+        numElts = 8;
+        eltSize = 8;
+        break;
+      case AArch64::LD1Rv16b:
+        numElts = 16;
+        eltSize = 8;
+        break;
+      case AArch64::LD1Rv4h:
+        numElts = 4;
+        eltSize = 16;
+        break;
+      case AArch64::LD1Rv8h:
+        numElts = 8;
+        eltSize = 16;
+        break;
+      case AArch64::LD1Rv2s:
+        numElts = 2;
+        eltSize = 32;
+        break;
+      case AArch64::LD1Rv4s:
+        numElts = 4;
+        eltSize = 32;
+        break;
+      case AArch64::LD1Rv1d:
+        numElts = 1;
+        eltSize = 64;
+        break;
+      case AArch64::LD1Rv2d:
+        numElts = 2;
+        eltSize = 64;
+        break;
+      default:
+        *out << "\nError Unknown opcode\n";
+        visitError();
+        break;
+      }
+
+      auto loaded = makeLoadWithOffset(base, 0, eltSize / 8);
+      auto casted =
+          createBitCast(dst, VectorType::get(getIntTy(eltSize),
+                                             ElementCount::getFixed(numElts)));
+
+      // FIXME: Alternative to creating many insertelement instructions, insert
+      //  the element in the first lane and create a shufflevector to copy it to
+      //  the rest of the lanes doing the same task in 2 instructions. The
+      //  shuffle mask will just be <numElts x i32> zeroinitializer
+      Value *updated_dst = casted;
+      for (unsigned i = 0; i < numElts; i++) {
+        updated_dst =
+            createInsertElement(updated_dst, loaded, getIntConst(i, 32));
+      }
+
+      updateOutputReg(updated_dst);
       break;
     }
     case AArch64::STRBBui: {

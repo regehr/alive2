@@ -1,6 +1,3 @@
-; ModuleID = '<stdin>'
-source_filename = "<stdin>"
-
 define i32 @test_load_extract_from_mul_4(ptr %0, i32 %1) {
   %3 = mul i32 %1, 510136
   %4 = getelementptr inbounds i8, ptr %0, i32 %3

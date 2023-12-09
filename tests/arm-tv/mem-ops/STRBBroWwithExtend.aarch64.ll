@@ -1,6 +1,3 @@
-; ModuleID = '<stdin>'
-source_filename = "<stdin>"
-
 @ga = external global [1024 x i8], align 8
 
 ; Function Attrs: nounwind
