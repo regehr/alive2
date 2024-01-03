@@ -780,8 +780,16 @@ class arm2llvm {
       AArch64::UMOVvi64,
       AArch64::UMOVvi16,
       AArch64::UMOVvi16_idx0,
-      AArch64::SMOVvi16to32,
+      AArch64::SMOVvi8to32_idx0,
+      AArch64::SMOVvi8to32,
       AArch64::SMOVvi16to32_idx0,
+      AArch64::SMOVvi16to32,
+      AArch64::SMOVvi8to64_idx0,
+      AArch64::SMOVvi8to64,
+      AArch64::SMOVvi16to64_idx0,
+      AArch64::SMOVvi16to64,
+      AArch64::SMOVvi32to64_idx0,
+      AArch64::SMOVvi32to64,
       AArch64::INSvi64lane,
       AArch64::INSvi8lane,
       AArch64::INSvi16lane,
@@ -1484,7 +1492,7 @@ class arm2llvm {
       return;
 
     // FIXME do we really want to do this? and if so, do this for
-    // floats too?
+    //  floats too?
     if (V->getType()->isVectorTy())
       V = createBitCast(V, getIntTy(getBitWidth(V)));
 
@@ -4254,16 +4262,52 @@ public:
       setV(createFCmp(FCmpInst::Predicate::FCMP_UNO, a, b));
       break;
     }
-
+    case AArch64::SMOVvi8to32_idx0:
+    case AArch64::SMOVvi8to32:
+    case AArch64::SMOVvi16to32_idx0:
     case AArch64::SMOVvi16to32:
-    case AArch64::SMOVvi16to32_idx0: {
+    case AArch64::SMOVvi8to64_idx0:
+    case AArch64::SMOVvi8to64:
+    case AArch64::SMOVvi16to64_idx0:
+    case AArch64::SMOVvi16to64:
+    case AArch64::SMOVvi32to64_idx0:
+    case AArch64::SMOVvi32to64: {
       auto val = readFromOperand(1);
-      auto imm = getImm(2);
-      auto shiftAmt = getIntConst(imm * 16, 128);
+      auto index = getImm(2);
+      int64_t eltSizeLog2;
+      Type *truncSize;
+
+      switch (opcode) {
+      case AArch64::SMOVvi8to32_idx0:
+      case AArch64::SMOVvi8to32:
+        eltSizeLog2 = 3;
+        truncSize = i8;
+        break;
+      case AArch64::SMOVvi16to32_idx0:
+      case AArch64::SMOVvi16to32:
+        eltSizeLog2 = 4;
+        truncSize = i16;
+        break;
+      case AArch64::SMOVvi8to64_idx0:
+      case AArch64::SMOVvi8to64:
+        eltSizeLog2 = 3;
+        truncSize = i8;
+        break;
+      case AArch64::SMOVvi16to64_idx0:
+      case AArch64::SMOVvi16to64:
+        eltSizeLog2 = 4;
+        truncSize = i16;
+        break;
+      case AArch64::SMOVvi32to64_idx0:
+      case AArch64::SMOVvi32to64:
+        eltSizeLog2 = 5;
+        truncSize = i32;
+        break;
+      }
+      auto shiftAmt = getIntConst(index << eltSizeLog2, 128);
       auto shifted = createRawLShr(val, shiftAmt);
-      auto trunced = createTrunc(shifted, i16);
-      auto sexted = createSExt(trunced, i32);
-      updateOutputReg(sexted);
+      auto trunced = createTrunc(shifted, truncSize);
+      updateOutputReg(trunced, true);
       break;
     }
 
