@@ -159,7 +159,8 @@ public:
     for (auto &bb : BBs)
       if (bb.getName() == b_name)
         return &bb;
-    *out << "ERROR: jump target '" << b_name << "' not found, probably a tail call\n\n";
+    *out << "ERROR: jump target '" << b_name
+         << "' not found, probably a tail call\n\n";
     exit(-1);
   }
 
@@ -3654,18 +3655,16 @@ public:
       auto base = readPtrFromReg(baseReg);
       auto baseAddr = createPtrToInt(base, i64);
 
+      auto loaded = makeLoadWithOffset(base, 0, size);
+      updateReg(loaded, destReg);
       // Start offset as a 9 bit signed integer and extend as required
       assert(imm <= 255 && imm >= -256);
 
       auto offset = getIntConst(imm, 9);
       auto offsetVal = createSExt(offset, i64);
 
-      auto loaded = makeLoadWithOffset(base, offsetVal, size);
-      updateReg(loaded, destReg);
-
-      // Post update source register by adding 2*offset to base
-      auto added =
-          createAdd(baseAddr, createRawShl(offsetVal, getIntConst(1, 64)));
+      // Post update source register
+      auto added = createAdd(baseAddr, offsetVal);
       updateOutputReg(added);
       break;
     }
@@ -3986,21 +3985,20 @@ public:
       auto base = readPtrFromReg(baseReg);
       auto baseAddr = createPtrToInt(base, i64);
 
+      auto loaded = opcode == AArch64::STRXpost
+                        ? readFromReg(srcReg)
+                        : createTrunc(readFromReg(srcReg), i32);
+
+      storeToMemoryImmOffset(base, 0, size, loaded);
+
       // Start offset as a 9 bit signed integer and extend as required
       assert(imm <= 255 && imm >= -256);
 
       auto offset = getIntConst(imm, 9);
       auto offsetVal = createSExt(offset, i64);
 
-      auto loaded = opcode == AArch64::STRXpost
-                        ? readFromReg(srcReg)
-                        : createTrunc(readFromReg(srcReg), i32);
-
-      storeToMemoryValOffset(base, offsetVal, size, loaded);
-
-      // Post update source register by adding 2*offset to base
-      auto added =
-          createAdd(baseAddr, createRawShl(offsetVal, getIntConst(1, 64)));
+      // Post update source register
+      auto added = createAdd(baseAddr, offsetVal);
       updateOutputReg(added);
       break;
     }
