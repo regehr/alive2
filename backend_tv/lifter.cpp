@@ -311,42 +311,42 @@ class arm2llvm {
   };
 
   const set<int> instrs_32 = {
-      AArch64::ADDWrx,     AArch64::ADDSWrs,   AArch64::ADDSWri,
-      AArch64::ADDWrs,     AArch64::ADDWri,    AArch64::ADDSWrx,
-      AArch64::ADCWr,      AArch64::ADCSWr,    AArch64::ASRVWr,
-      AArch64::SUBWri,     AArch64::SUBWrs,    AArch64::SUBWrx,
-      AArch64::SUBSWrs,    AArch64::SUBSWri,   AArch64::SUBSWrx,
-      AArch64::SBFMWri,    AArch64::CSELWr,    AArch64::ANDWri,
-      AArch64::ANDWrr,     AArch64::ANDWrs,    AArch64::ANDSWri,
-      AArch64::ANDSWrr,    AArch64::ANDSWrs,   AArch64::MADDWrrr,
-      AArch64::MSUBWrrr,   AArch64::EORWri,    AArch64::CSINVWr,
-      AArch64::CSINCWr,    AArch64::MOVZWi,    AArch64::MOVNWi,
-      AArch64::MOVKWi,     AArch64::LSLVWr,    AArch64::LSRVWr,
-      AArch64::ORNWrs,     AArch64::UBFMWri,   AArch64::BFMWri,
-      AArch64::ORRWrs,     AArch64::ORRWri,    AArch64::SDIVWr,
-      AArch64::UDIVWr,     AArch64::EXTRWrri,  AArch64::EORWrs,
-      AArch64::RORVWr,     AArch64::RBITWr,    AArch64::CLZWr,
-      AArch64::REVWr,      AArch64::CSNEGWr,   AArch64::BICWrs,
-      AArch64::BICSWrs,    AArch64::EONWrs,    AArch64::REV16Wr,
-      AArch64::Bcc,        AArch64::CCMPWr,    AArch64::CCMPWi,
-      AArch64::LDRWui,     AArch64::LDRBBroW,  AArch64::LDRBBroX,
-      AArch64::LDRHHroW,   AArch64::LDRHHroX,  AArch64::LDRWroW,
-      AArch64::LDRWroX,    AArch64::LDRSui,    AArch64::LDRBBui,
-      AArch64::LDRBui,     AArch64::LDRSBWui,  AArch64::LDRSWui,
-      AArch64::LDRSHWui,   AArch64::LDRHHui,   AArch64::LDRHui,
-      AArch64::LDURBi,     AArch64::LDURBBi,   AArch64::LDURHi,
-      AArch64::LDURHHi,    AArch64::LDURSi,    AArch64::LDURWi,
-      AArch64::STRWui,     AArch64::STRBBroW,  AArch64::STRBBroX,
-      AArch64::STRHHroW,   AArch64::STRHHroX,  AArch64::STRWroW,
-      AArch64::STRWroX,    AArch64::CCMNWi,    AArch64::CCMNWr,
-      AArch64::STRBBui,    AArch64::STRBui,    AArch64::STPWi,
-      AArch64::STRHHui,    AArch64::STRHui,    AArch64::STURWi,
-      AArch64::STRSui,     AArch64::LDPWi,     AArch64::STRWpre,
-      AArch64::FADDSrr,    AArch64::FSUBSrr,   AArch64::FCMPSrr,
-      AArch64::FCMPSri,    AArch64::FMOVSWr,   AArch64::INSvi32gpr,
-      AArch64::INSvi16gpr, AArch64::INSvi8gpr, AArch64::FCVTSHr,
-      AArch64::FCVTZSUWSr, AArch64::FCSELSrrr, AArch64::FMULSrr,
-      AArch64::FABSSr,
+      AArch64::ADDWrx,    AArch64::ADDSWrs,    AArch64::ADDSWri,
+      AArch64::ADDWrs,    AArch64::ADDWri,     AArch64::ADDSWrx,
+      AArch64::ADCWr,     AArch64::ADCSWr,     AArch64::ASRVWr,
+      AArch64::SUBWri,    AArch64::SUBWrs,     AArch64::SUBWrx,
+      AArch64::SUBSWrs,   AArch64::SUBSWri,    AArch64::SUBSWrx,
+      AArch64::SBFMWri,   AArch64::CSELWr,     AArch64::ANDWri,
+      AArch64::ANDWrr,    AArch64::ANDWrs,     AArch64::ANDSWri,
+      AArch64::ANDSWrr,   AArch64::ANDSWrs,    AArch64::MADDWrrr,
+      AArch64::MSUBWrrr,  AArch64::EORWri,     AArch64::CSINVWr,
+      AArch64::CSINCWr,   AArch64::MOVZWi,     AArch64::MOVNWi,
+      AArch64::MOVKWi,    AArch64::LSLVWr,     AArch64::LSRVWr,
+      AArch64::ORNWrs,    AArch64::UBFMWri,    AArch64::BFMWri,
+      AArch64::ORRWrs,    AArch64::ORRWri,     AArch64::SDIVWr,
+      AArch64::UDIVWr,    AArch64::EXTRWrri,   AArch64::EORWrs,
+      AArch64::RORVWr,    AArch64::RBITWr,     AArch64::CLZWr,
+      AArch64::REVWr,     AArch64::CSNEGWr,    AArch64::BICWrs,
+      AArch64::BICSWrs,   AArch64::EONWrs,     AArch64::REV16Wr,
+      AArch64::Bcc,       AArch64::CCMPWr,     AArch64::CCMPWi,
+      AArch64::LDRWui,    AArch64::LDRBBroW,   AArch64::LDRBBroX,
+      AArch64::LDRHHroW,  AArch64::LDRHHroX,   AArch64::LDRWroW,
+      AArch64::LDRWroX,   AArch64::LDRSui,     AArch64::LDRBBui,
+      AArch64::LDRBui,    AArch64::LDRSBWui,   AArch64::LDRSWui,
+      AArch64::LDRSHWui,  AArch64::LDRHHui,    AArch64::LDRHui,
+      AArch64::LDURBi,    AArch64::LDURBBi,    AArch64::LDURHi,
+      AArch64::LDURHHi,   AArch64::LDURSi,     AArch64::LDURWi,
+      AArch64::LDRWpost,  AArch64::STRWpost,   AArch64::STRWui,
+      AArch64::STRBBroW,  AArch64::STRBBroX,   AArch64::STRHHroW,
+      AArch64::STRHHroX,  AArch64::STRWroW,    AArch64::STRWroX,
+      AArch64::CCMNWi,    AArch64::CCMNWr,     AArch64::STRBBui,
+      AArch64::STRBui,    AArch64::STPWi,      AArch64::STRHHui,
+      AArch64::STRHui,    AArch64::STURWi,     AArch64::STRSui,
+      AArch64::LDPWi,     AArch64::STRWpre,    AArch64::FADDSrr,
+      AArch64::FSUBSrr,   AArch64::FCMPSrr,    AArch64::FCMPSri,
+      AArch64::FMOVSWr,   AArch64::INSvi32gpr, AArch64::INSvi16gpr,
+      AArch64::INSvi8gpr, AArch64::FCVTSHr,    AArch64::FCVTZSUWSr,
+      AArch64::FCSELSrrr, AArch64::FMULSrr,    AArch64::FABSSr,
   };
 
   const set<int> instrs_64 = {
@@ -453,6 +453,7 @@ class arm2llvm {
       AArch64::LDRSBXui,
       AArch64::LDRSHXui,
       AArch64::STRXui,
+      AArch64::STRXpost,
       AArch64::STRXroW,
       AArch64::STRXroX,
       AArch64::STPXi,
@@ -3638,9 +3639,9 @@ public:
       updateOutputReg(loaded);
       break;
     }
-
+    case AArch64::LDRWpost:
     case AArch64::LDRXpost: {
-      unsigned size = 8;
+      unsigned size = opcode == AArch64::LDRXpost ? 8 : 4;
       auto &op0 = CurInst->getOperand(0);
       auto &op1 = CurInst->getOperand(1);
       auto &op2 = CurInst->getOperand(2);
@@ -3649,20 +3650,29 @@ public:
       assert(op0.getReg() == op2.getReg());
       assert(op3.isImm());
 
-      // loaded value is going to end up in this register
+      // For post instructions, the destination register is at position 1
       auto destReg = op1.getReg();
-
-      // this register points to the value to be loaded, and it also
-      // gets post-updated
-      auto ptrReg = op0.getReg();
-      auto addr = readPtrFromReg(ptrReg);
+      auto baseReg = op2.getReg();
       auto imm = op3.getImm();
-      auto loaded = makeLoadWithOffset(addr, imm * size, size);
+      assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+             (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
+             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
+      auto base = readPtrFromReg(baseReg);
+      auto baseAddr = createPtrToInt(base, i64);
+
+      // Start offset as a 9 bit signed integer and extend as required
+      assert(imm <= 255 && imm >= -256);
+
+      auto offset = getIntConst(imm, 9);
+      auto offsetVal = createSExt(offset, i64);
+
+      auto loaded = makeLoadWithOffset(base, offsetVal, size);
       updateReg(loaded, destReg);
-      auto offsetVal = getIntConst(imm, 64);
-      auto toUpdate = readFromReg(ptrReg);
-      auto added = createAdd(toUpdate, offsetVal);
-      updateReg(added, ptrReg);
+
+      // Post update source register by adding 2*offset to base
+      auto added =
+          createAdd(baseAddr, createRawShl(offsetVal, getIntConst(1, 64)));
+      updateOutputReg(added);
       break;
     }
 
@@ -3958,6 +3968,46 @@ public:
         *out << "\nError Unknown opcode\n";
         visitError();
       }
+      break;
+    }
+
+    case AArch64::STRWpost:
+    case AArch64::STRXpost: {
+      unsigned size = opcode == AArch64::STRXpost ? 8 : 4;
+      auto &op0 = CurInst->getOperand(0);
+      auto &op1 = CurInst->getOperand(1);
+      auto &op2 = CurInst->getOperand(2);
+      auto &op3 = CurInst->getOperand(3);
+      assert(op0.isReg() && op1.isReg() && op2.isReg());
+      assert(op0.getReg() == op2.getReg());
+      assert(op3.isImm());
+
+      // For post instructions, the source register is at position 1
+      auto srcReg = op1.getReg();
+      auto baseReg = op2.getReg();
+      auto imm = op3.getImm();
+      assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+             (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
+             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
+      auto base = readPtrFromReg(baseReg);
+      auto baseAddr = createPtrToInt(base, i64);
+
+      // Start offset as a 9 bit signed integer and extend as required
+      assert(imm <= 255 && imm >= -256);
+
+      auto offset = getIntConst(imm, 9);
+      auto offsetVal = createSExt(offset, i64);
+
+      auto loaded = opcode == AArch64::STRXpost
+                        ? readFromReg(srcReg)
+                        : createTrunc(readFromReg(srcReg), i32);
+
+      storeToMemoryValOffset(base, offsetVal, size, loaded);
+
+      // Post update source register by adding 2*offset to base
+      auto added =
+          createAdd(baseAddr, createRawShl(offsetVal, getIntConst(1, 64)));
+      updateOutputReg(added);
       break;
     }
 
