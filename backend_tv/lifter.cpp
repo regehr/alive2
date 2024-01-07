@@ -349,9 +349,7 @@ class arm2llvm {
       AArch64::FMOVSWr,    AArch64::INSvi32gpr, AArch64::INSvi16gpr,
       AArch64::INSvi8gpr,  AArch64::FCVTSHr,    AArch64::FCVTZSUWSr,
       AArch64::FCSELSrrr,  AArch64::FMULSrr,    AArch64::FABSSr,
-      AArch64::UQADDv1i32,
-    AArch64::SQSUBv1i32,
-  AArch64::SQADDv1i32,
+      AArch64::UQADDv1i32, AArch64::SQSUBv1i32, AArch64::SQADDv1i32,
   };
 
   const set<int> instrs_64 = {
@@ -494,8 +492,11 @@ class arm2llvm {
       AArch64::UADDLv8i8_v8i16,
       AArch64::USUBLv8i8_v8i16,
       AArch64::XTNv2i32,
+      AArch64::XTNv4i32,
       AArch64::XTNv4i16,
+      AArch64::XTNv8i16,
       AArch64::XTNv8i8,
+      AArch64::XTNv16i8,
       AArch64::MLSv2i32,
       AArch64::NEGv1i64,
       AArch64::NEGv4i16,
@@ -668,14 +669,14 @@ class arm2llvm {
       AArch64::MLSv4i16_indexed,
       AArch64::MLSv8i8,
       AArch64::MLSv4i16,
-    AArch64::SQADDv1i64,
-    AArch64::SQADDv8i8,
-    AArch64::SQADDv4i16,
-    AArch64::SQADDv2i32,
-    AArch64::SQSUBv1i64,
-    AArch64::SQSUBv8i8,
-    AArch64::SQSUBv4i16,
-    AArch64::SQSUBv2i32,
+      AArch64::SQADDv1i64,
+      AArch64::SQADDv8i8,
+      AArch64::SQADDv4i16,
+      AArch64::SQADDv2i32,
+      AArch64::SQSUBv1i64,
+      AArch64::SQSUBv8i8,
+      AArch64::SQSUBv4i16,
+      AArch64::SQSUBv2i32,
   };
 
   /*
@@ -707,14 +708,14 @@ UMLALv8i16_v4i32
   */
 
   const set<int> instrs_128 = {
-    AArch64::SQADDv2i64,
-    AArch64::SQADDv4i32,
-    AArch64::SQADDv16i8,
-    AArch64::SQADDv8i16,
-    AArch64::SQSUBv2i64,
-    AArch64::SQSUBv4i32,
-    AArch64::SQSUBv16i8,
-    AArch64::SQSUBv8i16,
+      AArch64::SQADDv2i64,
+      AArch64::SQADDv4i32,
+      AArch64::SQADDv16i8,
+      AArch64::SQADDv8i16,
+      AArch64::SQSUBv2i64,
+      AArch64::SQSUBv4i32,
+      AArch64::SQSUBv16i8,
+      AArch64::SQSUBv8i16,
       AArch64::MLSv16i8,
       AArch64::MLSv8i16,
       AArch64::MLSv4i32,
@@ -2045,7 +2046,7 @@ UMLALv8i16_v4i32
     auto i32 = getIntTy(32);
     auto i64 = getIntTy(64);
 
-    if (true) {
+    if (false) {
       /*
        * ABI stuff: on all return paths, check that callee-saved +
        * other registers have been reset to their previous
@@ -6742,37 +6743,45 @@ public:
     }
 
     case AArch64::XTNv2i32:
+    case AArch64::XTNv4i32:
     case AArch64::XTNv4i16:
-    case AArch64::XTNv8i8: {
+    case AArch64::XTNv8i16:
+    case AArch64::XTNv8i8:
+    case AArch64::XTNv16i8: {
       auto &op0 = CurInst->getOperand(0);
-      auto &op1 = CurInst->getOperand(1);
+      u_int64_t srcReg = opcode == AArch64::XTNv2i32 ||
+                                 opcode == AArch64::XTNv4i16 ||
+                                 opcode == AArch64::XTNv8i8
+                             ? 1
+                             : 2;
+      auto &op1 = CurInst->getOperand(srcReg);
       assert(isSIMDandFPReg(op0) && isSIMDandFPReg(op0));
 
-      // The source value is always a vector with total width of 128 bits
-      // The destination value is always a vector with total of 64 bits but we
-      // need to read the full 128 bit SIMD&FP register and change the value
-      // appropriately
       Value *src = readFromReg(op1.getReg());
       assert(getBitWidth(src) == 128 &&
              "Source value is not a vector with 128 bits");
 
       // eltSize is in bits
       u_int64_t eltSize, numElts, part;
+      part = opcode == AArch64::XTNv2i32 || opcode == AArch64::XTNv4i16 ||
+                     opcode == AArch64::XTNv8i8
+                 ? 0
+                 : 1;
       switch (opcode) {
       case AArch64::XTNv8i8:
+      case AArch64::XTNv16i8:
         numElts = 8;
         eltSize = 8;
-        part = 0;
         break;
       case AArch64::XTNv4i16:
+      case AArch64::XTNv8i16:
         numElts = 4;
         eltSize = 16;
-        part = 0;
         break;
       case AArch64::XTNv2i32:
+      case AArch64::XTNv4i32:
         numElts = 2;
         eltSize = 32;
-        part = 0;
         break;
       default:
         *out << "\nError Unknown opcode\n";
@@ -6780,25 +6789,27 @@ public:
         break;
       }
 
-      // BitCast src to a vector of numElts x (2*eltSize)
+      // BitCast src to a vector of numElts x (2*eltSize) for narrowing
       assert(numElts * (2 * eltSize) == 128 && "BitCasting to wrong type");
       Value *src_vector = createBitCast(src, getVecTy(2 * eltSize, numElts));
-      Value *new_dest_vector =
+      Value *narrowed_vector =
           createTrunc(src_vector, getVecTy(eltSize, numElts));
 
+      Value *final_vector = narrowed_vector;
+      // For XTN2 - insertion to upper half
       if (part == 1) {
-        // Have to preserve the lower 64 bits so, read from register and insert
-        // to the upper 64 bits
+        // Preserve the lower 64 bits so, read from destination register
+        // and insert to the upper 64 bits
         Value *dest = readFromReg(op0.getReg());
         Value *original_dest_vector = createBitCast(dest, getVecTy(64, 2));
 
-        new_dest_vector =
-            createInsertElement(original_dest_vector, new_dest_vector, 1);
+        Value *element = createBitCast(narrowed_vector, i64);
+
+        final_vector = createInsertElement(original_dest_vector, element, 1);
       }
 
-      // Write 64 bit or 128 bit register to output
-      // 64 bit will be zero-extended to 128 bit by this function
-      updateOutputReg(new_dest_vector);
+      // Write 64 bits for XTN or 128 bits XTN2 to output register
+      updateOutputReg(final_vector);
       break;
     }
 
