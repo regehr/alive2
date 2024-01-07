@@ -2046,7 +2046,7 @@ UMLALv8i16_v4i32
     auto i32 = getIntTy(32);
     auto i64 = getIntTy(64);
 
-    if (false) {
+    if (true) {
       /*
        * ABI stuff: on all return paths, check that callee-saved +
        * other registers have been reset to their previous
@@ -2150,7 +2150,7 @@ public:
     // and more manual work to sign extend would be necessary
     unsigned extendSize = 8 << (extType & 0x3);
 
-    // Make sure to not to trunc to the same size as the parameter.
+    // Make sure to not trunc to the same size as the parameter.
     if (extendSize != (unsigned)size) {
       auto truncType = getIntTy(extendSize);
       val = createTrunc(val, truncType);
@@ -2209,10 +2209,14 @@ public:
       break;
     case AArch64::LDRWroW:
     case AArch64::LDRWroX:
+    case AArch64::LDRSroW:
+    case AArch64::LDRSroX:
       shiftAmt = shiftAmtVal ? 2 : 0;
       break;
     case AArch64::LDRXroW:
     case AArch64::LDRXroX:
+    case AArch64::LDRDroW:
+    case AArch64::LDRDroX:
       shiftAmt = shiftAmtVal ? 3 : 0;
       break;
     case AArch64::LDRQroW:
@@ -2494,10 +2498,14 @@ public:
       break;
     case AArch64::STRWroW:
     case AArch64::STRWroX:
+    case AArch64::STRSroW:
+    case AArch64::STRSroX:
       shiftAmt = shiftAmtVal ? 2 : 0;
       break;
     case AArch64::STRXroW:
     case AArch64::STRXroX:
+    case AArch64::STRDroW:
+    case AArch64::STRDroX:
       shiftAmt = shiftAmtVal ? 3 : 0;
       break;
     case AArch64::STRQroW:
@@ -3815,8 +3823,13 @@ public:
     case AArch64::LDRHHroX:
     case AArch64::LDRWroW:
     case AArch64::LDRWroX:
+    case AArch64::LDRSroW:
+    case AArch64::LDRSroX:
     case AArch64::LDRXroW:
     case AArch64::LDRXroX:
+    case AArch64::LDRDroW:
+    case AArch64::LDRDroX:
+    case AArch64::LDRQroW:
     case AArch64::LDRQroX: {
       unsigned size;
 
@@ -3831,10 +3844,14 @@ public:
         break;
       case AArch64::LDRWroX:
       case AArch64::LDRWroW:
+      case AArch64::LDRSroW:
+      case AArch64::LDRSroX:
         size = 4;
         break;
       case AArch64::LDRXroW:
       case AArch64::LDRXroX:
+      case AArch64::LDRDroW:
+      case AArch64::LDRDroX:
         size = 8;
         break;
       case AArch64::LDRQroW:
@@ -4069,8 +4086,13 @@ public:
     case AArch64::STRHHroX:
     case AArch64::STRWroW:
     case AArch64::STRWroX:
+    case AArch64::STRSroW:
+    case AArch64::STRSroX:
     case AArch64::STRXroW:
     case AArch64::STRXroX:
+    case AArch64::STRDroW:
+    case AArch64::STRDroX:
+    case AArch64::STRQroW:
     case AArch64::STRQroX: {
       auto [base, offset, val] = getParamsStoreReg();
 
@@ -4085,11 +4107,17 @@ public:
         break;
       case AArch64::STRWroW:
       case AArch64::STRWroX:
+      case AArch64::STRSroW:
+      case AArch64::STRSroX:
         storeToMemoryValOffset(base, offset, 4, createTrunc(val, i32));
         break;
       case AArch64::STRXroW:
       case AArch64::STRXroX:
         storeToMemoryValOffset(base, offset, 8, val);
+        break;
+      case AArch64::STRDroW:
+      case AArch64::STRDroX:
+        storeToMemoryValOffset(base, offset, 8, createTrunc(val, i64));
         break;
       case AArch64::STRQroW:
       case AArch64::STRQroX:
