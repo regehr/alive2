@@ -338,18 +338,19 @@ class arm2llvm {
       AArch64::LDRSHWui,   AArch64::LDRHHui,    AArch64::LDRHui,
       AArch64::LDURBi,     AArch64::LDURBBi,    AArch64::LDURHi,
       AArch64::LDURHHi,    AArch64::LDURSi,     AArch64::LDURWi,
-      AArch64::LDRWpost,   AArch64::STRWpost,   AArch64::STRWui,
-      AArch64::STRBBroW,   AArch64::STRBBroX,   AArch64::STRHHroW,
-      AArch64::STRHHroX,   AArch64::STRWroW,    AArch64::STRWroX,
-      AArch64::CCMNWi,     AArch64::CCMNWr,     AArch64::STRBBui,
-      AArch64::STRBui,     AArch64::STPWi,      AArch64::STRHHui,
-      AArch64::STRHui,     AArch64::STURWi,     AArch64::STRSui,
-      AArch64::LDPWi,      AArch64::STRWpre,    AArch64::FADDSrr,
-      AArch64::FSUBSrr,    AArch64::FCMPSrr,    AArch64::FCMPSri,
-      AArch64::FMOVSWr,    AArch64::INSvi32gpr, AArch64::INSvi16gpr,
-      AArch64::INSvi8gpr,  AArch64::FCVTSHr,    AArch64::FCVTZSUWSr,
-      AArch64::FCSELSrrr,  AArch64::FMULSrr,    AArch64::FABSSr,
-      AArch64::UQADDv1i32, AArch64::SQSUBv1i32, AArch64::SQADDv1i32,
+      AArch64::LDRWpre,    AArch64::LDRWpost,   AArch64::STRWpost,
+      AArch64::STRWui,     AArch64::STRBBroW,   AArch64::STRBBroX,
+      AArch64::STRHHroW,   AArch64::STRHHroX,   AArch64::STRWroW,
+      AArch64::STRWroX,    AArch64::CCMNWi,     AArch64::CCMNWr,
+      AArch64::STRBBui,    AArch64::STRBui,     AArch64::STPWi,
+      AArch64::STRHHui,    AArch64::STRHui,     AArch64::STURWi,
+      AArch64::STRSui,     AArch64::LDPWi,      AArch64::STRWpre,
+      AArch64::FADDSrr,    AArch64::FSUBSrr,    AArch64::FCMPSrr,
+      AArch64::FCMPSri,    AArch64::FMOVSWr,    AArch64::INSvi32gpr,
+      AArch64::INSvi16gpr, AArch64::INSvi8gpr,  AArch64::FCVTSHr,
+      AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,  AArch64::FMULSrr,
+      AArch64::FABSSr,     AArch64::UQADDv1i32, AArch64::SQSUBv1i32,
+      AArch64::SQADDv1i32,
   };
 
   const set<int> instrs_64 = {
@@ -439,6 +440,7 @@ class arm2llvm {
       AArch64::CCMPXr,
       AArch64::CCMPXi,
       AArch64::LDRXui,
+      AArch64::LDRXpre,
       AArch64::LDRXpost,
       AArch64::LDPXpost,
       AArch64::LDPXi,
@@ -3800,6 +3802,8 @@ public:
       updateOutputReg(loaded);
       break;
     }
+    case AArch64::LDRWpre:
+    case AArch64::LDRXpre:
     case AArch64::LDRWpost:
     case AArch64::LDRXpost: {
       unsigned size = opcode == AArch64::LDRXpost ? 8 : 4;
@@ -3811,7 +3815,8 @@ public:
       assert(op0.getReg() == op2.getReg());
       assert(op3.isImm());
 
-      // For post instructions, the destination register is at position 1
+      // For pre and post index memory instructions, the destination register
+      // is at position 1
       auto destReg = op1.getReg();
       auto baseReg = op2.getReg();
       auto imm = op3.getImm();
@@ -3821,15 +3826,17 @@ public:
       auto base = readPtrFromReg(baseReg);
       auto baseAddr = createPtrToInt(base, i64);
 
-      auto loaded = makeLoadWithOffset(base, 0, size);
-      updateReg(loaded, destReg);
       // Start offset as a 9 bit signed integer and extend as required
       assert(imm <= 255 && imm >= -256);
-
       auto offset = getIntConst(imm, 9);
-      auto offsetVal = createSExt(offset, i64);
+      Value *offsetVal = createSExt(offset, i64);
+      Value *zeroVal = getIntConst(0, 64);
 
-      // Post update source register
+      bool isPre = opcode == AArch64::LDRWpre || opcode == AArch64::LDRXpre;
+
+      auto loaded = makeLoadWithOffset(base, isPre ? offsetVal : zeroVal, size);
+      updateReg(loaded, destReg);
+
       auto added = createAdd(baseAddr, offsetVal);
       updateOutputReg(added);
       break;
