@@ -3813,11 +3813,18 @@ public:
       break;
     }
     case AArch64::LDRBBpre:
+    case AArch64::LDRBpre:
     case AArch64::LDRHHpre:
+    case AArch64::LDRHpre:
     case AArch64::LDRWpre:
+    case AArch64::LDRSpre:
     case AArch64::LDRXpre:
+    case AArch64::LDRDpre:
+    case AArch64::LDRQpre:
     case AArch64::LDRBBpost:
+    case AArch64::LDRBpost:
     case AArch64::LDRHHpost:
+    case AArch64::LDRHpost:
     case AArch64::LDRWpost:
     case AArch64::LDRSpost:
     case AArch64::LDRXpost:
@@ -4130,14 +4137,20 @@ public:
     }
 
     case AArch64::STRBBpre:
+    case AArch64::STRBpre:
     case AArch64::STRHHpre:
+    case AArch64::STRHpre:
     case AArch64::STRWpre:
+    case AArch64::STRSpre:
     case AArch64::STRXpre:
     case AArch64::STRDpre:
     case AArch64::STRQpre:
     case AArch64::STRBBpost:
+    case AArch64::STRBpost:
     case AArch64::STRHHpost:
+    case AArch64::STRHpost:
     case AArch64::STRWpost:
+    case AArch64::STRSpost:
     case AArch64::STRXpost:
     case AArch64::STRDpost:
     case AArch64::STRQpost: {
