@@ -1605,6 +1605,10 @@ class arm2llvm {
   }
 
   void updateReg(Value *v, u_int64_t reg) {
+    // important -- squash updates to the zero register
+    if (reg == AArch64::WZR || reg == AArch64::XZR)
+      return;
+
     createStore(v, dealiasReg(reg));
   }
 
@@ -1663,10 +1667,6 @@ class arm2llvm {
 
   void updateOutputReg(Value *V, bool SExt = false) {
     auto destReg = CurInst->getOperand(0).getReg();
-
-    // important -- squash updates to the zero register
-    if (destReg == AArch64::WZR || destReg == AArch64::XZR)
-      return;
 
     // FIXME do we really want to do this? and if so, do this for
     //  floats too?
@@ -2725,8 +2725,7 @@ public:
         if (b->getType()->isPointerTy()) {
           // This control path is for PC-Relative addressing.
           auto reg = CurInst->getOperand(0).getReg();
-          if (reg != AArch64::WZR && reg != AArch64::XZR)
-            updateReg(b, reg);
+          updateReg(b, reg);
           break_outer_switch = true;
           break;
         }
@@ -4293,14 +4292,8 @@ public:
       auto imm = op3.getImm();
       auto out1 = op0.getReg();
       auto out2 = op1.getReg();
-      if (out1 != AArch64::XZR && out1 != AArch64::WZR) {
-        auto loaded = makeLoadWithOffset(baseAddr, imm * size, size);
-        updateReg(loaded, out1);
-      }
-      if (out2 != AArch64::XZR && out2 != AArch64::WZR) {
-        auto loaded = makeLoadWithOffset(baseAddr, (imm + 1) * size, size);
-        updateReg(loaded, out2);
-      }
+      updateReg(makeLoadWithOffset(baseAddr, imm * size, size), out1);
+      updateReg(makeLoadWithOffset(baseAddr, (imm + 1) * size, size), out2);
       break;
     }
 
