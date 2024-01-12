@@ -3820,7 +3820,9 @@ public:
     case AArch64::LDRHHpost:
     case AArch64::LDRWpost:
     case AArch64::LDRSpost:
-    case AArch64::LDRXpost: {
+    case AArch64::LDRXpost:
+    case AArch64::LDRDpost:
+    case AArch64::LDRQpost:{
       unsigned size;
       switch (opcode) {
       case AArch64::LDRBBpre:
@@ -4131,10 +4133,14 @@ public:
     case AArch64::STRHHpre:
     case AArch64::STRWpre:
     case AArch64::STRXpre:
+    case AArch64::STRDpre:
+    case AArch64::STRQpre:
     case AArch64::STRBBpost:
     case AArch64::STRHHpost:
     case AArch64::STRWpost:
-    case AArch64::STRXpost: {
+    case AArch64::STRXpost:
+    case AArch64::STRDpost:
+    case AArch64::STRQpost: {
       auto &op0 = CurInst->getOperand(0);
       auto &op1 = CurInst->getOperand(1);
       auto &op2 = CurInst->getOperand(2);
@@ -4182,6 +4188,7 @@ public:
       case AArch64::STRXpost:
         size = 8;
         loaded = readFromReg(srcReg);
+        break;
       case AArch64::STRDpre:
       case AArch64::STRDpost:
         size = 8;
