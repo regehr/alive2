@@ -339,16 +339,20 @@ class arm2llvm {
       AArch64::LDRSWui,    AArch64::LDRSHWui,   AArch64::LDRHHui,
       AArch64::LDRHui,     AArch64::LDURBi,     AArch64::LDURBBi,
       AArch64::LDURHi,     AArch64::LDURHHi,    AArch64::LDURSi,
-      AArch64::LDURWi,     AArch64::LDRBBpre,   AArch64::LDRHHpre,
-      AArch64::LDRWpre,    AArch64::LDRBBpost,  AArch64::LDRHHpost,
-      AArch64::LDRWpost,   AArch64::STRBBpost,  AArch64::STRHHpost,
-      AArch64::STRWpost,   AArch64::STRWui,     AArch64::STRBBroW,
+      AArch64::LDURWi,     AArch64::LDRBBpre,   AArch64::LDRBpre,
+      AArch64::LDRHHpre,   AArch64::LDRHpre,    AArch64::LDRWpre,
+      AArch64::LDRSpre,    AArch64::LDRBBpost,  AArch64::LDRBpost,
+      AArch64::LDRHHpost,  AArch64::LDRHpost,   AArch64::LDRWpost,
+      AArch64::LDRSpost,   AArch64::STRBBpost,  AArch64::STRBpost,
+      AArch64::STRHHpost,  AArch64::STRHpost,   AArch64::STRWpost,
+      AArch64::STRSpost,   AArch64::STRWui,     AArch64::STRBBroW,
       AArch64::STRBBroX,   AArch64::STRHHroW,   AArch64::STRHHroX,
       AArch64::STRWroW,    AArch64::STRWroX,    AArch64::CCMNWi,
       AArch64::CCMNWr,     AArch64::STRBBui,    AArch64::STRBui,
       AArch64::STPWi,      AArch64::STRHHui,    AArch64::STRHui,
       AArch64::STURWi,     AArch64::STRSui,     AArch64::LDPWi,
-      AArch64::STRBBpre,   AArch64::STRHHpre,   AArch64::STRWpre,
+      AArch64::STRBBpre,   AArch64::STRBpre,    AArch64::STRHHpre,
+      AArch64::STRHpre,    AArch64::STRWpre,    AArch64::STRSpre,
       AArch64::FADDSrr,    AArch64::FSUBSrr,    AArch64::FCMPSrr,
       AArch64::FCMPSri,    AArch64::FMOVSWr,    AArch64::INSvi32gpr,
       AArch64::INSvi16gpr, AArch64::INSvi8gpr,  AArch64::FCVTSHr,
@@ -441,7 +445,9 @@ class arm2llvm {
       AArch64::CCMPXi,
       AArch64::LDRXui,
       AArch64::LDRXpre,
+      AArch64::LDRDpre,
       AArch64::LDRXpost,
+      AArch64::LDRDpost,
       AArch64::LDPXpost,
       AArch64::LDPXi,
       AArch64::LDRDui,
@@ -456,6 +462,7 @@ class arm2llvm {
       AArch64::LDRSHXui,
       AArch64::STRXui,
       AArch64::STRXpost,
+      AArch64::STRDpost,
       AArch64::STRXroW,
       AArch64::STRXroX,
       AArch64::STPXi,
@@ -468,6 +475,7 @@ class arm2llvm {
       AArch64::STURXi,
       AArch64::ADRP,
       AArch64::STRXpre,
+      AArch64::STRDpre,
       AArch64::FADDDrr,
       AArch64::FMULDrr,
       AArch64::FABSDr,
@@ -893,7 +901,11 @@ class arm2llvm {
       AArch64::SUBv4i32,
       AArch64::SUBv16i8,
       AArch64::LDRQui,
+      AArch64::LDRQpre,
+      AArch64::LDRQpost,
       AArch64::STRQui,
+      AArch64::STRQpre,
+      AArch64::STRQpost,
       AArch64::FMOVDi,
       AArch64::FMOVSi,
       AArch64::FMOVWSr,
@@ -3807,24 +3819,37 @@ public:
     case AArch64::LDRBBpost:
     case AArch64::LDRHHpost:
     case AArch64::LDRWpost:
+    case AArch64::LDRSpost:
     case AArch64::LDRXpost: {
       unsigned size;
       switch (opcode) {
       case AArch64::LDRBBpre:
+      case AArch64::LDRBpre:
       case AArch64::LDRBBpost:
+      case AArch64::LDRBpost:
         size = 1;
         break;
       case AArch64::LDRHHpre:
+      case AArch64::LDRHpre:
       case AArch64::LDRHHpost:
+      case AArch64::LDRHpost:
         size = 2;
         break;
       case AArch64::LDRWpre:
+      case AArch64::LDRSpre:
       case AArch64::LDRWpost:
+      case AArch64::LDRSpost:
         size = 4;
         break;
       case AArch64::LDRXpre:
+      case AArch64::LDRDpre:
       case AArch64::LDRXpost:
+      case AArch64::LDRDpost:
         size = 8;
+        break;
+      case AArch64::LDRQpre:
+      case AArch64::LDRQpost:
+        size = 16;
         break;
       default:
         assert(false);
@@ -3854,8 +3879,11 @@ public:
       Value *offsetVal = createSExt(offset, i64);
       Value *zeroVal = getIntConst(0, 64);
 
-      bool isPre = opcode == AArch64::LDRBBpre || opcode == AArch64::LDRHHpre ||
-                   opcode == AArch64::LDRWpre || opcode == AArch64::LDRXpre;
+      bool isPre = opcode == AArch64::LDRBBpre || opcode == AArch64::LDRBpre ||
+                   opcode == AArch64::LDRHHpre || opcode == AArch64::LDRHpre ||
+                   opcode == AArch64::LDRWpre || opcode == AArch64::LDRSpre ||
+                   opcode == AArch64::LDRXpre || opcode == AArch64::LDRDpre ||
+                   opcode == AArch64::LDRQpre;
 
       auto loaded = makeLoadWithOffset(base, isPre ? offsetVal : zeroVal, size);
       updateReg(loaded, destReg);
@@ -4130,23 +4158,38 @@ public:
       Value *loaded = nullptr;
       switch (opcode) {
       case AArch64::STRBBpre:
+      case AArch64::STRBpre:
       case AArch64::STRBBpost:
+      case AArch64::STRBpost:
         size = 1;
         loaded = createTrunc(readFromReg(srcReg), i8);
         break;
       case AArch64::STRHHpre:
+      case AArch64::STRHpre:
       case AArch64::STRHHpost:
+      case AArch64::STRHpost:
         size = 2;
         loaded = createTrunc(readFromReg(srcReg), i16);
         break;
       case AArch64::STRWpre:
+      case AArch64::STRSpre:
       case AArch64::STRWpost:
+      case AArch64::STRSpost:
         size = 4;
         loaded = createTrunc(readFromReg(srcReg), i32);
         break;
       case AArch64::STRXpre:
       case AArch64::STRXpost:
         size = 8;
+        loaded = readFromReg(srcReg);
+      case AArch64::STRDpre:
+      case AArch64::STRDpost:
+        size = 8;
+        loaded = createTrunc(readFromReg(srcReg), i64);
+        break;
+      case AArch64::STRQpre:
+      case AArch64::STRQpost:
+        size = 16;
         loaded = readFromReg(srcReg);
         break;
       default:
@@ -4159,8 +4202,11 @@ public:
       Value *offsetVal = createSExt(offset, i64);
       Value *zeroVal = getIntConst(0, 64);
 
-      bool isPre = opcode == AArch64::STRBBpre || opcode == AArch64::STRHHpre ||
-                   opcode == AArch64::STRWpre || opcode == AArch64::STRXpre;
+      bool isPre = opcode == AArch64::STRBBpre || opcode == AArch64::STRBpre ||
+                   opcode == AArch64::STRHHpre || opcode == AArch64::STRHpre ||
+                   opcode == AArch64::STRWpre || opcode == AArch64::STRSpre ||
+                   opcode == AArch64::STRXpre || opcode == AArch64::STRDpre ||
+                   opcode == AArch64::STRQpre;
 
       storeToMemoryValOffset(base, isPre ? offsetVal : zeroVal, size, loaded);
 
