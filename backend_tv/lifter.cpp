@@ -339,20 +339,22 @@ class arm2llvm {
       AArch64::LDRSWui,    AArch64::LDRSHWui,   AArch64::LDRHHui,
       AArch64::LDRHui,     AArch64::LDURBi,     AArch64::LDURBBi,
       AArch64::LDURHi,     AArch64::LDURHHi,    AArch64::LDURSi,
-      AArch64::LDURWi,     AArch64::LDRHHpre,   AArch64::LDRWpre,
-      AArch64::LDRHHpost,  AArch64::LDRWpost,   AArch64::STRHHpost,
+      AArch64::LDURWi,     AArch64::LDRBBpre,   AArch64::LDRHHpre,
+      AArch64::LDRWpre,    AArch64::LDRBBpost,  AArch64::LDRHHpost,
+      AArch64::LDRWpost,   AArch64::STRBBpost,  AArch64::STRHHpost,
       AArch64::STRWpost,   AArch64::STRWui,     AArch64::STRBBroW,
       AArch64::STRBBroX,   AArch64::STRHHroW,   AArch64::STRHHroX,
       AArch64::STRWroW,    AArch64::STRWroX,    AArch64::CCMNWi,
       AArch64::CCMNWr,     AArch64::STRBBui,    AArch64::STRBui,
       AArch64::STPWi,      AArch64::STRHHui,    AArch64::STRHui,
       AArch64::STURWi,     AArch64::STRSui,     AArch64::LDPWi,
-      AArch64::STRHHpre,   AArch64::STRWpre,    AArch64::FADDSrr,
-      AArch64::FSUBSrr,    AArch64::FCMPSrr,    AArch64::FCMPSri,
-      AArch64::FMOVSWr,    AArch64::INSvi32gpr, AArch64::INSvi16gpr,
-      AArch64::INSvi8gpr,  AArch64::FCVTSHr,    AArch64::FCVTZSUWSr,
-      AArch64::FCSELSrrr,  AArch64::FMULSrr,    AArch64::FABSSr,
-      AArch64::UQADDv1i32, AArch64::SQSUBv1i32, AArch64::SQADDv1i32,
+      AArch64::STRBBpre,   AArch64::STRHHpre,   AArch64::STRWpre,
+      AArch64::FADDSrr,    AArch64::FSUBSrr,    AArch64::FCMPSrr,
+      AArch64::FCMPSri,    AArch64::FMOVSWr,    AArch64::INSvi32gpr,
+      AArch64::INSvi16gpr, AArch64::INSvi8gpr,  AArch64::FCVTSHr,
+      AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,  AArch64::FMULSrr,
+      AArch64::FABSSr,     AArch64::UQADDv1i32, AArch64::SQSUBv1i32,
+      AArch64::SQADDv1i32,
   };
 
   const set<int> instrs_64 = {
@@ -3798,14 +3800,20 @@ public:
       updateOutputReg(loaded);
       break;
     }
+    case AArch64::LDRBBpre:
     case AArch64::LDRHHpre:
     case AArch64::LDRWpre:
     case AArch64::LDRXpre:
+    case AArch64::LDRBBpost:
     case AArch64::LDRHHpost:
     case AArch64::LDRWpost:
     case AArch64::LDRXpost: {
       unsigned size;
       switch (opcode) {
+      case AArch64::LDRBBpre:
+      case AArch64::LDRBBpost:
+        size = 1;
+        break;
       case AArch64::LDRHHpre:
       case AArch64::LDRHHpost:
         size = 2;
@@ -3846,8 +3854,8 @@ public:
       Value *offsetVal = createSExt(offset, i64);
       Value *zeroVal = getIntConst(0, 64);
 
-      bool isPre = opcode == AArch64::LDRHHpre || opcode == AArch64::LDRWpre ||
-                   opcode == AArch64::LDRXpre;
+      bool isPre = opcode == AArch64::LDRBBpre || opcode == AArch64::LDRHHpre ||
+                   opcode == AArch64::LDRWpre || opcode == AArch64::LDRXpre;
 
       auto loaded = makeLoadWithOffset(base, isPre ? offsetVal : zeroVal, size);
       updateReg(loaded, destReg);
@@ -4091,9 +4099,11 @@ public:
       break;
     }
 
+    case AArch64::STRBBpre:
     case AArch64::STRHHpre:
     case AArch64::STRWpre:
     case AArch64::STRXpre:
+    case AArch64::STRBBpost:
     case AArch64::STRHHpost:
     case AArch64::STRWpost:
     case AArch64::STRXpost: {
@@ -4119,6 +4129,11 @@ public:
       unsigned size;
       Value *loaded = nullptr;
       switch (opcode) {
+      case AArch64::STRBBpre:
+      case AArch64::STRBBpost:
+        size = 1;
+        loaded = createTrunc(readFromReg(srcReg), i8);
+        break;
       case AArch64::STRHHpre:
       case AArch64::STRHHpost:
         size = 2;
@@ -4144,8 +4159,8 @@ public:
       Value *offsetVal = createSExt(offset, i64);
       Value *zeroVal = getIntConst(0, 64);
 
-      bool isPre = opcode == AArch64::STRHHpre || opcode == AArch64::STRWpre ||
-                   opcode == AArch64::STRXpre;
+      bool isPre = opcode == AArch64::STRBBpre || opcode == AArch64::STRHHpre ||
+                   opcode == AArch64::STRWpre || opcode == AArch64::STRXpre;
 
       storeToMemoryValOffset(base, isPre ? offsetVal : zeroVal, size, loaded);
 
@@ -7430,7 +7445,7 @@ public:
     createRegStorage(AArch64::LR, 64, "LR");
 
     // initializing to zero makes loads from XZR work; stores are
-    // handled in updateOutputReg()
+    // handled in updateReg()
     createRegStorage(AArch64::XZR, 64, "XZR");
     createStore(getIntConst(0, 64), RegFile[AArch64::XZR]);
 
