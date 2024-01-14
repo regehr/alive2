@@ -349,16 +349,19 @@ class arm2llvm {
       AArch64::STRBBroX,   AArch64::STRHHroW,   AArch64::STRHHroX,
       AArch64::STRWroW,    AArch64::STRWroX,    AArch64::CCMNWi,
       AArch64::CCMNWr,     AArch64::STRBBui,    AArch64::STRBui,
-      AArch64::STPWi,      AArch64::STRHHui,    AArch64::STRHui,
-      AArch64::STURWi,     AArch64::STRSui,     AArch64::LDPWi,
-      AArch64::STRBBpre,   AArch64::STRBpre,    AArch64::STRHHpre,
-      AArch64::STRHpre,    AArch64::STRWpre,    AArch64::STRSpre,
-      AArch64::FADDSrr,    AArch64::FSUBSrr,    AArch64::FCMPSrr,
-      AArch64::FCMPSri,    AArch64::FMOVSWr,    AArch64::INSvi32gpr,
-      AArch64::INSvi16gpr, AArch64::INSvi8gpr,  AArch64::FCVTSHr,
-      AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,  AArch64::FMULSrr,
-      AArch64::FABSSr,     AArch64::UQADDv1i32, AArch64::SQSUBv1i32,
-      AArch64::SQADDv1i32,
+      AArch64::STPWi,      AArch64::STPSi,      AArch64::STPWpre,
+      AArch64::STPSpre,    AArch64::STPWpost,   AArch64::STPSpost,
+      AArch64::STRHHui,    AArch64::STRHui,     AArch64::STURWi,
+      AArch64::STRSui,     AArch64::LDPWi,      AArch64::LDPSi,
+      AArch64::LDPWpre,    AArch64::LDPSpre,    AArch64::LDPWpost,
+      AArch64::LDPSpost,   AArch64::STRBBpre,   AArch64::STRBpre,
+      AArch64::STRHHpre,   AArch64::STRHpre,    AArch64::STRWpre,
+      AArch64::STRSpre,    AArch64::FADDSrr,    AArch64::FSUBSrr,
+      AArch64::FCMPSrr,    AArch64::FCMPSri,    AArch64::FMOVSWr,
+      AArch64::INSvi32gpr, AArch64::INSvi16gpr, AArch64::INSvi8gpr,
+      AArch64::FCVTSHr,    AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,
+      AArch64::FMULSrr,    AArch64::FABSSr,     AArch64::UQADDv1i32,
+      AArch64::SQSUBv1i32, AArch64::SQADDv1i32,
   };
 
   const set<int> instrs_64 = {
@@ -448,8 +451,12 @@ class arm2llvm {
       AArch64::LDRDpre,
       AArch64::LDRXpost,
       AArch64::LDRDpost,
+      AArch64::LDPXpre,
+      AArch64::LDPDpre,
       AArch64::LDPXpost,
+      AArch64::LDPDpost,
       AArch64::LDPXi,
+      AArch64::LDPDi,
       AArch64::LDRDui,
       AArch64::LDRXroW,
       AArch64::LDRXroX,
@@ -466,6 +473,11 @@ class arm2llvm {
       AArch64::STRXroW,
       AArch64::STRXroX,
       AArch64::STPXi,
+      AArch64::STPDi,
+      AArch64::STPXpre,
+      AArch64::STPDpre,
+      AArch64::STPXpost,
+      AArch64::STPDpost,
       AArch64::ST1i8,
       AArch64::ST1i16,
       AArch64::ST1i32,
@@ -876,6 +888,8 @@ class arm2llvm {
       AArch64::DUPi32,
       AArch64::FMOVXDr,
       AArch64::LDPQi,
+      AArch64::LDPQpre,
+      AArch64::LDPQpost,
       AArch64::LDRQroX,
       AArch64::LDURQi,
       AArch64::LD1i8,
@@ -891,6 +905,8 @@ class arm2llvm {
       AArch64::LD1Rv1d,
       AArch64::LD1Rv2d,
       AArch64::STPQi,
+      AArch64::STPQpre,
+      AArch64::STPQpost,
       AArch64::STRQroX,
       AArch64::ADDv8i16,
       AArch64::ADDv2i64,
@@ -3829,7 +3845,7 @@ public:
     case AArch64::LDRSpost:
     case AArch64::LDRXpost:
     case AArch64::LDRDpost:
-    case AArch64::LDRQpost:{
+    case AArch64::LDRQpost: {
       unsigned size;
       switch (opcode) {
       case AArch64::LDRBBpre:
@@ -3882,7 +3898,7 @@ public:
       auto base = readPtrFromReg(baseReg);
       auto baseAddr = createPtrToInt(base, i64);
 
-      // Start offset as a 9 bit signed integer and extend as required
+      // Start offset as a 9-bit signed integer
       assert(imm <= 255 && imm >= -256);
       auto offset = getIntConst(imm, 9);
       Value *offsetVal = createSExt(offset, i64);
@@ -4216,7 +4232,7 @@ public:
         assert(false);
       }
 
-      // Start offset as a 9 bit signed integer and extend as required
+      // Start offset as a 9-bit signed integer
       assert(imm <= 255 && imm >= -256);
       auto offset = getIntConst(imm, 9);
       Value *offsetVal = createSExt(offset, i64);
@@ -4334,7 +4350,9 @@ public:
     }
 
     case AArch64::LDPWi:
+    case AArch64::LDPSi:
     case AArch64::LDPXi:
+    case AArch64::LDPDi:
     case AArch64::LDPQi: {
       auto &op0 = CurInst->getOperand(0);
       auto &op1 = CurInst->getOperand(1);
@@ -4351,11 +4369,13 @@ public:
 
       int size = 0;
       switch (opcode) {
-      case AArch64::LDPWi: {
+      case AArch64::LDPWi:
+      case AArch64::LDPSi: {
         size = 4;
         break;
       }
-      case AArch64::LDPXi: {
+      case AArch64::LDPXi:
+      case AArch64::LDPDi: {
         size = 8;
         break;
       }
@@ -4379,7 +4399,9 @@ public:
     }
 
     case AArch64::STPWi:
+    case AArch64::STPSi:
     case AArch64::STPXi:
+    case AArch64::STPDi:
     case AArch64::STPQi: {
       auto &op0 = CurInst->getOperand(0);
       auto &op1 = CurInst->getOperand(1);
@@ -4400,7 +4422,8 @@ public:
 
       u_int64_t size = 0;
       switch (opcode) {
-      case AArch64::STPWi: {
+      case AArch64::STPWi:
+      case AArch64::STPSi: {
         size = 4;
         val1 = createTrunc(val1, i32);
         val2 = createTrunc(val2, i32);
@@ -4408,6 +4431,12 @@ public:
       }
       case AArch64::STPXi: {
         size = 8;
+        break;
+      }
+      case AArch64::STPDi: {
+        size = 8;
+        val1 = createTrunc(val1, i64);
+        val2 = createTrunc(val2, i64);
         break;
       }
       case AArch64::STPQi: {
@@ -4427,8 +4456,43 @@ public:
       break;
     }
 
-    case AArch64::LDPXpost: {
-      unsigned size = 8;
+    case AArch64::LDPWpre:
+    case AArch64::LDPSpre:
+    case AArch64::LDPXpre:
+    case AArch64::LDPDpre:
+    case AArch64::LDPQpre:
+    case AArch64::LDPWpost:
+    case AArch64::LDPSpost:
+    case AArch64::LDPXpost:
+    case AArch64::LDPDpost:
+    case AArch64::LDPQpost: {
+      unsigned scale;
+      switch (opcode) {
+      case AArch64::LDPWpre:
+      case AArch64::LDPSpre:
+      case AArch64::LDPWpost:
+      case AArch64::LDPSpost: {
+        scale = 2;
+        break;
+      }
+      case AArch64::LDPXpre:
+      case AArch64::LDPDpre:
+      case AArch64::LDPXpost:
+      case AArch64::LDPDpost: {
+        scale = 3;
+        break;
+      }
+      case AArch64::LDPQpre:
+      case AArch64::LDPQpost: {
+        scale = 4;
+        break;
+      }
+      default: {
+        *out << "\nError Unknown opcode\n";
+        visitError();
+      }
+      }
+      unsigned size = pow(2, scale);
       auto &op0 = CurInst->getOperand(0);
       auto &op1 = CurInst->getOperand(1);
       auto &op2 = CurInst->getOperand(2);
@@ -4438,26 +4502,50 @@ public:
       assert(op0.getReg() == op3.getReg());
       assert(op4.isImm());
 
-      auto baseReg = op0.getReg();
+      auto destReg1 = op1.getReg();
+      auto destReg2 = op2.getReg();
+      auto baseReg = op3.getReg();
+      auto imm = op4.getImm();
       assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
              (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
-             (baseReg == AArch64::FP));
-      auto addr = readPtrFromReg(baseReg);
-      auto r1 = op1.getReg();
-      auto r2 = op2.getReg();
-      auto loaded1 = makeLoadWithOffset(addr, 0, size);
-      auto loaded2 = makeLoadWithOffset(addr, size, size);
-      updateReg(loaded1, r1);
-      updateReg(loaded2, r2);
+             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
+      auto base = readPtrFromReg(baseReg);
+      auto baseAddr = createPtrToInt(base, i64);
 
-      auto offsetVal = getIntConst(size * op4.getImm(), 64);
-      auto basePtrInt = readFromReg(baseReg);
-      auto newPtrAddr = createAdd(basePtrInt, offsetVal);
-      updateReg(newPtrAddr, baseReg);
+      // Start offset as 7-bit signed integer
+      assert(imm <= 63 && imm >= -64);
+      auto offset = getIntConst(imm, 7);
+      Value *offsetVal1 =
+          createMaskedShl(createSExt(offset, i64), getIntConst(scale, 64));
+      Value *offsetVal2 = createAdd(offsetVal1, getIntConst(size, 64));
+      auto zeroVal = getIntConst(0, 64);
+
+      bool isPre = opcode == AArch64::LDPWpre || opcode == AArch64::LDPSpre ||
+                   opcode == AArch64::LDPXpre || opcode == AArch64::LDPDpre ||
+                   opcode == AArch64::LDPQpre;
+
+      auto loaded1 =
+          makeLoadWithOffset(base, isPre ? offsetVal1 : zeroVal, size);
+      auto loaded2 = makeLoadWithOffset(
+          base, isPre ? offsetVal2 : getIntConst(size, 64), size);
+      updateReg(loaded1, destReg1);
+      updateReg(loaded2, destReg2);
+
+      auto added = createAdd(baseAddr, offsetVal1);
+      updateOutputReg(added);
       break;
     }
 
-    case AArch64::STPXpre: {
+    case AArch64::STPWpre:
+    case AArch64::STPSpre:
+    case AArch64::STPXpre:
+    case AArch64::STPDpre:
+    case AArch64::STPQpre:
+    case AArch64::STPWpost:
+    case AArch64::STPSpost:
+    case AArch64::STPXpost:
+    case AArch64::STPDpost:
+    case AArch64::STPQpost: {
       auto &op0 = CurInst->getOperand(0);
       auto &op1 = CurInst->getOperand(1);
       auto &op2 = CurInst->getOperand(2);
@@ -4467,24 +4555,75 @@ public:
       assert(op0.getReg() == op3.getReg());
       assert(op4.isImm());
 
-      auto baseReg = op0.getReg();
+      auto srcReg1 = op1.getReg();
+      auto srcReg2 = op2.getReg();
+      auto baseReg = op3.getReg();
+      auto imm = op4.getImm();
       assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
              (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
-             (baseReg == AArch64::FP));
-      auto baseAddr = readPtrFromReg(baseReg);
-      auto val1 = readFromReg(op1.getReg());
-      auto val2 = readFromReg(op2.getReg());
+             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
+      auto base = readPtrFromReg(baseReg);
+      auto baseAddr = createPtrToInt(base, i64);
 
-      unsigned size = 8;
+      unsigned scale;
+      Value *loaded1, *loaded2;
 
-      auto offsetVal = getIntConst(size * op4.getImm(), 64);
-      auto basePtrInt = readFromReg(baseReg);
-      auto newPtrAddr = createAdd(basePtrInt, offsetVal);
-      updateReg(newPtrAddr, baseReg);
+      switch (opcode) {
+      case AArch64::STPWpre:
+      case AArch64::STPSpre:
+      case AArch64::STPWpost:
+      case AArch64::STPSpost: {
+        scale = 2;
+        loaded1 = createTrunc(readFromReg(srcReg1), i32);
+        loaded2 = createTrunc(readFromReg(srcReg2), i32);
+        break;
+      }
+      case AArch64::STPXpre:
+      case AArch64::STPXpost: {
+        scale = 3;
+        loaded1 = readFromReg(srcReg1);
+        loaded2 = readFromReg(srcReg2);
+        break;
+      }
+      case AArch64::STPDpre:
+      case AArch64::STPDpost: {
+        scale = 3;
+        loaded1 = createTrunc(readFromReg(srcReg1), i64);
+        loaded2 = createTrunc(readFromReg(srcReg2), i64);
+        break;
+      }
+      case AArch64::STPQpre:
+      case AArch64::STPQpost: {
+        scale = 4;
+        loaded1 = readFromReg(srcReg1);
+        loaded2 = readFromReg(srcReg2);
+        break;
+      }
+      default: {
+        *out << "\nError Unknown opcode\n";
+        visitError();
+      }
+      }
+      unsigned size = pow(2, scale);
 
-      auto imm = op4.getImm();
-      storeToMemoryImmOffset(baseAddr, imm * size, size, val1);
-      storeToMemoryImmOffset(baseAddr, (imm + 1) * size, size, val2);
+      // Start offset as 7-bit signed integer
+      assert(imm <= 63 && imm >= -64);
+      auto offset = getIntConst(imm, 7);
+      Value *offsetVal1 =
+          createMaskedShl(createSExt(offset, i64), getIntConst(scale, 64));
+      Value *offsetVal2 = createAdd(offsetVal1, getIntConst(size, 64));
+      auto zeroVal = getIntConst(0, 64);
+
+      bool isPre = opcode == AArch64::STPWpre || opcode == AArch64::STPSpre ||
+                   opcode == AArch64::STPXpre || opcode == AArch64::STPDpre ||
+                   opcode == AArch64::STPQpre;
+
+      storeToMemoryValOffset(base, isPre ? offsetVal1 : zeroVal, size, loaded1);
+      storeToMemoryValOffset(base, isPre ? offsetVal2 : getIntConst(size, 64),
+                             size, loaded2);
+
+      auto added = createAdd(baseAddr, offsetVal1);
+      updateOutputReg(added);
       break;
     }
 
