@@ -4524,10 +4524,14 @@ public:
                    opcode == AArch64::LDPXpre || opcode == AArch64::LDPDpre ||
                    opcode == AArch64::LDPQpre;
 
-      auto loaded1 =
-          makeLoadWithOffset(base, isPre ? offsetVal1 : zeroVal, size);
-      auto loaded2 = makeLoadWithOffset(
-          base, isPre ? offsetVal2 : getIntConst(size, 64), size);
+      Value *loaded1, *loaded2;
+      if (isPre) {
+        loaded1 = makeLoadWithOffset(base, offsetVal1, size);
+        loaded2 = makeLoadWithOffset(base, offsetVal2, size);
+      } else {
+        loaded1 = makeLoadWithOffset(base, zeroVal, size);
+        loaded2 = makeLoadWithOffset(base, getIntConst(size, 64), size);
+      }
       updateReg(loaded1, destReg1);
       updateReg(loaded2, destReg2);
 
@@ -4618,9 +4622,13 @@ public:
                    opcode == AArch64::STPXpre || opcode == AArch64::STPDpre ||
                    opcode == AArch64::STPQpre;
 
-      storeToMemoryValOffset(base, isPre ? offsetVal1 : zeroVal, size, loaded1);
-      storeToMemoryValOffset(base, isPre ? offsetVal2 : getIntConst(size, 64),
-                             size, loaded2);
+      if (isPre) {
+        storeToMemoryValOffset(base, offsetVal1, size, loaded1);
+        storeToMemoryValOffset(base, offsetVal2, size, loaded2);
+      } else {
+        storeToMemoryValOffset(base, zeroVal, size, loaded1);
+        storeToMemoryValOffset(base, getIntConst(size, 64), size, loaded2);
+      }
 
       auto added = createAdd(baseAddr, offsetVal1);
       updateOutputReg(added);
