@@ -351,17 +351,19 @@ class arm2llvm {
       AArch64::CCMNWr,     AArch64::STRBBui,    AArch64::STRBui,
       AArch64::STPWi,      AArch64::STPSi,      AArch64::STPWpre,
       AArch64::STPSpre,    AArch64::STPWpost,   AArch64::STPSpost,
-      AArch64::STRHHui,    AArch64::STRHui,     AArch64::STURWi,
-      AArch64::STRSui,     AArch64::LDPWi,      AArch64::LDPSi,
-      AArch64::LDPWpre,    AArch64::LDPSpre,    AArch64::LDPWpost,
-      AArch64::LDPSpost,   AArch64::STRBBpre,   AArch64::STRBpre,
-      AArch64::STRHHpre,   AArch64::STRHpre,    AArch64::STRWpre,
-      AArch64::STRSpre,    AArch64::FADDSrr,    AArch64::FSUBSrr,
-      AArch64::FCMPSrr,    AArch64::FCMPSri,    AArch64::FMOVSWr,
-      AArch64::INSvi32gpr, AArch64::INSvi16gpr, AArch64::INSvi8gpr,
-      AArch64::FCVTSHr,    AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,
-      AArch64::FMULSrr,    AArch64::FABSSr,     AArch64::UQADDv1i32,
-      AArch64::SQSUBv1i32, AArch64::SQADDv1i32,
+      AArch64::STRHHui,    AArch64::STRHui,     AArch64::STURBBi,
+      AArch64::STURBi,     AArch64::STURHHi,    AArch64::STURHi,
+      AArch64::STURWi,     AArch64::STURSi,     AArch64::STRSui,
+      AArch64::LDPWi,      AArch64::LDPSi,      AArch64::LDPWpre,
+      AArch64::LDPSpre,    AArch64::LDPWpost,   AArch64::LDPSpost,
+      AArch64::STRBBpre,   AArch64::STRBpre,    AArch64::STRHHpre,
+      AArch64::STRHpre,    AArch64::STRWpre,    AArch64::STRSpre,
+      AArch64::FADDSrr,    AArch64::FSUBSrr,    AArch64::FCMPSrr,
+      AArch64::FCMPSri,    AArch64::FMOVSWr,    AArch64::INSvi32gpr,
+      AArch64::INSvi16gpr, AArch64::INSvi8gpr,  AArch64::FCVTSHr,
+      AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,  AArch64::FMULSrr,
+      AArch64::FABSSr,     AArch64::UQADDv1i32, AArch64::SQSUBv1i32,
+      AArch64::SQADDv1i32,
   };
 
   const set<int> instrs_64 = {
@@ -485,6 +487,7 @@ class arm2llvm {
       AArch64::CCMNXi,
       AArch64::CCMNXr,
       AArch64::STURXi,
+      AArch64::STURDi,
       AArch64::ADRP,
       AArch64::STRXpre,
       AArch64::STRDpre,
@@ -919,6 +922,7 @@ class arm2llvm {
       AArch64::LDRQui,
       AArch64::LDRQpre,
       AArch64::LDRQpost,
+      AArch64::STURQi,
       AArch64::STRQui,
       AArch64::STRQpre,
       AArch64::STRQpost,
@@ -4102,53 +4106,78 @@ public:
       break;
     }
 
-    case AArch64::STRBBui: {
-      auto [base, imm, val] = getStoreParams();
-      storeToMemoryImmOffset(base, imm * 1, 1, createTrunc(val, i8));
-      break;
-    }
-
+    case AArch64::STURBBi:
+    case AArch64::STURBi:
+    case AArch64::STURHHi:
+    case AArch64::STURHi:
+    case AArch64::STURWi:
+    case AArch64::STURSi:
+    case AArch64::STURXi:
+    case AArch64::STURDi:
+    case AArch64::STURQi:
+    case AArch64::STRBBui:
+    case AArch64::STRBui:
     case AArch64::STRHHui:
-    case AArch64::STRHui: {
-      auto [base, imm, val] = getStoreParams();
-      storeToMemoryImmOffset(base, imm * 2, 2, createTrunc(val, i16));
-      break;
-    }
-
-    case AArch64::STURWi: {
-      auto [base, imm, val] = getStoreParams();
-      storeToMemoryImmOffset(base, imm * 1, 4, createTrunc(val, i32));
-      break;
-    }
-
-    case AArch64::STURXi: {
-      auto [base, imm, val] = getStoreParams();
-      storeToMemoryImmOffset(base, imm * 1, 8, val);
-      break;
-    }
-
+    case AArch64::STRHui:
     case AArch64::STRWui:
-    case AArch64::STRSui: {
-      auto [base, imm, val] = getStoreParams();
-      storeToMemoryImmOffset(base, imm * 4, 4, createTrunc(val, i32));
-      break;
-    }
-
-    case AArch64::STRXui: {
-      auto [base, imm, val] = getStoreParams();
-      storeToMemoryImmOffset(base, imm * 8, 8, val);
-      break;
-    }
-
-    case AArch64::STRDui: {
-      auto [base, imm, val] = getStoreParams();
-      storeToMemoryImmOffset(base, imm * 8, 8, createTrunc(val, i64));
-      break;
-    }
-
+    case AArch64::STRSui:
+    case AArch64::STRXui:
+    case AArch64::STRDui:
     case AArch64::STRQui: {
       auto [base, imm, val] = getStoreParams();
-      storeToMemoryImmOffset(base, imm * 16, 16, val);
+
+      bool isScaled = opcode == AArch64::STRBBui || opcode == AArch64::STRBui ||
+                      opcode == AArch64::STRHHui || opcode == AArch64::STRHui ||
+                      opcode == AArch64::STRWui || opcode == AArch64::STRSui ||
+                      opcode == AArch64::STRXui || opcode == AArch64::STRDui ||
+                      opcode == AArch64::STRQui;
+
+      switch (opcode) {
+      case AArch64::STURBBi:
+      case AArch64::STURBi:
+      case AArch64::STRBBui:
+      case AArch64::STRBui: {
+        storeToMemoryImmOffset(base, isScaled ? imm * 1 : imm, 1,
+                               createTrunc(val, i8));
+        break;
+      }
+      case AArch64::STURHHi:
+      case AArch64::STURHi:
+      case AArch64::STRHHui:
+      case AArch64::STRHui: {
+        storeToMemoryImmOffset(base, isScaled ? imm * 2 : imm, 2,
+                               createTrunc(val, i16));
+        break;
+      }
+      case AArch64::STURWi:
+      case AArch64::STURSi:
+      case AArch64::STRWui:
+      case AArch64::STRSui: {
+        storeToMemoryImmOffset(base, isScaled ? imm * 4 : imm, 4,
+                               createTrunc(val, i32));
+        break;
+      }
+      case AArch64::STURXi:
+      case AArch64::STRXui: {
+        storeToMemoryImmOffset(base, isScaled ? imm * 8 : imm, 8, val);
+        break;
+      }
+      case AArch64::STURDi:
+      case AArch64::STRDui: {
+        storeToMemoryImmOffset(base, isScaled ? imm * 8 : imm, 8,
+                               createTrunc(val, i64));
+        break;
+      }
+      case AArch64::STURQi:
+      case AArch64::STRQui: {
+        storeToMemoryImmOffset(base, isScaled ? imm * 16 : imm, 16, val);
+        break;
+      }
+      default: {
+        assert(false);
+        break;
+      }
+      }
       break;
     }
 
