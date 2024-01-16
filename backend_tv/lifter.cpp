@@ -1575,6 +1575,9 @@ class arm2llvm {
 
   // Returns bitWidth corresponding the registers
   unsigned getRegSize(unsigned Reg) {
+    if (Reg == AArch64::N || Reg == AArch64::Z || Reg == AArch64::C ||
+        Reg == AArch64::V)
+      return 1;
     if (Reg >= AArch64::B0 && Reg <= AArch64::B31)
       return 8;
     if (Reg >= AArch64::H0 && Reg <= AArch64::H31)
@@ -1641,12 +1644,38 @@ class arm2llvm {
     return createLoad(PointerType::get(Ctx, 0), RegAddr);
   }
 
-  void updateReg(Value *v, u_int64_t reg) {
+  void updateReg(Value *V, u_int64_t reg, bool SExt = false) {
     // important -- squash updates to the zero register
     if (reg == AArch64::WZR || reg == AArch64::XZR)
       return;
 
-    createStore(v, dealiasReg(reg));
+    // FIXME do we really want to do this? and if so, do this for
+    //  floats too?
+    if (V->getType()->isVectorTy())
+      V = createBitCast(V, getIntTy(getBitWidth(V)));
+
+    auto destRegSize = getRegSize(reg);
+    auto realRegSize = getRegSize(mapRegToBackingReg(reg));
+
+    // important to chop the value down to the destination register
+    // size before extending it again
+    if (destRegSize < getBitWidth(V))
+      V = createTrunc(V, getIntTy(destRegSize));
+
+    // now sign extend if asked and appropriate
+    if (SExt && getBitWidth(V) < 32 && destRegSize == 32)
+      V = createSExt(V, getIntTy(32));
+    if (SExt && getBitWidth(V) < 64 && destRegSize == 64)
+      V = createSExt(V, getIntTy(64));
+
+    // annnnd zero out the rest of the destination reg!
+    if (getBitWidth(V) < realRegSize)
+      V = createZExt(V, getIntTy(realRegSize));
+
+    assert(getBitWidth(V) == realRegSize &&
+           "ERROR: register update should be full width");
+
+    createStore(V, dealiasReg(reg));
   }
 
   Value *readInputReg(int idx) {
@@ -1705,30 +1734,7 @@ class arm2llvm {
   void updateOutputReg(Value *V, bool SExt = false) {
     auto destReg = CurInst->getOperand(0).getReg();
 
-    // FIXME do we really want to do this? and if so, do this for
-    //  floats too?
-    if (V->getType()->isVectorTy())
-      V = createBitCast(V, getIntTy(getBitWidth(V)));
-
-    auto destRegSize = getRegSize(destReg);
-    auto realRegSize = getRegSize(mapRegToBackingReg(destReg));
-
-    // important to chop the value down to the destination register
-    // size before extending it again
-    if (destRegSize < getBitWidth(V))
-      V = createTrunc(V, getIntTy(destRegSize));
-
-    // now sign extend if asked and appropriate
-    if (SExt && getBitWidth(V) < 32 && destRegSize == 32)
-      V = createSExt(V, getIntTy(32));
-    if (SExt && getBitWidth(V) < 64 && destRegSize == 64)
-      V = createSExt(V, getIntTy(64));
-
-    // annnnd zero out the rest of the destination reg!
-    if (getBitWidth(V) < realRegSize)
-      V = createZExt(V, getIntTy(realRegSize));
-
-    updateReg(V, destReg);
+    updateReg(V, destReg, SExt);
   }
 
   // Reads an Expr and maps containing string variable to a global variable
