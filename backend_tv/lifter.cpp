@@ -343,31 +343,32 @@ class arm2llvm {
       AArch64::LDRSHWpre,  AArch64::LDRSBWpost, AArch64::LDRSHWpost,
       AArch64::LDRHHui,    AArch64::LDRHui,     AArch64::LDURBi,
       AArch64::LDURBBi,    AArch64::LDURHi,     AArch64::LDURHHi,
-      AArch64::LDURSi,     AArch64::LDURWi,     AArch64::LDRBBpre,
-      AArch64::LDRBpre,    AArch64::LDRHHpre,   AArch64::LDRHpre,
-      AArch64::LDRWpre,    AArch64::LDRSpre,    AArch64::LDRBBpost,
-      AArch64::LDRBpost,   AArch64::LDRHHpost,  AArch64::LDRHpost,
-      AArch64::LDRWpost,   AArch64::LDRSpost,   AArch64::STRBBpost,
-      AArch64::STRBpost,   AArch64::STRHHpost,  AArch64::STRHpost,
-      AArch64::STRWpost,   AArch64::STRSpost,   AArch64::STRWui,
-      AArch64::STRBBroW,   AArch64::STRBBroX,   AArch64::STRHHroW,
-      AArch64::STRHHroX,   AArch64::STRWroW,    AArch64::STRWroX,
-      AArch64::CCMNWi,     AArch64::CCMNWr,     AArch64::STRBBui,
-      AArch64::STRBui,     AArch64::STPWi,      AArch64::STPSi,
-      AArch64::STPWpre,    AArch64::STPSpre,    AArch64::STPWpost,
-      AArch64::STPSpost,   AArch64::STRHHui,    AArch64::STRHui,
-      AArch64::STURBBi,    AArch64::STURBi,     AArch64::STURHHi,
-      AArch64::STURHi,     AArch64::STURWi,     AArch64::STURSi,
-      AArch64::STRSui,     AArch64::LDPWi,      AArch64::LDPSi,
-      AArch64::LDPWpre,    AArch64::LDPSpre,    AArch64::LDPWpost,
-      AArch64::LDPSpost,   AArch64::STRBBpre,   AArch64::STRBpre,
-      AArch64::STRHHpre,   AArch64::STRHpre,    AArch64::STRWpre,
-      AArch64::STRSpre,    AArch64::FADDSrr,    AArch64::FSUBSrr,
-      AArch64::FCMPSrr,    AArch64::FCMPSri,    AArch64::FMOVSWr,
-      AArch64::INSvi32gpr, AArch64::INSvi16gpr, AArch64::INSvi8gpr,
-      AArch64::FCVTSHr,    AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,
-      AArch64::FMULSrr,    AArch64::FABSSr,     AArch64::UQADDv1i32,
-      AArch64::SQSUBv1i32, AArch64::SQADDv1i32,
+      AArch64::LDURSi,     AArch64::LDURWi,     AArch64::LDURSBWi,
+      AArch64::LDURSHWi,   AArch64::LDRBBpre,   AArch64::LDRBpre,
+      AArch64::LDRHHpre,   AArch64::LDRHpre,    AArch64::LDRWpre,
+      AArch64::LDRSpre,    AArch64::LDRBBpost,  AArch64::LDRBpost,
+      AArch64::LDRHHpost,  AArch64::LDRHpost,   AArch64::LDRWpost,
+      AArch64::LDRSpost,   AArch64::STRBBpost,  AArch64::STRBpost,
+      AArch64::STRHHpost,  AArch64::STRHpost,   AArch64::STRWpost,
+      AArch64::STRSpost,   AArch64::STRWui,     AArch64::STRBBroW,
+      AArch64::STRBBroX,   AArch64::STRHHroW,   AArch64::STRHHroX,
+      AArch64::STRWroW,    AArch64::STRWroX,    AArch64::CCMNWi,
+      AArch64::CCMNWr,     AArch64::STRBBui,    AArch64::STRBui,
+      AArch64::STPWi,      AArch64::STPSi,      AArch64::STPWpre,
+      AArch64::STPSpre,    AArch64::STPWpost,   AArch64::STPSpost,
+      AArch64::STRHHui,    AArch64::STRHui,     AArch64::STURBBi,
+      AArch64::STURBi,     AArch64::STURHHi,    AArch64::STURHi,
+      AArch64::STURWi,     AArch64::STURSi,     AArch64::STRSui,
+      AArch64::LDPWi,      AArch64::LDPSi,      AArch64::LDPWpre,
+      AArch64::LDPSpre,    AArch64::LDPWpost,   AArch64::LDPSpost,
+      AArch64::STRBBpre,   AArch64::STRBpre,    AArch64::STRHHpre,
+      AArch64::STRHpre,    AArch64::STRWpre,    AArch64::STRSpre,
+      AArch64::FADDSrr,    AArch64::FSUBSrr,    AArch64::FCMPSrr,
+      AArch64::FCMPSri,    AArch64::FMOVSWr,    AArch64::INSvi32gpr,
+      AArch64::INSvi16gpr, AArch64::INSvi8gpr,  AArch64::FCVTSHr,
+      AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,  AArch64::FMULSrr,
+      AArch64::FABSSr,     AArch64::UQADDv1i32, AArch64::SQSUBv1i32,
+      AArch64::SQADDv1i32,
   };
 
   const set<int> instrs_64 = {
@@ -468,6 +469,9 @@ class arm2llvm {
       AArch64::LDRXroX,
       AArch64::LDURDi,
       AArch64::LDURXi,
+      AArch64::LDURSBXi,
+      AArch64::LDURSHXi,
+      AArch64::LDURSWi,
       AArch64::STRDui,
       AArch64::MSR,
       AArch64::MRS,
@@ -3831,6 +3835,11 @@ public:
       break;
     }
 
+    case AArch64::LDURSBWi:
+    case AArch64::LDURSBXi:
+    case AArch64::LDURSHWi:
+    case AArch64::LDURSHXi:
+    case AArch64::LDURSWi:
     case AArch64::LDURBi:
     case AArch64::LDURBBi:
     case AArch64::LDURHi:
@@ -3841,11 +3850,14 @@ public:
     case AArch64::LDURXi:
     case AArch64::LDURQi: {
       unsigned size;
-      if (opcode == AArch64::LDURBBi || opcode == AArch64::LDURBi)
+      if (opcode == AArch64::LDURBBi || opcode == AArch64::LDURBi ||
+          opcode == AArch64::LDURSBWi || opcode == AArch64::LDURSBXi)
         size = 1;
-      else if (opcode == AArch64::LDURHHi || opcode == AArch64::LDURHi)
+      else if (opcode == AArch64::LDURHHi || opcode == AArch64::LDURHi ||
+               opcode == AArch64::LDURSHWi || opcode == AArch64::LDURSHXi)
         size = 2;
-      else if (opcode == AArch64::LDURWi || opcode == AArch64::LDURSi)
+      else if (opcode == AArch64::LDURWi || opcode == AArch64::LDURSi ||
+               opcode == AArch64::LDURSWi)
         size = 4;
       else if (opcode == AArch64::LDURXi || opcode == AArch64::LDURDi)
         size = 8;
@@ -3854,9 +3866,16 @@ public:
       else
         assert(false);
 
+      bool sExt = opcode == AArch64::LDURSBWi || opcode == AArch64::LDURSBXi ||
+                  opcode == AArch64::LDURSHWi || opcode == AArch64::LDURSHXi ||
+                  opcode == AArch64::LDURSWi;
       auto [base, imm] = getParamsLoadImmed();
-      auto loaded = makeLoadWithOffset(base, imm, size);
-      updateOutputReg(loaded);
+      // Start offset as a 9-bit signed integer
+      assert(imm <= 255 && imm >= -256);
+      auto offset = getIntConst(imm, 9);
+      Value *offsetVal = createSExt(offset, i64);
+      auto loaded = makeLoadWithOffset(base, offsetVal, size);
+      updateOutputReg(loaded, sExt);
       break;
     }
     case AArch64::LDRSBWpre:
