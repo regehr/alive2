@@ -339,7 +339,8 @@ class arm2llvm {
       AArch64::LDRSHWroW,  AArch64::LDRSHWroX,  AArch64::LDRSHXroW,
       AArch64::LDRSHXroX,  AArch64::LDRSWroW,   AArch64::LDRSWroX,
       AArch64::LDRSui,     AArch64::LDRBBui,    AArch64::LDRBui,
-      AArch64::LDRSBWui,   AArch64::LDRSWui,    AArch64::LDRSHWui,
+      AArch64::LDRSBWui,   AArch64::LDRSHWui,   AArch64::LDRSBWpre,
+      AArch64::LDRSHWpre,  AArch64::LDRSBWpost, AArch64::LDRSHWpost,
       AArch64::LDRHHui,    AArch64::LDRHui,     AArch64::LDURBi,
       AArch64::LDURBBi,    AArch64::LDURHi,     AArch64::LDURHHi,
       AArch64::LDURSi,     AArch64::LDURWi,     AArch64::LDRBBpre,
@@ -472,6 +473,13 @@ class arm2llvm {
       AArch64::MRS,
       AArch64::LDRSBXui,
       AArch64::LDRSHXui,
+      AArch64::LDRSWui,
+      AArch64::LDRSBXpre,
+      AArch64::LDRSHXpre,
+      AArch64::LDRSWpre,
+      AArch64::LDRSBXpost,
+      AArch64::LDRSHXpost,
+      AArch64::LDRSWpost,
       AArch64::STRXui,
       AArch64::STRXpost,
       AArch64::STRDpost,
@@ -3851,6 +3859,11 @@ public:
       updateOutputReg(loaded);
       break;
     }
+    case AArch64::LDRSBWpre:
+    case AArch64::LDRSBXpre:
+    case AArch64::LDRSHWpre:
+    case AArch64::LDRSHXpre:
+    case AArch64::LDRSWpre:
     case AArch64::LDRBBpre:
     case AArch64::LDRBpre:
     case AArch64::LDRHHpre:
@@ -3860,6 +3873,11 @@ public:
     case AArch64::LDRXpre:
     case AArch64::LDRDpre:
     case AArch64::LDRQpre:
+    case AArch64::LDRSBWpost:
+    case AArch64::LDRSBXpost:
+    case AArch64::LDRSHWpost:
+    case AArch64::LDRSHXpost:
+    case AArch64::LDRSWpost:
     case AArch64::LDRBBpost:
     case AArch64::LDRBpost:
     case AArch64::LDRHHpost:
@@ -3871,20 +3889,30 @@ public:
     case AArch64::LDRQpost: {
       unsigned size;
       switch (opcode) {
+      case AArch64::LDRSBWpre:
+      case AArch64::LDRSBXpre:
       case AArch64::LDRBBpre:
       case AArch64::LDRBpre:
+      case AArch64::LDRSBWpost:
+      case AArch64::LDRSBXpost:
       case AArch64::LDRBBpost:
       case AArch64::LDRBpost:
         size = 1;
         break;
+      case AArch64::LDRSHWpre:
+      case AArch64::LDRSHXpre:
       case AArch64::LDRHHpre:
       case AArch64::LDRHpre:
+      case AArch64::LDRSHWpost:
+      case AArch64::LDRSHXpost:
       case AArch64::LDRHHpost:
       case AArch64::LDRHpost:
         size = 2;
         break;
+      case AArch64::LDRSWpre:
       case AArch64::LDRWpre:
       case AArch64::LDRSpre:
+      case AArch64::LDRSWpost:
       case AArch64::LDRWpost:
       case AArch64::LDRSpost:
         size = 4;
@@ -3902,6 +3930,12 @@ public:
       default:
         assert(false);
       }
+      bool sExt =
+          opcode == AArch64::LDRSBWpre || opcode == AArch64::LDRSBXpre ||
+          opcode == AArch64::LDRSHWpre || opcode == AArch64::LDRSHXpre ||
+          opcode == AArch64::LDRSWpre || opcode == AArch64::LDRSBWpost ||
+          opcode == AArch64::LDRSBXpost || opcode == AArch64::LDRSHWpost ||
+          opcode == AArch64::LDRSHXpost || opcode == AArch64::LDRSWpost;
       auto &op0 = CurInst->getOperand(0);
       auto &op1 = CurInst->getOperand(1);
       auto &op2 = CurInst->getOperand(2);
@@ -3931,13 +3965,16 @@ public:
                    opcode == AArch64::LDRHHpre || opcode == AArch64::LDRHpre ||
                    opcode == AArch64::LDRWpre || opcode == AArch64::LDRSpre ||
                    opcode == AArch64::LDRXpre || opcode == AArch64::LDRDpre ||
-                   opcode == AArch64::LDRQpre;
+                   opcode == AArch64::LDRQpre || opcode == AArch64::LDRSBWpre ||
+                   opcode == AArch64::LDRSBXpre ||
+                   opcode == AArch64::LDRSHWpre ||
+                   opcode == AArch64::LDRSHXpre || opcode == AArch64::LDRSWpre;
 
       auto loaded = makeLoadWithOffset(base, isPre ? offsetVal : zeroVal, size);
-      updateReg(loaded, destReg);
+      updateReg(loaded, destReg, sExt);
 
       auto added = createAdd(baseAddr, offsetVal);
-      updateOutputReg(added);
+      updateOutputReg(added, sExt);
       break;
     }
 
