@@ -230,24 +230,24 @@ class arm2llvm {
            (reg >= AArch64::S0 && reg <= AArch64::S31);
   }
 
-  VectorType *getVecTy(int eltSize, int numElts) {
+  VectorType *getVecTy(unsigned eltSize, unsigned numElts) {
     auto eTy = getIntTy(eltSize);
     auto ec = ElementCount::getFixed(numElts);
     return VectorType::get(eTy, ec);
   }
 
-  Constant *getUndefVec(int numElts, int eltSize) {
+  Constant *getUndefVec(unsigned numElts, unsigned eltSize) {
     auto eTy = getIntTy(eltSize);
     auto ec = ElementCount::getFixed(numElts);
     return ConstantVector::getSplat(ec, UndefValue::get(eTy));
   }
 
-  Constant *getZeroVec(int numElts, int eltSize) {
+  Constant *getZeroVec(unsigned numElts, unsigned eltSize) {
     auto ec = ElementCount::getFixed(numElts);
     return ConstantVector::getSplat(ec, getIntConst(0, eltSize));
   }
 
-  Type *getIntTy(unsigned int bits) {
+  Type *getIntTy(unsigned bits) {
     // just trying to catch silly errors, remove this sometime
     assert(bits > 0 && bits <= 256);
     return Type::getIntNTy(Ctx, bits);
@@ -368,8 +368,7 @@ class arm2llvm {
       AArch64::INSvi16gpr, AArch64::INSvi8gpr,  AArch64::FCVTSHr,
       AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,  AArch64::FMULSrr,
       AArch64::FABSSr,     AArch64::UQADDv1i32, AArch64::SQSUBv1i32,
-      AArch64::SQADDv1i32,
-      AArch64::FMOVSr, AArch64::FNEGSr,
+      AArch64::SQADDv1i32, AArch64::FMOVSr,     AArch64::FNEGSr,
   };
 
   const set<int> instrs_64 = {
@@ -529,12 +528,9 @@ class arm2llvm {
       AArch64::USHLLv4i16_shift,
       AArch64::UADDLv8i8_v8i16,
       AArch64::USUBLv8i8_v8i16,
-      AArch64::XTNv2i32,
-      AArch64::XTNv4i32,
-      AArch64::XTNv4i16,
-      AArch64::XTNv8i16,
       AArch64::XTNv8i8,
-      AArch64::XTNv16i8,
+      AArch64::XTNv4i16,
+      AArch64::XTNv2i32,
       AArch64::MLSv2i32,
       AArch64::NEGv1i64,
       AArch64::NEGv4i16,
@@ -746,6 +742,12 @@ class arm2llvm {
       AArch64::DUPv2i32lane,
       AArch64::UMLALv4i32_indexed,
       AArch64::UMLALv8i16_indexed,
+      AArch64::UMLALv8i8_v8i16,
+      AArch64::UMLALv4i16_v4i32,
+      AArch64::UMLALv2i32_v2i64,
+      AArch64::UMLALv16i8_v8i16,
+      AArch64::UMLALv8i16_v4i32,
+      AArch64::UMLALv4i32_v2i64,
       AArch64::SMLALv4i32_indexed,
       AArch64::SMLALv8i16_indexed,
       AArch64::SQADDv2i64,
@@ -1057,6 +1059,9 @@ class arm2llvm {
       AArch64::CMHIv8i16,
       AArch64::CMHIv4i32,
       AArch64::CMHIv2i64,
+      AArch64::XTNv16i8,
+      AArch64::XTNv8i16,
+      AArch64::XTNv4i32,
   };
 
   bool has_s(int instr) {
@@ -1745,9 +1750,25 @@ class arm2llvm {
     return V;
   }
 
-  Value *readFromVecOperand(int idx, int eltSize, int numElts) {
-    auto *ty = getVecTy(eltSize, numElts);
-    return createBitCast(readFromOperand(idx), ty);
+  Value *readFromVecOperand(int idx, unsigned int eltSize, unsigned int numElts,
+                            bool isUpperHalf = false) {
+    VectorType *ty;
+    auto regVal = readFromOperand(idx);
+    if (eltSize * numElts < getBitWidth(regVal)) {
+      regVal = createTrunc(regVal, getIntTy(eltSize * numElts));
+    }
+
+    assert(eltSize * numElts == getBitWidth(regVal));
+    if (isUpperHalf) {
+      assert(eltSize * numElts == 128);
+      auto casted = createBitCast(regVal, getVecTy(64, 2));
+
+      regVal = createExtractElement(casted, 1);
+      ty = getVecTy(eltSize, numElts / 2);
+    } else {
+      ty = getVecTy(eltSize, numElts);
+    }
+    return createBitCast(regVal, ty);
   }
 
   void updateOutputReg(Value *V, bool SExt = false) {
@@ -6569,13 +6590,13 @@ public:
     case AArch64::MULv4i32_indexed:
     case AArch64::MULv2i32_indexed:
     case AArch64::MULv4i16_indexed: {
-      int eltSize, numElts;
+      unsigned eltSize, numElts;
       GET_SIZES4(MUL, _indexed);
       auto a = readFromVecOperand(1, eltSize, numElts);
       auto e2 = getIndexedElement(getImm(3), eltSize,
                                   CurInst->getOperand(2).getReg());
       Value *res = getUndefVec(numElts, eltSize);
-      for (int i = 0; i < numElts; ++i) {
+      for (unsigned i = 0; i < numElts; ++i) {
         auto e1 = createExtractElement(a, i);
         res = createInsertElement(res, createMul(e1, e2), i);
       }
@@ -6794,7 +6815,7 @@ public:
     }
 
 #define GET_SIZES6(INSN, SUFF)                                                 \
-  int numElts, eltSize;                                                        \
+  unsigned numElts, eltSize;                                                   \
   if (opcode == AArch64::INSN##v8i8##SUFF) {                                   \
     numElts = 8;                                                               \
     eltSize = 8;                                                               \
@@ -6885,7 +6906,7 @@ public:
       }
       auto vTy = getVecTy(2 * eltSize, numElts);
       auto a = createBitCast(op, vTy);
-      for (int i = 0; i < numElts; ++i) {
+      for (unsigned i = 0; i < numElts; ++i) {
         auto e = createExtractElement(a, i);
         auto shift = createMaskedLShr(e, getIntConst(exp, 2 * eltSize));
         auto trunc = createTrunc(shift, getIntTy(eltSize));
@@ -6896,8 +6917,67 @@ public:
       break;
     }
 
+    case AArch64::UMLALv8i8_v8i16:
+    case AArch64::UMLALv16i8_v8i16:
+    case AArch64::UMLALv4i16_v4i32:
+    case AArch64::UMLALv8i16_v4i32:
+    case AArch64::UMLALv2i32_v2i64:
+    case AArch64::UMLALv4i32_v2i64: {
+      unsigned numElts, eltSize;
+      switch (opcode) {
+      case AArch64::UMLALv8i8_v8i16:
+        numElts = 8;
+        eltSize = 8;
+        break;
+      case AArch64::UMLALv16i8_v8i16:
+        numElts = 16;
+        eltSize = 8;
+        break;
+      case AArch64::UMLALv4i16_v4i32:
+        numElts = 4;
+        eltSize = 16;
+        break;
+      case AArch64::UMLALv8i16_v4i32:
+        numElts = 8;
+        eltSize = 16;
+        break;
+      case AArch64::UMLALv2i32_v2i64:
+        numElts = 2;
+        eltSize = 32;
+        break;
+      case AArch64::UMLALv4i32_v2i64:
+        numElts = 4;
+        eltSize = 32;
+        break;
+      default:
+        assert(false);
+      }
+      bool isUpper = opcode == AArch64::UMLALv16i8_v8i16 ||
+                     opcode == AArch64::UMLALv8i16_v4i32 ||
+                     opcode == AArch64::UMLALv4i32_v2i64;
+      assert(isSIMDandFPReg(CurInst->getOperand(0)) &&
+             isSIMDandFPReg(CurInst->getOperand(1)) &&
+             CurInst->getOperand(0).getReg() ==
+                 CurInst->getOperand(1).getReg());
+      auto destReg =
+          readFromVecOperand(1, 2 * eltSize, isUpper ? numElts / 2 : numElts);
+      auto a = readFromVecOperand(2, eltSize, numElts, isUpper);
+      auto b = readFromVecOperand(3, eltSize, numElts, isUpper);
+
+      auto extended_a =
+          createZExt(a, getVecTy(2 * eltSize, isUpper ? numElts / 2 : numElts));
+      auto extended_b =
+          createZExt(b, getVecTy(2 * eltSize, isUpper ? numElts / 2 : numElts));
+
+      auto mul = createMul(extended_a, extended_b);
+      auto sum = createAdd(mul, destReg);
+
+      updateOutputReg(sum);
+      break;
+    }
+
 #define GET_SIZES7(INSN, SUFF)                                                 \
-  int numElts, eltSize;                                                        \
+  unsigned numElts, eltSize;                                                   \
   if (opcode == AArch64::INSN##v8i8##SUFF) {                                   \
     numElts = 8;                                                               \
     eltSize = 8;                                                               \
@@ -6935,7 +7015,7 @@ public:
       auto b = readFromVecOperand(2, eltSize, numElts);
       auto exp = getImm(3);
       Value *res = getUndefVec(numElts, eltSize);
-      for (int i = 0; i < numElts; ++i) {
+      for (unsigned i = 0; i < numElts; ++i) {
         auto e1 = createExtractElement(a, i);
         auto e2 = createExtractElement(b, i);
         auto shift = createMaskedLShr(e2, getIntConst(exp, eltSize));
@@ -6957,7 +7037,7 @@ public:
       auto a = readFromVecOperand(1, eltSize, numElts);
       auto b = readFromVecOperand(2, eltSize, numElts);
       Value *res = getUndefVec(numElts, eltSize);
-      for (int i = 0; i < numElts / 2; ++i) {
+      for (unsigned i = 0; i < numElts / 2; ++i) {
         auto e1 = createExtractElement(a, i);
         auto e2 = createExtractElement(b, i);
         res = createInsertElement(res, e1, 2 * i);
@@ -6978,7 +7058,7 @@ public:
       auto a = readFromVecOperand(1, eltSize, numElts);
       auto b = readFromVecOperand(2, eltSize, numElts);
       Value *res = getUndefVec(numElts, eltSize);
-      for (int i = 0; i < numElts / 2; ++i) {
+      for (unsigned i = 0; i < numElts / 2; ++i) {
         auto e1 = createExtractElement(a, (numElts / 2) + i);
         auto e2 = createExtractElement(b, (numElts / 2) + i);
         res = createInsertElement(res, e1, 2 * i);
@@ -7002,7 +7082,7 @@ public:
       auto concTy = getVecTy(eltSize, numElts * 2);
       auto concV = createBitCast(conc, concTy);
       Value *res = getUndefVec(numElts, eltSize);
-      for (int e = 0; e < numElts; ++e) {
+      for (unsigned e = 0; e < numElts; ++e) {
         *out << "e = " << e << "\n";
         auto elt1 = createExtractElement(concV, 2 * e);
         auto elt2 = createExtractElement(concV, (2 * e) + 1);
@@ -7014,7 +7094,7 @@ public:
     }
 
 #define GET_SIZES9(INSN, SUFF)                                                 \
-  int numElts, eltSize;                                                        \
+  unsigned numElts, eltSize;                                                   \
   if (opcode == AArch64::INSN##v8i8##SUFF) {                                   \
     numElts = 8;                                                               \
     eltSize = 8;                                                               \
@@ -7196,7 +7276,7 @@ public:
       //    case AArch64::SHSUBv2i32:
       //    case AArch64::SHSUBv4i32:
       {
-        int numElts, eltSize;
+        unsigned numElts, eltSize;
         switch (opcode) {
         case AArch64::SHADDv8i8:
         case AArch64::SHSUBv8i8:
