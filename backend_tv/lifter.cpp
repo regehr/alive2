@@ -334,7 +334,9 @@ class arm2llvm {
       AArch64::BICWrs,     AArch64::BICSWrs,    AArch64::EONWrs,
       AArch64::REV16Wr,    AArch64::Bcc,        AArch64::CCMPWr,
       AArch64::CCMPWi,     AArch64::LDRWui,     AArch64::LDRBBroW,
-      AArch64::LDRBBroX,   AArch64::LDRHHroW,   AArch64::LDRHHroX,
+      AArch64::LDRBBroX,   AArch64::LDRBroW,    AArch64::LDRBroX,
+      AArch64::LDRHHroW,   AArch64::LDRHHroX,   AArch64::LDRHroW,
+      AArch64::LDRHroX,
       AArch64::LDRWroW,    AArch64::LDRWroX,    AArch64::LDRSBWroW,
       AArch64::LDRSBWroX,  AArch64::LDRSBXroW,  AArch64::LDRSBXroX,
       AArch64::LDRSHWroW,  AArch64::LDRSHWroX,  AArch64::LDRSHXroW,
@@ -352,7 +354,9 @@ class arm2llvm {
       AArch64::LDRSpost,   AArch64::STRBBpost,  AArch64::STRBpost,
       AArch64::STRHHpost,  AArch64::STRHpost,   AArch64::STRWpost,
       AArch64::STRSpost,   AArch64::STRWui,     AArch64::STRBBroW,
-      AArch64::STRBBroX,   AArch64::STRHHroW,   AArch64::STRHHroX,
+      AArch64::STRBBroX,   AArch64::STRBroW,    AArch64::STRBroX,
+      AArch64::STRHHroW,   AArch64::STRHHroX,   AArch64::STRHroW,
+      AArch64::STRHroX,
       AArch64::STRWroW,    AArch64::STRWroX,    AArch64::CCMNWi,
       AArch64::CCMNWr,     AArch64::STRBBui,    AArch64::STRBui,
       AArch64::STPWi,      AArch64::STPSi,      AArch64::STPWpre,
@@ -2325,6 +2329,8 @@ public:
     switch (CurInst->getOpcode()) {
     case AArch64::LDRBBroW:
     case AArch64::LDRBBroX:
+    case AArch64::LDRBroW:
+    case AArch64::LDRBroX:
     case AArch64::LDRSBWroW:
     case AArch64::LDRSBWroX:
     case AArch64::LDRSBXroW:
@@ -2333,6 +2339,8 @@ public:
       break;
     case AArch64::LDRHHroW:
     case AArch64::LDRHHroX:
+    case AArch64::LDRHroW:
+    case AArch64::LDRHroX:
     case AArch64::LDRSHWroW:
     case AArch64::LDRSHWroX:
     case AArch64::LDRSHXroW:
@@ -2624,10 +2632,14 @@ public:
     switch (CurInst->getOpcode()) {
     case AArch64::STRBBroW:
     case AArch64::STRBBroX:
+    case AArch64::STRBroW:
+    case AArch64::STRBroX:
       shiftAmt = 0;
       break;
     case AArch64::STRHHroW:
     case AArch64::STRHHroX:
+    case AArch64::STRHroW:
+    case AArch64::STRHroX:
       shiftAmt = shiftAmtVal ? 1 : 0;
       break;
     case AArch64::STRWroW:
@@ -4052,8 +4064,12 @@ public:
 
     case AArch64::LDRBBroW:
     case AArch64::LDRBBroX:
+    case AArch64::LDRBroW:
+    case AArch64::LDRBroX:
     case AArch64::LDRHHroW:
     case AArch64::LDRHHroX:
+    case AArch64::LDRHroW:
+    case AArch64::LDRHroX:
     case AArch64::LDRWroW:
     case AArch64::LDRWroX:
     case AArch64::LDRSroW:
@@ -4079,6 +4095,8 @@ public:
       switch (opcode) {
       case AArch64::LDRBBroW:
       case AArch64::LDRBBroX:
+      case AArch64::LDRBroW:
+      case AArch64::LDRBroX:
       case AArch64::LDRSBWroW:
       case AArch64::LDRSBWroX:
       case AArch64::LDRSBXroW:
@@ -4087,6 +4105,8 @@ public:
         break;
       case AArch64::LDRHHroW:
       case AArch64::LDRHHroX:
+      case AArch64::LDRHroW:
+      case AArch64::LDRHroX:
       case AArch64::LDRSHWroW:
       case AArch64::LDRSHWroX:
       case AArch64::LDRSHXroW:
@@ -4437,8 +4457,12 @@ public:
 
     case AArch64::STRBBroW:
     case AArch64::STRBBroX:
+    case AArch64::STRBroW:
+    case AArch64::STRBroX:
     case AArch64::STRHHroW:
     case AArch64::STRHHroX:
+    case AArch64::STRHroW:
+    case AArch64::STRHroX:
     case AArch64::STRWroW:
     case AArch64::STRWroX:
     case AArch64::STRSroW:
@@ -4454,10 +4478,14 @@ public:
       switch (opcode) {
       case AArch64::STRBBroW:
       case AArch64::STRBBroX:
+      case AArch64::STRBroW:
+      case AArch64::STRBroX:
         storeToMemoryValOffset(base, offset, 1, createTrunc(val, i8));
         break;
       case AArch64::STRHHroW:
       case AArch64::STRHHroX:
+      case AArch64::STRHroW:
+      case AArch64::STRHroX:
         storeToMemoryValOffset(base, offset, 2, createTrunc(val, i16));
         break;
       case AArch64::STRWroW:
