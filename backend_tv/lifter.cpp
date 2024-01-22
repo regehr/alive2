@@ -721,34 +721,30 @@ class arm2llvm {
       AArch64::SHSUBv2i32,
   };
 
-  /*
-  AArch64::SMLALv16i8_v8i16
-  AArch64::SMLALv4i32_v2i64
-  AArch64::SMLALv8i8_v8i16
-  AArch64::SMLALv2i32_v2i64
-  AArch64::SMLALv4i16_v4i32
-  AArch64::SMLALv8i16_v4i32
-
-  AArch64::UMLALv16i8_v8i16
-  AArch64::UMLALv4i32_v2i64
-  AArch64::UMLALv8i8_v8i16
-  AArch64::UMLALv2i32_v2i64
-  AArch64::UMLALv4i16_v4i32
-  AArch64::UMLALv8i16_v4i32
-  */
-
   const set<int> instrs_128 = {
       AArch64::DUPv8i8lane,
       AArch64::DUPv4i16lane,
       AArch64::DUPv2i32lane,
-      AArch64::UMLALv4i32_indexed,
+      AArch64::UMLALv4i16_indexed,
       AArch64::UMLALv8i16_indexed,
+      AArch64::UMLALv2i32_indexed,
+      AArch64::UMLALv4i32_indexed,
       AArch64::UMLALv8i8_v8i16,
       AArch64::UMLALv4i16_v4i32,
       AArch64::UMLALv2i32_v2i64,
       AArch64::UMLALv16i8_v8i16,
       AArch64::UMLALv8i16_v4i32,
       AArch64::UMLALv4i32_v2i64,
+      AArch64::SMLALv4i16_indexed,
+      AArch64::SMLALv8i16_indexed,
+      AArch64::SMLALv2i32_indexed,
+      AArch64::SMLALv4i32_indexed,
+      AArch64::SMLALv8i8_v8i16,
+      AArch64::SMLALv4i16_v4i32,
+      AArch64::SMLALv2i32_v2i64,
+      AArch64::SMLALv16i8_v8i16,
+      AArch64::SMLALv8i16_v4i32,
+      AArch64::SMLALv4i32_v2i64,
       AArch64::SMLALv4i32_indexed,
       AArch64::SMLALv8i16_indexed,
       AArch64::SQADDv2i64,
@@ -1294,7 +1290,7 @@ class arm2llvm {
     return ExtractElementInst::Create(v, idxv, nextName(), LLVMBB);
   }
 
-  Value *getIndexedElement(int idx, int eltSize, unsigned reg) {
+  Value *getIndexedElement(unsigned idx, unsigned eltSize, unsigned reg) {
     auto *ty = getVecTy(eltSize, 128 / eltSize);
     auto *r = createBitCast(readFromReg(reg), ty);
     return createExtractElement(r, idx);
@@ -6617,46 +6613,6 @@ public:
       break;
     }
 
-      /*
-    case AArch64::SMLALv2i32_indexed:
-    case AArch64::SMLALv4i16_indexed:
-    case AArch64::SMLALv4i32_indexed:
-    case AArch64::SMLALv8i16_indexed: {
-      int numElts, eltSize;
-      GET_SIZES4(SMLAL, _indexed);
-      auto vTy = getVecTy(eltSize, numElts);
-      auto a = createBitCast(readFromOperand(1), vTy);
-      auto b = createBitCast(readFromOperand(2), vTy);
-
-      auto e2 = getIndexedElement(getImm(3), eltSize,
-                                  CurInst->getOperand(2).getReg());
-
-      // this one is wide regardless of the others!
-      auto v2Ty = (opcode == AArch64::SMLALv2i32_indexed ||
-                   opcode == AArch64::SMLALv4i16_indexed)
-                      ? getVecTy(eltSize, numElts * 2)
-                      : vTy;
-      auto reg = CurInst->getOperand(3).getReg();
-      auto c = createBitCast(readFromReg(reg), v2Ty);
-      auto idx = getImm(4);
-      auto e = createExtractElement(c, idx);
-      auto spl = splat(e, numElts, eltSize);
-      auto mul = createMul(b, spl);
-      auto sum = createSub(a, mul);
-      updateOutputReg(sum);
-      break;
-    }
-
-    case AArch64::UMLALv4i16_indexed:
-    case AArch64::UMLALv2i32_indexed:
-    case AArch64::UMLALv4i32_indexed:
-    case AArch64::UMLALv8i16_indexed: {
-      int numElts, eltSize;
-      GET_SIZES4(UMLAL, _indexed);
-      break;
-    }
-      */
-
     case AArch64::MLSv2i32_indexed:
     case AArch64::MLSv4i16_indexed:
     case AArch64::MLSv8i16_indexed:
@@ -6930,44 +6886,109 @@ public:
       break;
     }
 
+      /*
+      case AArch64::UMLALv4i16_indexed:
+      case AArch64::UMLALv8i16_indexed:
+      case AArch64::UMLALv2i32_indexed:
+      case AArch64::UMLALv4i32_indexed:
+      case AArch64::SMLALv4i16_indexed:
+      case AArch64::SMLALv8i16_indexed:
+      case AArch64::SMLALv2i32_indexed:
+      case AArch64::SMLALv4i32_indexed: {
+        unsigned numElts, eltSize;
+        GET_SIZES4(SMLAL, _indexed);
+        auto isUpper = opcode == AArch64::UMLALv8i16_indexed || opcode ==
+      AArch64::SMLALv8i16_indexed || opcode == AArch64::UMLALv4i32_indexed ||
+      opcode == AArch64::SMLALv4i32_indexed; auto isSigned = opcode ==
+      AArch64::SMLALv4i16_indexed || opcode == AArch64::SMLALv8i16_indexed ||
+                        opcode == AArch64::SMLALv2i32_indexed || opcode ==
+      AArch64::SMLALv4i32_indexed; assert(isSIMDandFPReg(CurInst->getOperand(0))
+      && isSIMDandFPReg(CurInst->getOperand(1)) &&
+               CurInst->getOperand(0).getReg() ==
+                   CurInst->getOperand(1).getReg());
+        assert(CurInst->getOperand(4).isImm());
+
+        auto destReg = readFromVecOperand(1, 2 * eltSize, isUpper ? numElts / 2
+      : numElts); auto a = readFromVecOperand(2, eltSize, numElts, isUpper);
+        auto element = getIndexedElement(getImm(4), eltSize,
+                                    CurInst->getOperand(3).getReg());
+        auto splatElement = splat(element, numElts, eltSize);
+
+        auto extended_a = isSigned?
+                                   createSExt(a, getVecTy(2 * eltSize, isUpper ?
+      numElts / 2 : numElts)) : createZExt(a, getVecTy(2 * eltSize, isUpper ?
+      numElts / 2 : numElts)); auto extended_b = isSigned?
+                                   createSExt(splatElement, getVecTy(2 *
+      eltSize, isUpper ? numElts / 2 : numElts)) : createZExt(splatElement,
+      getVecTy(2 * eltSize, isUpper ? numElts / 2 : numElts));
+
+        auto mul = createMul(extended_a, extended_b);
+        auto sum = createAdd(mul, destReg);
+
+        updateOutputReg(sum);
+        break;
+      }
+      */
+
     case AArch64::UMLALv8i8_v8i16:
     case AArch64::UMLALv16i8_v8i16:
     case AArch64::UMLALv4i16_v4i32:
     case AArch64::UMLALv8i16_v4i32:
     case AArch64::UMLALv2i32_v2i64:
-    case AArch64::UMLALv4i32_v2i64: {
+    case AArch64::UMLALv4i32_v2i64:
+    case AArch64::SMLALv8i8_v8i16:
+    case AArch64::SMLALv16i8_v8i16:
+    case AArch64::SMLALv4i16_v4i32:
+    case AArch64::SMLALv8i16_v4i32:
+    case AArch64::SMLALv2i32_v2i64:
+    case AArch64::SMLALv4i32_v2i64: {
       unsigned numElts, eltSize;
       switch (opcode) {
       case AArch64::UMLALv8i8_v8i16:
+      case AArch64::SMLALv8i8_v8i16:
         numElts = 8;
         eltSize = 8;
         break;
       case AArch64::UMLALv16i8_v8i16:
+      case AArch64::SMLALv16i8_v8i16:
         numElts = 16;
         eltSize = 8;
         break;
       case AArch64::UMLALv4i16_v4i32:
+      case AArch64::SMLALv4i16_v4i32:
         numElts = 4;
         eltSize = 16;
         break;
       case AArch64::UMLALv8i16_v4i32:
+      case AArch64::SMLALv8i16_v4i32:
         numElts = 8;
         eltSize = 16;
         break;
       case AArch64::UMLALv2i32_v2i64:
+      case AArch64::SMLALv2i32_v2i64:
         numElts = 2;
         eltSize = 32;
         break;
       case AArch64::UMLALv4i32_v2i64:
+      case AArch64::SMLALv4i32_v2i64:
         numElts = 4;
         eltSize = 32;
         break;
       default:
         assert(false);
       }
-      bool isUpper = opcode == AArch64::UMLALv16i8_v8i16 ||
+      auto isUpper = opcode == AArch64::UMLALv16i8_v8i16 ||
+                     opcode == AArch64::SMLALv16i8_v8i16 ||
                      opcode == AArch64::UMLALv8i16_v4i32 ||
-                     opcode == AArch64::UMLALv4i32_v2i64;
+                     opcode == AArch64::SMLALv8i16_v4i32 ||
+                     opcode == AArch64::UMLALv4i32_v2i64 ||
+                     opcode == AArch64::SMLALv4i32_v2i64;
+      auto isSigned = opcode == AArch64::SMLALv8i8_v8i16 ||
+                      opcode == AArch64::SMLALv16i8_v8i16 ||
+                      opcode == AArch64::SMLALv4i16_v4i32 ||
+                      opcode == AArch64::SMLALv8i16_v4i32 ||
+                      opcode == AArch64::SMLALv2i32_v2i64 ||
+                      opcode == AArch64::SMLALv4i32_v2i64;
       assert(isSIMDandFPReg(CurInst->getOperand(0)) &&
              isSIMDandFPReg(CurInst->getOperand(1)) &&
              CurInst->getOperand(0).getReg() ==
@@ -6978,9 +6999,15 @@ public:
       auto b = readFromVecOperand(3, eltSize, numElts, isUpper);
 
       auto extended_a =
-          createZExt(a, getVecTy(2 * eltSize, isUpper ? numElts / 2 : numElts));
+          isSigned ? createSExt(a, getVecTy(2 * eltSize,
+                                            isUpper ? numElts / 2 : numElts))
+                   : createZExt(a, getVecTy(2 * eltSize,
+                                            isUpper ? numElts / 2 : numElts));
       auto extended_b =
-          createZExt(b, getVecTy(2 * eltSize, isUpper ? numElts / 2 : numElts));
+          isSigned ? createSExt(b, getVecTy(2 * eltSize,
+                                            isUpper ? numElts / 2 : numElts))
+                   : createZExt(b, getVecTy(2 * eltSize,
+                                            isUpper ? numElts / 2 : numElts));
 
       auto mul = createMul(extended_a, extended_b);
       auto sum = createAdd(mul, destReg);
