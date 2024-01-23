@@ -530,7 +530,6 @@ class arm2llvm {
       AArch64::USHLLv8i8_shift,
       AArch64::USHLLv2i32_shift,
       AArch64::USHLLv4i16_shift,
-      AArch64::UADDLv8i8_v8i16,
       AArch64::USUBLv8i8_v8i16,
       AArch64::XTNv8i8,
       AArch64::XTNv4i16,
@@ -722,12 +721,18 @@ class arm2llvm {
       AArch64::SHSUBv8i8,
       AArch64::SHSUBv4i16,
       AArch64::SHSUBv2i32,
+      AArch64::UADDLv8i8_v8i16,
+      AArch64::UADDLv4i16_v4i32,
+      AArch64::UADDLv2i32_v2i64,
   };
 
   const set<int> instrs_128 = {
       AArch64::DUPv8i8lane,
       AArch64::DUPv4i16lane,
       AArch64::DUPv2i32lane,
+      AArch64::UADDLv16i8_v8i16,
+      AArch64::UADDLv8i16_v4i32,
+      AArch64::UADDLv4i32_v2i64,
       AArch64::UMLALv4i16_indexed,
       AArch64::UMLALv8i16_indexed,
       AArch64::UMLALv2i32_indexed,
@@ -1562,7 +1567,7 @@ class arm2llvm {
   Value *createVectorOp(function<Value *(Value *, Value *)> op, Value *a,
                         Value *b, unsigned eltSize, unsigned numElts,
                         bool elementWise, extKind ext, bool splatImm2,
-                        bool immShift) {
+                        bool immShift, bool isUpper) {
     assert(getBitWidth(a) == getBitWidth(b) &&
            "Expected values of same bit width");
 
@@ -1595,6 +1600,20 @@ class arm2llvm {
       }
     } else {
       res = op(a, b);
+      // Some instructions use the upper half of the result. No case necessary
+      // for instructions that use the lower half, since the width used is halved
+      // by instruction size set.
+      if(isUpper) {
+        assert(eltSize * numElts == 128);
+        CastInst *casted;
+        if(ext == extKind::ZExt || ext == extKind::SExt) {
+          casted = createBitCast(res, getVecTy(128, 2));
+        } else {
+          casted = createBitCast(res, getVecTy(64, 2));
+        }
+        auto extracted = createExtractElement(casted, 1);
+        res = createBitCast(extracted, getVecTy(eltSize, numElts));
+      }
     }
     return res;
   }
@@ -6125,6 +6144,11 @@ public:
     case AArch64::ADDv8i16:
     case AArch64::ADDv16i8:
     case AArch64::UADDLv8i8_v8i16:
+    case AArch64::UADDLv16i8_v8i16:
+    case AArch64::UADDLv4i16_v4i32:
+    case AArch64::UADDLv8i16_v4i32:
+    case AArch64::UADDLv2i32_v2i64:
+    case AArch64::UADDLv4i32_v2i64:
     case AArch64::SUBv2i32:
     case AArch64::SUBv2i64:
     case AArch64::SUBv4i16:
@@ -6184,6 +6208,7 @@ public:
       bool splatImm2 = false;
       extKind ext = extKind::None;
       bool immShift = false;
+      bool isUpper = false;
       function<Value *(Value *, Value *)> op;
       switch (opcode) {
       case AArch64::SMINv8i8:
@@ -6323,7 +6348,14 @@ public:
       case AArch64::ADDv16i8:
         op = [&](Value *a, Value *b) { return createAdd(a, b); };
         break;
+      case AArch64::UADDLv16i8_v8i16:
+      case AArch64::UADDLv8i16_v4i32:
+      case AArch64::UADDLv4i32_v2i64:
+        // These three cases are UADDL2
+        isUpper = true;
       case AArch64::UADDLv8i8_v8i16:
+      case AArch64::UADDLv4i16_v4i32:
+      case AArch64::UADDLv2i32_v2i64:
         ext = extKind::ZExt;
         op = [&](Value *a, Value *b) { return createAdd(a, b); };
         break;
@@ -6423,6 +6455,7 @@ public:
       case AArch64::SSHLv2i32:
       case AArch64::BICv2i32:
       case AArch64::USHLLv2i32_shift:
+      case AArch64::UADDLv2i32_v2i64:
         numElts = 2;
         eltSize = 32;
         break;
@@ -6457,6 +6490,7 @@ public:
       case AArch64::USHLLv4i16_shift:
       case AArch64::SHLv4i16_shift:
       case AArch64::MULv4i16:
+      case AArch64::UADDLv4i16_v4i32:
         numElts = 4;
         eltSize = 16;
         break;
@@ -6478,6 +6512,7 @@ public:
       case AArch64::BICv4i32:
       case AArch64::USHLLv4i32_shift:
       case AArch64::ORRv4i32:
+      case AArch64::UADDLv4i32_v2i64:
         numElts = 4;
         eltSize = 32;
         break;
@@ -6525,6 +6560,7 @@ public:
       case AArch64::SMAXv8i16:
       case AArch64::UMINv8i16:
       case AArch64::UMAXv8i16:
+      case AArch64::UADDLv8i16_v4i32:
         numElts = 8;
         eltSize = 16;
         break;
@@ -6549,6 +6585,7 @@ public:
       case AArch64::USHLLv16i8_shift:
       case AArch64::SHLv16i8_shift:
       case AArch64::SSHRv16i8_shift:
+      case AArch64::UADDLv16i8_v8i16:
         numElts = 16;
         eltSize = 8;
         break;
@@ -6558,7 +6595,7 @@ public:
       }
 
       auto res = createVectorOp(op, a, b, eltSize, numElts, elementWise, ext,
-                                splatImm2, immShift);
+                                splatImm2, immShift, isUpper);
       updateOutputReg(res);
       break;
     }
