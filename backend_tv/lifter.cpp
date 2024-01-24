@@ -548,8 +548,15 @@ class arm2llvm {
       AArch64::UADDLPv4i16_v2i32,
       AArch64::UADDLPv2i32_v1i64,
       AArch64::UADDLPv8i8_v4i16,
+      AArch64::SADDLPv4i16_v2i32,
+      AArch64::SADDLPv2i32_v1i64,
+      AArch64::SADDLPv8i8_v4i16,
       AArch64::UADALPv8i8_v4i16,
       AArch64::UADALPv4i16_v2i32,
+      AArch64::UADALPv2i32_v1i64,
+      AArch64::SADALPv8i8_v4i16,
+      AArch64::SADALPv4i16_v2i32,
+      AArch64::SADALPv2i32_v1i64,
       AArch64::BIFv8i8,
       AArch64::BSLv8i8,
       AArch64::BICv4i16,
@@ -1056,9 +1063,15 @@ class arm2llvm {
       AArch64::UADDLPv8i16_v4i32,
       AArch64::UADDLPv4i32_v2i64,
       AArch64::UADDLPv16i8_v8i16,
+      AArch64::SADDLPv8i16_v4i32,
+      AArch64::SADDLPv4i32_v2i64,
+      AArch64::SADDLPv16i8_v8i16,
       AArch64::UADALPv4i32_v2i64,
       AArch64::UADALPv16i8_v8i16,
       AArch64::UADALPv8i16_v4i32,
+      AArch64::SADALPv4i32_v2i64,
+      AArch64::SADALPv16i8_v8i16,
+      AArch64::SADALPv8i16_v4i32,
       AArch64::BIFv16i8,
       AArch64::BSLv16i8,
       AArch64::BICv8i16,
@@ -1565,21 +1578,23 @@ class arm2llvm {
     return res;
   }
 
-  Value *addPairs(Value *src, unsigned eltSize, unsigned numElts) {
+  enum class extKind { SExt, ZExt, None };
+
+  Value *addPairs(Value *src, unsigned eltSize, unsigned numElts, extKind ext) {
     auto bigEltTy = getIntTy(2 * eltSize);
     Value *res = getUndefVec(numElts / 2, 2 * eltSize);
     for (unsigned i = 0; i < numElts; i += 2) {
       auto elt1 = createExtractElement(src, i);
       auto elt2 = createExtractElement(src, i + 1);
-      auto ext1 = createZExt(elt1, bigEltTy);
-      auto ext2 = createZExt(elt2, bigEltTy);
+      auto ext1 = ext==extKind::SExt? createSExt(elt1, bigEltTy):
+                                       createZExt(elt1, bigEltTy);
+      auto ext2 = ext==extKind::SExt? createSExt(elt2, bigEltTy):
+                                       createZExt(elt2, bigEltTy);
       auto sum = createAdd(ext1, ext2);
       res = createInsertElement(res, sum, i / 2);
     }
     return res;
   }
-
-  enum class extKind { SExt, ZExt, None };
 
   // Creates LLVM IR instructions which take two values with the same
   // number of bits, bit casting them to vectors of numElts elements
@@ -7729,15 +7744,28 @@ public:
     case AArch64::CLZv4i32:
     case AArch64::UADALPv8i8_v4i16:
     case AArch64::UADALPv4i16_v2i32:
+    case AArch64::UADALPv2i32_v1i64:
     case AArch64::UADALPv4i32_v2i64:
     case AArch64::UADALPv16i8_v8i16:
     case AArch64::UADALPv8i16_v4i32:
+    case AArch64::SADALPv8i8_v4i16:
+    case AArch64::SADALPv4i16_v2i32:
+    case AArch64::SADALPv2i32_v1i64:
+    case AArch64::SADALPv4i32_v2i64:
+    case AArch64::SADALPv16i8_v8i16:
+    case AArch64::SADALPv8i16_v4i32:
     case AArch64::UADDLPv4i16_v2i32:
     case AArch64::UADDLPv2i32_v1i64:
     case AArch64::UADDLPv8i8_v4i16:
     case AArch64::UADDLPv8i16_v4i32:
     case AArch64::UADDLPv4i32_v2i64:
     case AArch64::UADDLPv16i8_v8i16:
+    case AArch64::SADDLPv8i8_v4i16:
+    case AArch64::SADDLPv4i16_v2i32:
+    case AArch64::SADDLPv2i32_v1i64:
+    case AArch64::SADDLPv16i8_v8i16:
+    case AArch64::SADDLPv8i16_v4i32:
+    case AArch64::SADDLPv4i32_v2i64:
     case AArch64::UADDLVv8i16v:
     case AArch64::UADDLVv4i32v:
     case AArch64::UADDLVv8i8v:
@@ -7782,7 +7810,9 @@ public:
       case AArch64::UADDLVv4i16v:
       case AArch64::SADDLVv4i16v:
       case AArch64::UADDLPv4i16_v2i32:
+      case AArch64::SADDLPv4i16_v2i32:
       case AArch64::UADALPv4i16_v2i32:
+      case AArch64::SADALPv4i16_v2i32:
       case AArch64::ADDVv4i16v:
         eltSize = 16;
         numElts = 4;
@@ -7791,7 +7821,9 @@ public:
       case AArch64::CLZv2i32:
       case AArch64::NEGv2i32:
       case AArch64::UADDLPv2i32_v1i64:
+      case AArch64::SADDLPv2i32_v1i64:
       case AArch64::UADALPv2i32_v1i64:
+      case AArch64::SADALPv2i32_v1i64:
         eltSize = 32;
         numElts = 2;
         break;
@@ -7801,7 +7833,9 @@ public:
       case AArch64::UADDLVv8i16v:
       case AArch64::SADDLVv8i16v:
       case AArch64::UADDLPv8i16_v4i32:
+      case AArch64::SADDLPv8i16_v4i32:
       case AArch64::UADALPv8i16_v4i32:
+      case AArch64::SADALPv8i16_v4i32:
       case AArch64::ADDVv8i16v:
         eltSize = 16;
         numElts = 8;
@@ -7817,7 +7851,9 @@ public:
       case AArch64::UADDLVv4i32v:
       case AArch64::SADDLVv4i32v:
       case AArch64::UADDLPv4i32_v2i64:
+      case AArch64::SADDLPv4i32_v2i64:
       case AArch64::UADALPv4i32_v2i64:
+      case AArch64::SADALPv4i32_v2i64:
       case AArch64::ADDVv4i32v:
         eltSize = 32;
         numElts = 4;
@@ -7827,7 +7863,9 @@ public:
       case AArch64::UADDLVv8i8v:
       case AArch64::SADDLVv8i8v:
       case AArch64::UADDLPv8i8_v4i16:
+      case AArch64::SADDLPv8i8_v4i16:
       case AArch64::UADALPv8i8_v4i16:
+      case AArch64::SADALPv8i8_v4i16:
       case AArch64::NEGv8i8:
       case AArch64::NOTv8i8:
       case AArch64::CNTv8i8:
@@ -7844,7 +7882,9 @@ public:
       case AArch64::UADDLVv16i8v:
       case AArch64::SADDLVv16i8v:
       case AArch64::UADDLPv16i8_v8i16:
+      case AArch64::SADDLPv16i8_v8i16:
       case AArch64::UADALPv16i8_v8i16:
+      case AArch64::SADALPv16i8_v8i16:
       case AArch64::NOTv16i8:
       case AArch64::CNTv16i8:
         eltSize = 8;
@@ -7906,7 +7946,18 @@ public:
       case AArch64::UADDLPv4i32_v2i64:
       case AArch64::UADDLPv16i8_v8i16: {
         auto src_vector = createBitCast(src, vTy);
-        auto res = addPairs(src_vector, eltSize, numElts);
+        auto res = addPairs(src_vector, eltSize, numElts, extKind::ZExt);
+        updateOutputReg(res);
+        break;
+      }
+      case AArch64::SADDLPv4i16_v2i32:
+      case AArch64::SADDLPv2i32_v1i64:
+      case AArch64::SADDLPv8i8_v4i16:
+      case AArch64::SADDLPv8i16_v4i32:
+      case AArch64::SADDLPv4i32_v2i64:
+      case AArch64::SADDLPv16i8_v8i16: {
+        auto src_vector = createBitCast(src, vTy);
+        auto res = addPairs(src_vector, eltSize, numElts, extKind::SExt);
         updateOutputReg(res);
         break;
       }
@@ -7915,10 +7966,24 @@ public:
       case AArch64::UADALPv8i8_v4i16:
       case AArch64::UADALPv8i16_v4i32:
       case AArch64::UADALPv4i32_v2i64:
-      case AArch64::UADALPv16i8_v8i16: {
+      case AArch64::UADALPv16i8_v8i16:
+      case AArch64::SADALPv4i16_v2i32:
+      case AArch64::SADALPv2i32_v1i64:
+      case AArch64::SADALPv8i8_v4i16:
+      case AArch64::SADALPv8i16_v4i32:
+      case AArch64::SADALPv4i32_v2i64:
+      case AArch64::SADALPv16i8_v8i16: {
+        auto ext = opcode == AArch64::SADALPv4i16_v2i32 ||
+                   opcode == AArch64::SADALPv2i32_v1i64 ||
+                   opcode == AArch64::SADALPv8i8_v4i16 ||
+                   opcode == AArch64::SADALPv8i16_v4i32 ||
+                   opcode == AArch64::SADALPv4i32_v2i64 ||
+                   opcode == AArch64::SADALPv16i8_v8i16
+                       ? extKind::SExt
+                       : extKind::ZExt;
         auto src2 = readFromOperand(2);
         auto src2_vector = createBitCast(src2, vTy);
-        auto sum = addPairs(src2_vector, eltSize, numElts);
+        auto sum = addPairs(src2_vector, eltSize, numElts, ext);
         auto *bigTy = getVecTy(2 * eltSize, numElts / 2);
         Value *res = getUndefVec(numElts / 2, 2 * eltSize);
         auto src_vector = createBitCast(src, bigTy);
