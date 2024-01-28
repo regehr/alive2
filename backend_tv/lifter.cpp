@@ -567,6 +567,7 @@ class arm2llvm {
       AArch64::LDPDpre,
       AArch64::LDPXpost,
       AArch64::LDPDpost,
+      AArch64::LDPSWi,
       AArch64::LDPXi,
       AArch64::LDPDi,
       AArch64::LDRDui,
@@ -4741,6 +4742,7 @@ public:
       break;
     }
 
+    case AArch64::LDPSWi:
     case AArch64::LDPWi:
     case AArch64::LDPSi:
     case AArch64::LDPXi:
@@ -4761,6 +4763,7 @@ public:
 
       int size = 0;
       switch (opcode) {
+      case AArch64::LDPSWi:
       case AArch64::LDPWi:
       case AArch64::LDPSi: {
         size = 4;
@@ -4782,11 +4785,15 @@ public:
       }
       assert(size != 0);
 
+      bool SExt = opcode == AArch64::LDPSWi;
+
       auto imm = op3.getImm();
       auto out1 = op0.getReg();
       auto out2 = op1.getReg();
-      updateReg(makeLoadWithOffset(baseAddr, imm * size, size), out1);
-      updateReg(makeLoadWithOffset(baseAddr, (imm + 1) * size, size), out2);
+
+      updateReg(makeLoadWithOffset(baseAddr, imm * size, size), out1, SExt);
+      updateReg(makeLoadWithOffset(baseAddr, (imm + 1) * size, size), out2,
+                SExt);
       break;
     }
 
@@ -8617,7 +8624,7 @@ public:
                                 Align ByteAlignment) override {
     vector<RODataItem> data;
     string name{Symbol->getName()};
-    for (int i = 0; i < Size; ++i)
+    for (uint64_t i = 0; i < Size; ++i)
       data.push_back(RODataItem{'0'});
     MCGlobal g{
         .name = name,
