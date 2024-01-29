@@ -401,8 +401,6 @@ class arm2llvm {
   }
 
   Type *getIntTy(unsigned bits) {
-    // just trying to catch silly errors, remove this sometime
-    assert(bits > 0 && bits <= 256);
     return Type::getIntNTy(Ctx, bits);
   }
 
@@ -1123,6 +1121,13 @@ class arm2llvm {
       AArch64::LD1Rv4s,
       AArch64::LD1Rv1d,
       AArch64::LD1Rv2d,
+      AArch64::LD4Fourv8b,
+      AArch64::LD4Fourv16b,
+      AArch64::LD4Fourv4h,
+      AArch64::LD4Fourv8h,
+      AArch64::LD4Fourv2s,
+      AArch64::LD4Fourv4s,
+      AArch64::LD4Fourv2d,
       AArch64::STPQi,
       AArch64::STPQpre,
       AArch64::STPQpost,
@@ -1503,6 +1508,10 @@ class arm2llvm {
   ExtractElementInst *createExtractElement(Value *v, int idx) {
     auto idxv = getIntConst(idx, 32);
     return ExtractElementInst::Create(v, idxv, nextName(), LLVMBB);
+  }
+
+  ShuffleVectorInst *createShuffleVector(Value *v, ArrayRef<int> mask) {
+    return new ShuffleVectorInst(v, mask, nextName(), LLVMBB);
   }
 
   Value *getIndexedElement(unsigned idx, unsigned eltSize, unsigned reg) {
@@ -2610,8 +2619,168 @@ public:
     return createLoad(getIntTy(8 * size), ptr);
   }
 
-  unsigned decodeTblReg(unsigned r) {
+  unsigned decodeRegSet(unsigned r) {
     switch (r) {
+    case AArch64::D0:
+    case AArch64::D0_D1:
+    case AArch64::D0_D1_D2:
+    case AArch64::D0_D1_D2_D3:
+      return AArch64::D0;
+    case AArch64::D1:
+    case AArch64::D1_D2:
+    case AArch64::D1_D2_D3:
+    case AArch64::D1_D2_D3_D4:
+      return AArch64::D1;
+    case AArch64::D2:
+    case AArch64::D2_D3:
+    case AArch64::D2_D3_D4:
+    case AArch64::D2_D3_D4_D5:
+      return AArch64::D2;
+    case AArch64::D3:
+    case AArch64::D3_D4:
+    case AArch64::D3_D4_D5:
+    case AArch64::D3_D4_D5_D6:
+      return AArch64::D3;
+    case AArch64::D4:
+    case AArch64::D4_D5:
+    case AArch64::D4_D5_D6:
+    case AArch64::D4_D5_D6_D7:
+      return AArch64::D4;
+    case AArch64::D5:
+    case AArch64::D5_D6:
+    case AArch64::D5_D6_D7:
+    case AArch64::D5_D6_D7_D8:
+      return AArch64::D5;
+    case AArch64::D6:
+    case AArch64::D6_D7:
+    case AArch64::D6_D7_D8:
+    case AArch64::D6_D7_D8_D9:
+      return AArch64::D6;
+    case AArch64::D7:
+    case AArch64::D7_D8:
+    case AArch64::D7_D8_D9:
+    case AArch64::D7_D8_D9_D10:
+      return AArch64::D7;
+    case AArch64::D8:
+    case AArch64::D8_D9:
+    case AArch64::D8_D9_D10:
+    case AArch64::D8_D9_D10_D11:
+      return AArch64::D8;
+    case AArch64::D9:
+    case AArch64::D9_D10:
+    case AArch64::D9_D10_D11:
+    case AArch64::D9_D10_D11_D12:
+      return AArch64::D9;
+    case AArch64::D10:
+    case AArch64::D10_D11:
+    case AArch64::D10_D11_D12:
+    case AArch64::D10_D11_D12_D13:
+      return AArch64::D10;
+    case AArch64::D11:
+    case AArch64::D11_D12:
+    case AArch64::D11_D12_D13:
+    case AArch64::D11_D12_D13_D14:
+      return AArch64::D11;
+    case AArch64::D12:
+    case AArch64::D12_D13:
+    case AArch64::D12_D13_D14:
+    case AArch64::D12_D13_D14_D15:
+      return AArch64::D12;
+    case AArch64::D13:
+    case AArch64::D13_D14:
+    case AArch64::D13_D14_D15:
+    case AArch64::D13_D14_D15_D16:
+      return AArch64::D13;
+    case AArch64::D14:
+    case AArch64::D14_D15:
+    case AArch64::D14_D15_D16:
+    case AArch64::D14_D15_D16_D17:
+      return AArch64::D14;
+    case AArch64::D15:
+    case AArch64::D15_D16:
+    case AArch64::D15_D16_D17:
+    case AArch64::D15_D16_D17_D18:
+      return AArch64::D15;
+    case AArch64::D16:
+    case AArch64::D16_D17:
+    case AArch64::D16_D17_D18:
+    case AArch64::D16_D17_D18_D19:
+      return AArch64::D16;
+    case AArch64::D17:
+    case AArch64::D17_D18:
+    case AArch64::D17_D18_D19:
+    case AArch64::D17_D18_D19_D20:
+      return AArch64::D17;
+    case AArch64::D18:
+    case AArch64::D18_D19:
+    case AArch64::D18_D19_D20:
+    case AArch64::D18_D19_D20_D21:
+      return AArch64::D18;
+    case AArch64::D19:
+    case AArch64::D19_D20:
+    case AArch64::D19_D20_D21:
+    case AArch64::D19_D20_D21_D22:
+      return AArch64::D19;
+    case AArch64::D20:
+    case AArch64::D20_D21:
+    case AArch64::D20_D21_D22:
+    case AArch64::D20_D21_D22_D23:
+      return AArch64::D20;
+    case AArch64::D21:
+    case AArch64::D21_D22:
+    case AArch64::D21_D22_D23:
+    case AArch64::D21_D22_D23_D24:
+      return AArch64::D21;
+    case AArch64::D22:
+    case AArch64::D22_D23:
+    case AArch64::D22_D23_D24:
+    case AArch64::D22_D23_D24_D25:
+      return AArch64::D22;
+    case AArch64::D23:
+    case AArch64::D23_D24:
+    case AArch64::D23_D24_D25:
+    case AArch64::D23_D24_D25_D26:
+      return AArch64::D23;
+    case AArch64::D24:
+    case AArch64::D24_D25:
+    case AArch64::D24_D25_D26:
+    case AArch64::D24_D25_D26_D27:
+      return AArch64::D24;
+    case AArch64::D25:
+    case AArch64::D25_D26:
+    case AArch64::D25_D26_D27:
+    case AArch64::D25_D26_D27_D28:
+      return AArch64::D25;
+    case AArch64::D26:
+    case AArch64::D26_D27:
+    case AArch64::D26_D27_D28:
+    case AArch64::D26_D27_D28_D29:
+      return AArch64::D26;
+    case AArch64::D27:
+    case AArch64::D27_D28:
+    case AArch64::D27_D28_D29:
+    case AArch64::D27_D28_D29_D30:
+      return AArch64::D27;
+    case AArch64::D28:
+    case AArch64::D28_D29:
+    case AArch64::D28_D29_D30:
+    case AArch64::D28_D29_D30_D31:
+      return AArch64::D28;
+    case AArch64::D29:
+    case AArch64::D29_D30:
+    case AArch64::D29_D30_D31:
+    case AArch64::D29_D30_D31_D0:
+      return AArch64::D29;
+    case AArch64::D30:
+    case AArch64::D30_D31:
+    case AArch64::D30_D31_D0:
+    case AArch64::D30_D31_D0_D1:
+      return AArch64::D30;
+    case AArch64::D31:
+    case AArch64::D31_D0:
+    case AArch64::D31_D0_D1:
+    case AArch64::D31_D0_D1_D2:
+      return AArch64::D31;
     case AArch64::Q0:
     case AArch64::Q0_Q1:
     case AArch64::Q0_Q1_Q2:
@@ -2773,7 +2942,8 @@ public:
     case AArch64::Q31_Q0_Q1_Q2:
       return AArch64::Q31;
     default:
-      assert(false && "missing case in decodeTblReg");
+      assert(false && "missing case in decodeRegSet");
+      break;
     }
   }
 
@@ -4507,6 +4677,110 @@ public:
       }
 
       updateOutputReg(updated_dst);
+      break;
+    }
+
+    case AArch64::LD4Fourv8b:
+    case AArch64::LD4Fourv16b:
+    case AArch64::LD4Fourv4h:
+    case AArch64::LD4Fourv8h:
+    case AArch64::LD4Fourv2s:
+    case AArch64::LD4Fourv4s:
+    case AArch64::LD4Fourv2d: {
+      unsigned numElts, eltSize;
+      bool fullWidth;
+      switch (opcode) {
+      case AArch64::LD4Fourv8b:
+        numElts = 8;
+        eltSize = 8;
+        fullWidth = false;
+        break;
+      case AArch64::LD4Fourv16b:
+        numElts = 16;
+        eltSize = 8;
+        fullWidth = true;
+        break;
+      case AArch64::LD4Fourv4h:
+        numElts = 4;
+        eltSize = 16;
+        fullWidth = false;
+        break;
+      case AArch64::LD4Fourv8h:
+        numElts = 8;
+        eltSize = 16;
+        fullWidth = true;
+        break;
+      case AArch64::LD4Fourv2s:
+        numElts = 2;
+        eltSize = 32;
+        fullWidth = false;
+        break;
+      case AArch64::LD4Fourv4s:
+        numElts = 4;
+        eltSize = 32;
+        fullWidth = true;
+        break;
+      case AArch64::LD4Fourv2d:
+        numElts = 2;
+        eltSize = 64;
+        fullWidth = true;
+        break;
+      default:
+        assert(false);
+        break;
+      }
+      unsigned nregs;
+      switch (opcode) {
+      case AArch64::LD4Fourv8b:
+      case AArch64::LD4Fourv16b:
+      case AArch64::LD4Fourv4h:
+      case AArch64::LD4Fourv8h:
+      case AArch64::LD4Fourv2s:
+      case AArch64::LD4Fourv4s:
+      case AArch64::LD4Fourv2d:
+        nregs = 4;
+        break;
+      default:
+        assert(false);
+        break;
+      }
+
+      auto regCounter = decodeRegSet(CurInst->getOperand(0).getReg());
+      auto baseReg = CurInst->getOperand(1).getReg();
+      assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+             (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
+             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
+      assert((regCounter >= AArch64::Q0 && regCounter <= AArch64::Q31) ||
+             (regCounter >= AArch64::D0 && regCounter <= AArch64::D31));
+
+      // Load the entire memory block to be stored in all the registers at once
+      // [nregs * numElts * (eltSize / 8)] bytes
+      auto base = readPtrFromReg(baseReg);
+      auto loaded =
+          makeLoadWithOffset(base, 0, nregs * numElts * (eltSize / 8));
+      auto casted = createBitCast(loaded, getVecTy(eltSize, nregs * numElts));
+
+      // Deinterleave the loaded vector into nregs vectors and store them in the
+      // registers
+      int mask[numElts];
+      ArrayRef<int> maskRef(mask, numElts);
+      Value *res;
+
+      // Outer loop control for register to store into
+      for (unsigned j = 0; j < nregs; j++) {
+        for (unsigned i = 0, index = j; i < numElts; i++, index += nregs) {
+          mask[i] = index;
+        }
+        res = createShuffleVector(casted, maskRef);
+        updateReg(res, regCounter);
+
+        regCounter++;
+        if (fullWidth && regCounter > AArch64::Q31)
+          regCounter = AArch64::Q0;
+        else if (!fullWidth && regCounter > AArch64::D31)
+          regCounter = AArch64::D0;
+      }
+
       break;
     }
 
@@ -6257,7 +6531,7 @@ public:
       }
       auto vTy = getVecTy(8, lanes);
       auto fullTy = getVecTy(8, 16);
-      auto baseReg = decodeTblReg(CurInst->getOperand(1).getReg());
+      auto baseReg = decodeRegSet(CurInst->getOperand(1).getReg());
       vector<Value *> regs;
       for (int i = 0; i < nregs; ++i) {
         regs.push_back(createBitCast(readFromReg(baseReg), fullTy));
