@@ -1139,6 +1139,13 @@ class arm2llvm {
       AArch64::LD4Fourv2s,
       AArch64::LD4Fourv4s,
       AArch64::LD4Fourv2d,
+      AArch64::LD4Fourv8b_POST,
+      AArch64::LD4Fourv16b_POST,
+      AArch64::LD4Fourv4h_POST,
+      AArch64::LD4Fourv8h_POST,
+      AArch64::LD4Fourv2s_POST,
+      AArch64::LD4Fourv4s_POST,
+      AArch64::LD4Fourv2d_POST,
       AArch64::STPQi,
       AArch64::STPQpre,
       AArch64::STPQpost,
@@ -4697,41 +4704,55 @@ public:
     case AArch64::LD4Fourv8h:
     case AArch64::LD4Fourv2s:
     case AArch64::LD4Fourv4s:
-    case AArch64::LD4Fourv2d: {
+    case AArch64::LD4Fourv2d:
+    case AArch64::LD4Fourv8b_POST:
+    case AArch64::LD4Fourv16b_POST:
+    case AArch64::LD4Fourv4h_POST:
+    case AArch64::LD4Fourv8h_POST:
+    case AArch64::LD4Fourv2s_POST:
+    case AArch64::LD4Fourv4s_POST:
+    case AArch64::LD4Fourv2d_POST: {
       unsigned numElts, eltSize;
       bool fullWidth;
       switch (opcode) {
       case AArch64::LD4Fourv8b:
+      case AArch64::LD4Fourv8b_POST:
         numElts = 8;
         eltSize = 8;
         fullWidth = false;
         break;
       case AArch64::LD4Fourv16b:
+      case AArch64::LD4Fourv16b_POST:
         numElts = 16;
         eltSize = 8;
         fullWidth = true;
         break;
       case AArch64::LD4Fourv4h:
+      case AArch64::LD4Fourv4h_POST:
         numElts = 4;
         eltSize = 16;
         fullWidth = false;
         break;
       case AArch64::LD4Fourv8h:
+      case AArch64::LD4Fourv8h_POST:
         numElts = 8;
         eltSize = 16;
         fullWidth = true;
         break;
       case AArch64::LD4Fourv2s:
+      case AArch64::LD4Fourv2s_POST:
         numElts = 2;
         eltSize = 32;
         fullWidth = false;
         break;
       case AArch64::LD4Fourv4s:
+      case AArch64::LD4Fourv4s_POST:
         numElts = 4;
         eltSize = 32;
         fullWidth = true;
         break;
       case AArch64::LD4Fourv2d:
+      case AArch64::LD4Fourv2d_POST:
         numElts = 2;
         eltSize = 64;
         fullWidth = true;
@@ -4749,24 +4770,46 @@ public:
       case AArch64::LD4Fourv2s:
       case AArch64::LD4Fourv4s:
       case AArch64::LD4Fourv2d:
+      case AArch64::LD4Fourv16b_POST:
+      case AArch64::LD4Fourv8h_POST:
+      case AArch64::LD4Fourv4s_POST:
+      case AArch64::LD4Fourv2d_POST:
         nregs = 4;
         break;
       default:
         assert(false);
         break;
       }
+      bool isPost = opcode == AArch64::LD4Fourv8b_POST ||
+                    opcode == AArch64::LD4Fourv16b_POST ||
+                    opcode == AArch64::LD4Fourv4h_POST ||
+                    opcode == AArch64::LD4Fourv8h_POST ||
+                    opcode == AArch64::LD4Fourv2s_POST ||
+                    opcode == AArch64::LD4Fourv4s_POST ||
+                    opcode == AArch64::LD4Fourv2d_POST;
 
-      auto regCounter = decodeRegSet(CurInst->getOperand(0).getReg());
-      auto baseReg = CurInst->getOperand(1).getReg();
+      auto regCounter =
+          decodeRegSet(CurInst->getOperand(isPost ? 1 : 0).getReg());
+      auto baseReg = CurInst->getOperand(isPost ? 2 : 1).getReg();
       assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
              (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
              (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
       assert((regCounter >= AArch64::Q0 && regCounter <= AArch64::Q31) ||
              (regCounter >= AArch64::D0 && regCounter <= AArch64::D31));
+      Value *offset;
+      if (isPost) {
+        if (CurInst->getOperand(3).isReg() &&
+            CurInst->getOperand(3).getReg() != AArch64::XZR) {
+          offset = readFromReg(CurInst->getOperand(3).getReg());
+        } else {
+          offset = getIntConst(nregs * numElts * (eltSize / 8), 64);
+        }
+      }
 
       // Load the entire memory block to be stored in all the registers at once
       // [nregs * numElts * (eltSize / 8)] bytes
       auto base = readPtrFromReg(baseReg);
+      auto baseAddr = createPtrToInt(base, i64);
       auto loaded =
           makeLoadWithOffset(base, 0, nregs * numElts * (eltSize / 8));
       auto casted = createBitCast(loaded, getVecTy(eltSize, nregs * numElts));
@@ -4790,6 +4833,11 @@ public:
           regCounter = AArch64::Q0;
         else if (!fullWidth && regCounter > AArch64::D31)
           regCounter = AArch64::D0;
+      }
+
+      if (isPost) {
+        auto added = createAdd(baseAddr, offset);
+        updateOutputReg(added);
       }
 
       break;
