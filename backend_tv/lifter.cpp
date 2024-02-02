@@ -1127,6 +1127,10 @@ class arm2llvm {
       AArch64::LD1i16,
       AArch64::LD1i32,
       AArch64::LD1i64,
+      AArch64::LD1i8_POST,
+      AArch64::LD1i16_POST,
+      AArch64::LD1i32_POST,
+      AArch64::LD1i64_POST,
       AArch64::LD1Rv8b,
       AArch64::LD1Rv16b,
       AArch64::LD1Rv4h,
@@ -4642,37 +4646,31 @@ public:
     case AArch64::LD1i8:
     case AArch64::LD1i16:
     case AArch64::LD1i32:
-    case AArch64::LD1i64: {
-      auto &op1 = CurInst->getOperand(1);
-      auto &op2 = CurInst->getOperand(2);
-      auto &op3 = CurInst->getOperand(3);
-      assert(op1.isReg() && op3.isReg());
-      assert(op2.isImm());
-
-      auto dst = readFromReg(op1.getReg());
-      auto index = getImm(2);
-      auto baseReg = op3.getReg();
-      assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
-             (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
-             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
-      auto base = readPtrFromReg(baseReg);
-
+    case AArch64::LD1i64:
+    case AArch64::LD1i8_POST:
+    case AArch64::LD1i16_POST:
+    case AArch64::LD1i32_POST:
+    case AArch64::LD1i64_POST: {
       unsigned numElts, eltSize;
 
       switch (opcode) {
       case AArch64::LD1i8:
+      case AArch64::LD1i8_POST:
         numElts = 16;
         eltSize = 8;
         break;
       case AArch64::LD1i16:
+      case AArch64::LD1i16_POST:
         numElts = 8;
         eltSize = 16;
         break;
       case AArch64::LD1i32:
+      case AArch64::LD1i32_POST:
         numElts = 4;
         eltSize = 32;
         break;
       case AArch64::LD1i64:
+      case AArch64::LD1i64_POST:
         numElts = 2;
         eltSize = 64;
         break;
@@ -4681,11 +4679,64 @@ public:
         visitError();
         break;
       }
+      unsigned nregs;
+      switch (opcode) {
+      case AArch64::LD1i8:
+      case AArch64::LD1i16:
+      case AArch64::LD1i32:
+      case AArch64::LD1i64:
+      case AArch64::LD1i8_POST:
+      case AArch64::LD1i16_POST:
+      case AArch64::LD1i32_POST:
+      case AArch64::LD1i64_POST:
+        nregs = 1;
+        break;
+      default:
+        assert(false);
+        break;
+      }
+      bool isPost =
+          opcode == AArch64::LD1i8_POST || opcode == AArch64::LD1i16_POST ||
+          opcode == AArch64::LD1i32_POST || opcode == AArch64::LD1i64_POST;
 
-      auto loaded = makeLoadWithOffset(base, 0, eltSize / 8);
-      auto casted = createBitCast(dst, getVecTy(eltSize, numElts));
-      auto updated = createInsertElement(casted, loaded, index);
-      updateOutputReg(updated);
+      auto regCounter =
+          decodeRegSet(CurInst->getOperand(isPost ? 2 : 1).getReg());
+      auto index = getImm(isPost ? 3 : 2);
+      auto baseReg = CurInst->getOperand(isPost ? 4 : 3).getReg();
+      assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+             (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
+             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
+      assert((regCounter >= AArch64::Q0 && regCounter <= AArch64::Q31));
+      Value *totalOffset;
+      if (isPost) {
+        if (CurInst->getOperand(5).isReg() &&
+            CurInst->getOperand(5).getReg() != AArch64::XZR) {
+          totalOffset = readFromReg(CurInst->getOperand(3).getReg());
+        } else {
+          totalOffset = getIntConst(nregs * (eltSize / 8), 64);
+        }
+      }
+
+      auto base = readPtrFromReg(baseReg);
+      auto baseAddr = createPtrToInt(base, i64);
+
+      auto offset = 0;
+      for (unsigned i = 0; i < nregs; i++, offset += eltSize / 8) {
+        auto loaded = makeLoadWithOffset(base, offset, eltSize / 8);
+        auto dst = readFromReg(regCounter);
+        auto dst_casted = createBitCast(dst, getVecTy(eltSize, numElts));
+        auto updated = createInsertElement(dst_casted, loaded, index);
+        updateReg(updated, regCounter);
+
+        regCounter++;
+        if (regCounter > AArch64::Q31)
+          regCounter = AArch64::Q0;
+      }
+
+      if (isPost) {
+        auto added = createAdd(baseAddr, totalOffset);
+        updateOutputReg(added);
+      }
       break;
     }
 
@@ -4895,6 +4946,7 @@ public:
       // Outer loop control for register to store into
       for (unsigned j = 0; j < nregs; j++) {
         for (unsigned i = 0, index = j; i < numElts; i++, index += nregs) {
+          assert(index < nregs * numElts);
           mask[i] = index;
         }
         res = createShuffleVector(casted, maskRef);
