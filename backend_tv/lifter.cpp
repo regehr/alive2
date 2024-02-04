@@ -704,12 +704,12 @@ class arm2llvm {
       AArch64::UADDLVv4i16v,
       AArch64::SADDLVv8i8v,
       AArch64::SADDLVv4i16v,
+      AArch64::UADDLPv8i8_v4i16,
       AArch64::UADDLPv4i16_v2i32,
       AArch64::UADDLPv2i32_v1i64,
-      AArch64::UADDLPv8i8_v4i16,
+      AArch64::SADDLPv8i8_v4i16,
       AArch64::SADDLPv4i16_v2i32,
       AArch64::SADDLPv2i32_v1i64,
-      AArch64::SADDLPv8i8_v4i16,
       AArch64::UADALPv8i8_v4i16,
       AArch64::UADALPv4i16_v2i32,
       AArch64::UADALPv2i32_v1i64,
@@ -891,6 +891,9 @@ class arm2llvm {
       AArch64::UADDLv8i8_v8i16,
       AArch64::UADDLv4i16_v4i32,
       AArch64::UADDLv2i32_v2i64,
+      AArch64::UADDWv8i8_v8i16,
+      AArch64::UADDWv4i16_v4i32,
+      AArch64::UADDWv2i32_v2i64,
       AArch64::SADDLv8i8_v8i16,
       AArch64::SADDLv4i16_v4i32,
       AArch64::SADDLv2i32_v2i64,
@@ -909,6 +912,9 @@ class arm2llvm {
       AArch64::UADDLv16i8_v8i16,
       AArch64::UADDLv8i16_v4i32,
       AArch64::UADDLv4i32_v2i64,
+      AArch64::UADDWv16i8_v8i16,
+      AArch64::UADDWv8i16_v4i32,
+      AArch64::UADDWv4i32_v2i64,
       AArch64::SADDLv16i8_v8i16,
       AArch64::SADDLv8i16_v4i32,
       AArch64::SADDLv4i32_v2i64,
@@ -1785,25 +1791,34 @@ class arm2llvm {
   Value *createVectorOp(function<Value *(Value *, Value *)> op, Value *a,
                         Value *b, unsigned eltSize, unsigned numElts,
                         bool elementWise, extKind ext, bool splatImm2,
-                        bool immShift, bool isUpper) {
-    assert(getBitWidth(a) == getBitWidth(b) &&
-           "Expected values of same bit width");
-
+                        bool immShift, bool isUpper, bool operandTypesDiffer) {
     if (splatImm2)
       b = splatImm(b, numElts, eltSize, immShift);
 
     auto vTy = getVecTy(eltSize, numElts);
 
-    a = createBitCast(a, vTy);
+    if (operandTypesDiffer) {
+      if (isUpper) {
+        a = createBitCast(a, getVecTy(2 * eltSize, numElts / 2));
+      } else {
+        a = createBitCast(a, getVecTy(2 * eltSize, numElts));
+      }
+    } else {
+      a = createBitCast(a, vTy);
+    }
     b = createBitCast(b, vTy);
 
     // some instructions double element widths
     if (ext == extKind::ZExt) {
-      a = createZExt(a, getVecTy(2 * eltSize, numElts));
+      if (!operandTypesDiffer) {
+        a = createZExt(a, getVecTy(2 * eltSize, numElts));
+      }
       b = createZExt(b, getVecTy(2 * eltSize, numElts));
     }
     if (ext == extKind::SExt) {
-      a = createSExt(a, getVecTy(2 * eltSize, numElts));
+      if (!operandTypesDiffer) {
+        a = createSExt(a, getVecTy(2 * eltSize, numElts));
+      }
       b = createSExt(b, getVecTy(2 * eltSize, numElts));
     }
 
@@ -1817,21 +1832,32 @@ class arm2llvm {
         res = createInsertElement(res, cc, i);
       }
     } else {
-      res = op(a, b);
-      // Some instructions use the upper half of the result. No case necessary
-      // for instructions that use the lower half, since the width used is
-      // halved by instruction size set.
+      // Some instructions use the upper half of the operands.
       if (isUpper) {
         assert(eltSize * numElts == 128);
-        CastInst *casted;
         if (ext == extKind::ZExt || ext == extKind::SExt) {
-          casted = createBitCast(res, getVecTy(128, 2));
+          if (!operandTypesDiffer) {
+            a = createBitCast(a, getVecTy(128, 2));
+          }
+          b = createBitCast(b, getVecTy(128, 2));
         } else {
-          casted = createBitCast(res, getVecTy(64, 2));
+          if (!operandTypesDiffer) {
+            a = createBitCast(a, getVecTy(64, 2));
+          }
+          b = createBitCast(b, getVecTy(64, 2));
         }
-        auto extracted = createExtractElement(casted, 1);
-        res = createBitCast(extracted, getVecTy(eltSize, numElts));
+
+        if (!operandTypesDiffer) {
+          a = createExtractElement(a, 1);
+          a = createBitCast(a, getVecTy(eltSize * 2, numElts / 2));
+        }
+
+        b = createExtractElement(b, 1);
+        b = createBitCast(b, getVecTy(eltSize * 2, numElts / 2));
       }
+      assert(getBitWidth(a) == getBitWidth(b) &&
+             "Expected values of same bit width");
+      res = op(a, b);
     }
     return res;
   }
@@ -1978,9 +2004,10 @@ class arm2llvm {
   // TODO: make it so that lshr generates code on register lookups
   // some instructions make use of this, and the semantics need to be
   // worked out
-  Value *readFromOperand(int idx) {
+  Value *readFromOperand(int idx, unsigned size = 0) {
     auto op = CurInst->getOperand(idx);
-    auto size = getInstSize(CurInst->getOpcode());
+    if (!size)
+      size = getInstSize(CurInst->getOpcode());
     // Expr operand is required for a combination of ADRP and ADDXri address
     // calculation
     assert(op.isImm() || op.isReg() || op.isExpr());
@@ -6810,6 +6837,12 @@ public:
     case AArch64::UADDLv8i16_v4i32:
     case AArch64::UADDLv2i32_v2i64:
     case AArch64::UADDLv4i32_v2i64:
+    case AArch64::UADDWv8i8_v8i16:
+    case AArch64::UADDWv16i8_v8i16:
+    case AArch64::UADDWv4i16_v4i32:
+    case AArch64::UADDWv8i16_v4i32:
+    case AArch64::UADDWv2i32_v2i64:
+    case AArch64::UADDWv4i32_v2i64:
     case AArch64::SADDLv8i8_v8i16:
     case AArch64::SADDLv16i8_v8i16:
     case AArch64::SADDLv4i16_v4i32:
@@ -6880,7 +6913,16 @@ public:
     case AArch64::USHLLv4i16_shift:
     case AArch64::USHLLv2i32_shift:
     case AArch64::USHRv2i64_shift: {
-      auto a = readFromOperand(1);
+      unsigned op1Size = 0;
+      switch (opcode) {
+      case AArch64::UADDWv8i8_v8i16:
+      case AArch64::UADDWv4i16_v4i32:
+      case AArch64::UADDWv2i32_v2i64: {
+        op1Size = 128;
+        break;
+      }
+      }
+      auto a = readFromOperand(1, op1Size);
       auto b = readFromOperand(2);
       bool elementWise = false;
       bool splatImm2 = false;
@@ -7029,14 +7071,20 @@ public:
       case AArch64::UADDLv16i8_v8i16:
       case AArch64::UADDLv8i16_v4i32:
       case AArch64::UADDLv4i32_v2i64:
+      case AArch64::UADDWv16i8_v8i16:
+      case AArch64::UADDWv8i16_v4i32:
+      case AArch64::UADDWv4i32_v2i64:
       case AArch64::SADDLv16i8_v8i16:
       case AArch64::SADDLv8i16_v4i32:
       case AArch64::SADDLv4i32_v2i64:
-        // These cases are UADDL2 and SADDL2
+        // These cases are UADDL2, UADDW2 and SADDL2
         isUpper = true;
       case AArch64::UADDLv8i8_v8i16:
       case AArch64::UADDLv4i16_v4i32:
       case AArch64::UADDLv2i32_v2i64:
+      case AArch64::UADDWv8i8_v8i16:
+      case AArch64::UADDWv4i16_v4i32:
+      case AArch64::UADDWv2i32_v2i64:
       case AArch64::SADDLv8i8_v8i16:
       case AArch64::SADDLv4i16_v4i32:
       case AArch64::SADDLv2i32_v2i64:
@@ -7171,6 +7219,7 @@ public:
       case AArch64::BICv2i32:
       case AArch64::USHLLv2i32_shift:
       case AArch64::UADDLv2i32_v2i64:
+      case AArch64::UADDWv2i32_v2i64:
       case AArch64::SADDLv2i32_v2i64:
       case AArch64::USUBLv2i32_v2i64:
       case AArch64::SSUBLv2i32_v2i64:
@@ -7209,6 +7258,7 @@ public:
       case AArch64::SHLv4i16_shift:
       case AArch64::MULv4i16:
       case AArch64::UADDLv4i16_v4i32:
+      case AArch64::UADDWv4i16_v4i32:
       case AArch64::SADDLv4i16_v4i32:
       case AArch64::USUBLv4i16_v4i32:
       case AArch64::SSUBLv4i16_v4i32:
@@ -7234,6 +7284,7 @@ public:
       case AArch64::USHLLv4i32_shift:
       case AArch64::ORRv4i32:
       case AArch64::UADDLv4i32_v2i64:
+      case AArch64::UADDWv4i32_v2i64:
       case AArch64::SADDLv4i32_v2i64:
       case AArch64::USUBLv4i32_v2i64:
       case AArch64::SSUBLv4i32_v2i64:
@@ -7262,6 +7313,7 @@ public:
       case AArch64::USHRv8i8_shift:
       case AArch64::USHLLv8i8_shift:
       case AArch64::UADDLv8i8_v8i16:
+      case AArch64::UADDWv8i8_v8i16:
       case AArch64::SADDLv8i8_v8i16:
       case AArch64::USUBLv8i8_v8i16:
       case AArch64::SSUBLv8i8_v8i16:
@@ -7287,6 +7339,7 @@ public:
       case AArch64::UMINv8i16:
       case AArch64::UMAXv8i16:
       case AArch64::UADDLv8i16_v4i32:
+      case AArch64::UADDWv8i16_v4i32:
       case AArch64::SADDLv8i16_v4i32:
       case AArch64::USUBLv8i16_v4i32:
       case AArch64::SSUBLv8i16_v4i32:
@@ -7315,6 +7368,7 @@ public:
       case AArch64::SHLv16i8_shift:
       case AArch64::SSHRv16i8_shift:
       case AArch64::UADDLv16i8_v8i16:
+      case AArch64::UADDWv16i8_v8i16:
       case AArch64::SADDLv16i8_v8i16:
       case AArch64::USUBLv16i8_v8i16:
       case AArch64::SSUBLv16i8_v8i16:
@@ -7326,8 +7380,24 @@ public:
         break;
       }
 
-      auto res = createVectorOp(op, a, b, eltSize, numElts, elementWise, ext,
-                                splatImm2, immShift, isUpper);
+      // Some instructions have first operand of a different type than the
+      // second operand (Twice the eltSize. Also half the number of elements if
+      // isUpper)
+      bool operandTypesDiffer = false;
+      switch (opcode) {
+      case AArch64::UADDWv8i8_v8i16:
+      case AArch64::UADDWv16i8_v8i16:
+      case AArch64::UADDWv4i16_v4i32:
+      case AArch64::UADDWv8i16_v4i32:
+      case AArch64::UADDWv2i32_v2i64:
+      case AArch64::UADDWv4i32_v2i64:
+        operandTypesDiffer = true;
+        break;
+      }
+
+      auto res =
+          createVectorOp(op, a, b, eltSize, numElts, elementWise, ext,
+                         splatImm2, immShift, isUpper, operandTypesDiffer);
       updateOutputReg(res);
       break;
     }
