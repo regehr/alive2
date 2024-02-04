@@ -555,6 +555,9 @@ class arm2llvm {
       AArch64::SUBv2i32,
       AArch64::SUBv4i16,
       AArch64::SUBv8i8,
+      AArch64::SABDv8i8,
+      AArch64::SABDv4i16,
+      AArch64::SABDv2i32,
       AArch64::ADCXr,
       AArch64::ADCSXr,
       AArch64::ASRVXr,
@@ -1169,6 +1172,9 @@ class arm2llvm {
       AArch64::SUBv2i64,
       AArch64::SUBv4i32,
       AArch64::SUBv16i8,
+      AArch64::SABDv16i8,
+      AArch64::SABDv8i16,
+      AArch64::SABDv4i32,
       AArch64::LDRQui,
       AArch64::LDRQpre,
       AArch64::LDRQpost,
@@ -1590,6 +1596,12 @@ class arm2llvm {
   CallInst *createBSwap(Value *v) {
     auto *decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::bswap, v->getType());
+    return CallInst::Create(decl, {v}, nextName(), LLVMBB);
+  }
+
+  CallInst *createVectorReduceAdd(Value *v) {
+    auto *decl = Intrinsic::getDeclaration(
+        LiftedModule, Intrinsic::vector_reduce_add, v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
@@ -7988,6 +8000,27 @@ public:
       auto sum = isSub ? createSub(destReg, mul) : createAdd(destReg, mul);
 
       updateOutputReg(sum);
+      break;
+    }
+
+    case AArch64::SABDv8i8:
+    case AArch64::SABDv16i8:
+    case AArch64::SABDv4i16:
+    case AArch64::SABDv8i16:
+    case AArch64::SABDv2i32:
+    case AArch64::SABDv4i32: {
+      GET_SIZES6(SABD, );
+      auto a = readFromVecOperand(1, eltSize, numElts);
+      auto b = readFromVecOperand(2, eltSize, numElts);
+
+      auto extended_a = createSExt(a, getVecTy(2 * eltSize, numElts));
+      auto extended_b = createSExt(b, getVecTy(2 * eltSize, numElts));
+
+      auto difference = createSub(extended_a, extended_b);
+      auto abs = createAbs(difference);
+      auto truncated = createTrunc(abs, getVecTy(eltSize, numElts));
+
+      updateOutputReg(truncated);
       break;
     }
 
