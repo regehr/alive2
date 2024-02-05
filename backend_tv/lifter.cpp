@@ -398,8 +398,13 @@ class arm2llvm {
     return ConstantInt::get(Ctx, llvm::APInt(bits, val));
   }
 
-  VectorType *getVecTy(unsigned eltSize, unsigned numElts) {
-    auto eTy = getIntTy(eltSize);
+  VectorType *getVecTy(unsigned eltSize, unsigned numElts, bool isFP = false) {
+    Type *eTy;
+    if (isFP) {
+      eTy = getFPType(eltSize);
+    } else {
+      eTy = getIntTy(eltSize);
+    }
     auto ec = ElementCount::getFixed(numElts);
     return VectorType::get(eTy, ec);
   }
@@ -417,6 +422,17 @@ class arm2llvm {
 
   Type *getIntTy(unsigned bits) {
     return Type::getIntNTy(Ctx, bits);
+  }
+
+  Type *getFPType(unsigned bits) {
+    if (bits == 16)
+      return Type::getHalfTy(Ctx);
+    else if (bits == 32)
+      return Type::getFloatTy(Ctx);
+    else if (bits == 64)
+      return Type::getDoubleTy(Ctx);
+    else
+      assert(false && "unsupported floating point type");
   }
 
   // Create and return a ConstantVector out of the vector of Constant vals
@@ -911,6 +927,7 @@ class arm2llvm {
       AArch64::SSUBLv8i8_v8i16,
       AArch64::SSUBLv4i16_v4i32,
       AArch64::SSUBLv2i32_v2i64,
+      AArch64::FNEGv2f32,
   };
 
   const set<int> instrs_128 = {
@@ -1314,6 +1331,8 @@ class arm2llvm {
       AArch64::XTNv16i8,
       AArch64::XTNv8i16,
       AArch64::XTNv4i32,
+      AArch64::FNEGv4f32,
+      AArch64::FNEGv2f64,
   };
 
   bool has_s(int instr) {
@@ -2060,7 +2079,7 @@ class arm2llvm {
   }
 
   Value *readFromVecOperand(int idx, unsigned int eltSize, unsigned int numElts,
-                            bool isUpperHalf = false) {
+                            bool isUpperHalf = false, bool isFP = false) {
     VectorType *ty;
     auto regVal = readFromOperand(idx);
     if (eltSize * numElts < getBitWidth(regVal)) {
@@ -2075,7 +2094,7 @@ class arm2llvm {
       regVal = createExtractElement(casted, 1);
       ty = getVecTy(eltSize, numElts / 2);
     } else {
-      ty = getVecTy(eltSize, numElts);
+      ty = getVecTy(eltSize, numElts, isFP);
     }
     return createBitCast(regVal, ty);
   }
@@ -2447,7 +2466,9 @@ class arm2llvm {
 
   Type *getFPOperandType(unsigned opcode) {
     auto size = getInstSize(opcode);
-    if (size == 32) {
+    if (size == 16) {
+      return Type::getHalfTy(Ctx);
+    } else if (size == 32) {
       return Type::getFloatTy(Ctx);
     } else if (size == 64) {
       return Type::getDoubleTy(Ctx);
@@ -5815,6 +5836,47 @@ public:
       auto f = createBitCast(v, fTy);
       auto sizeTy = getIntTy(getInstSize(opcode));
       auto res = createBitCast(createFNeg(f), sizeTy);
+      updateOutputReg(res);
+      break;
+    }
+
+    case AArch64::FNEGv2f32:
+    case AArch64::FNEGv4f32:
+    case AArch64::FNEGv2f64: {
+      unsigned eltSize, numElts;
+      switch (opcode) {
+      case AArch64::FNEGv2f32: {
+        eltSize = 32;
+        numElts = 2;
+        break;
+      }
+      case AArch64::FNEGv4f16: {
+        eltSize = 16;
+        numElts = 4;
+        break;
+      }
+      case AArch64::FNEGv4f32: {
+        eltSize = 32;
+        numElts = 4;
+        break;
+      }
+      case AArch64::FNEGv2f64: {
+        eltSize = 64;
+        numElts = 2;
+        break;
+      }
+      case AArch64::FNEGv8f16: {
+        eltSize = 16;
+        numElts = 8;
+        break;
+      }
+      default: {
+        assert(false);
+        break;
+      }
+      }
+      auto v = readFromVecOperand(1, eltSize, numElts, false, true);
+      auto res = createFNeg(v);
       updateOutputReg(res);
       break;
     }
