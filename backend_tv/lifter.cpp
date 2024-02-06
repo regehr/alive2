@@ -550,7 +550,8 @@ class arm2llvm {
       AArch64::FCSELSrrr,  AArch64::FMULSrr,    AArch64::FABSSr,
       AArch64::UQADDv1i32, AArch64::SQSUBv1i32, AArch64::SQADDv1i32,
       AArch64::FMOVSr,     AArch64::FNEGSr,     AArch64::BRK,
-      AArch64::SCVTFUWSri, AArch64::SCVTFUWDri,
+      AArch64::UCVTFUWSri, AArch64::UCVTFUWDri, AArch64::SCVTFUWSri,
+      AArch64::SCVTFUWDri,
   };
 
   const set<int> instrs_64 = {
@@ -929,6 +930,8 @@ class arm2llvm {
       AArch64::SSUBLv4i16_v4i32,
       AArch64::SSUBLv2i32_v2i64,
       AArch64::FNEGv2f32,
+      AArch64::UCVTFUXSri,
+      AArch64::UCVTFUXDri,
       AArch64::SCVTFUXSri,
       AArch64::SCVTFUXDri,
   };
@@ -1779,7 +1782,7 @@ class arm2llvm {
     return CastInst::Create(Instruction::UIToFP, v, t, nextName(), LLVMBB);
   }
 
-  CastInst *createSItoFP(Value *v, Type *t) {
+  CastInst *createSIToFP(Value *v, Type *t) {
     return CastInst::Create(Instruction::SIToFP, v, t, nextName(), LLVMBB);
   }
 
@@ -5908,6 +5911,10 @@ public:
       break;
     }
 
+    case AArch64::UCVTFUWSri:
+    case AArch64::UCVTFUWDri:
+    case AArch64::UCVTFUXSri:
+    case AArch64::UCVTFUXDri:
     case AArch64::SCVTFUWSri:
     case AArch64::SCVTFUWDri:
     case AArch64::SCVTFUXSri:
@@ -5915,9 +5922,14 @@ public:
       auto &op1 = CurInst->getOperand(1);
       assert(op1.isReg());
 
+      auto isSigned =
+          opcode == AArch64::SCVTFUWSri || opcode == AArch64::SCVTFUWDri ||
+          opcode == AArch64::SCVTFUXSri || opcode == AArch64::SCVTFUXDri;
+
       auto fTy = getFPType(getRegSize(op1.getReg()));
       auto val = readFromReg(op1.getReg());
-      auto converted = createSItoFP(val, fTy);
+      auto converted =
+          isSigned ? createSIToFP(val, fTy) : createUIToFP(val, fTy);
 
       updateOutputReg(converted);
 
