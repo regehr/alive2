@@ -550,6 +550,7 @@ class arm2llvm {
       AArch64::FCSELSrrr,  AArch64::FMULSrr,    AArch64::FABSSr,
       AArch64::UQADDv1i32, AArch64::SQSUBv1i32, AArch64::SQADDv1i32,
       AArch64::FMOVSr,     AArch64::FNEGSr,     AArch64::BRK,
+      AArch64::SCVTFUWSri, AArch64::SCVTFUWDri,
   };
 
   const set<int> instrs_64 = {
@@ -928,6 +929,8 @@ class arm2llvm {
       AArch64::SSUBLv4i16_v4i32,
       AArch64::SSUBLv2i32_v2i64,
       AArch64::FNEGv2f32,
+      AArch64::SCVTFUXSri,
+      AArch64::SCVTFUXDri,
   };
 
   const set<int> instrs_128 = {
@@ -1770,6 +1773,14 @@ class arm2llvm {
 
   CastInst *createZExt(Value *v, Type *t) {
     return CastInst::Create(Instruction::ZExt, v, t, nextName(), LLVMBB);
+  }
+
+  CastInst *createUIToFP(Value *v, Type *t) {
+    return CastInst::Create(Instruction::UIToFP, v, t, nextName(), LLVMBB);
+  }
+
+  CastInst *createSItoFP(Value *v, Type *t) {
+    return CastInst::Create(Instruction::SIToFP, v, t, nextName(), LLVMBB);
   }
 
   CastInst *createBitCast(Value *v, Type *t) {
@@ -5894,6 +5905,22 @@ public:
       auto v = readFromVecOperand(1, eltSize, numElts, false, true);
       auto res = createFNeg(v);
       updateOutputReg(res);
+      break;
+    }
+
+    case AArch64::SCVTFUWSri:
+    case AArch64::SCVTFUWDri:
+    case AArch64::SCVTFUXSri:
+    case AArch64::SCVTFUXDri: {
+      auto &op1 = CurInst->getOperand(1);
+      assert(op1.isReg());
+
+      auto fTy = getFPType(getRegSize(op1.getReg()));
+      auto val = readFromReg(op1.getReg());
+      auto converted = createSItoFP(val, fTy);
+
+      updateOutputReg(converted);
+
       break;
     }
 
