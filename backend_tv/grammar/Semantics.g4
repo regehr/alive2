@@ -6,7 +6,7 @@ grammar Semantics;
 // visitors
 
 stmt: assignment_stmt | call_stmt | conditional_stmt;
-stmts: stmt*
+stmts: stmt*;
 
 assignment_stmt:
 	'Stmt_Assign' OPEN_PAREN lexpr COMMA expr CLOSE_PAREN					# Assign
