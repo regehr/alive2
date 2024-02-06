@@ -250,6 +250,8 @@ version )EOF";
 #define ARGS_MODULE_VAR M1
 #include "llvm_util/cmd_args_def.h"
 
+  cerr << "report file: " << report_filename << '\n';
+
   // if src is always UB we end up with weird effects such as targets
   // that never reach a return instruction. let's just weed these out
   // here.

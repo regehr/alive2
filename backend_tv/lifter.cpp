@@ -1,5 +1,6 @@
 // include first to avoid ambiguity for comparison operator from
 // util/spaceship.h
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/MC/MCAsmInfo.h"
 
 #include "backend_tv/lifter.h"
@@ -19,6 +20,7 @@
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInstBuilder.h"
 #include "llvm/MC/MCInstPrinter.h"
@@ -59,6 +61,8 @@
 #include <iostream>
 #include <ranges>
 #include <regex>
+#include <format>
+#include <iterator>
 #include <sstream>
 #include <unordered_map>
 #include <utility>
@@ -199,6 +203,8 @@ class arm2llvm {
   unordered_map<string, Constant *> LLVMglobals;
   Value *initialSP, *initialReg[32];
   Function *assertDecl;
+  const MCCodeEmitter &MCE;
+  const MCSubtargetInfo &STI;
 
   // Map of ADRP MCInsts to the string representations of the operand variable
   // names
@@ -3262,9 +3268,10 @@ class arm2llvm {
 
 public:
   arm2llvm(Module *LiftedModule, MCFunction &MF, Function &srcFn,
-           MCInstPrinter *instrPrinter)
+           MCInstPrinter *instrPrinter, const MCCodeEmitter &MCE,
+           const MCSubtargetInfo &STI)
       : LiftedModule(LiftedModule), MF(MF), srcFn(srcFn),
-        instrPrinter(instrPrinter), DL(srcFn.getParent()->getDataLayout()) {
+        instrPrinter(instrPrinter), MCE{MCE}, STI{STI}, DL(srcFn.getParent()->getDataLayout()) {
 
     // sanity checking
     assert(disjoint(instrs_32, instrs_64));
@@ -3287,6 +3294,27 @@ public:
     auto opcode = I.getOpcode();
     PrevInst = CurInst;
     CurInst = &I;
+
+    *out << "mcinst: " << I.getOpcode() << " = ";
+    std::string sss;
+    llvm::raw_string_ostream ss{sss};
+    I.dump_pretty(ss, instrPrinter);
+    *out << sss << '\n';
+
+    SmallVector<MCFixup> Fixups{};
+    SmallVector<char> Code{};
+    if (I.getOpcode() != AArch64::SEH_Nop)
+      MCE.encodeInstruction(I, Code, Fixups, STI);
+    *out << "  ";
+    for (const char& x : Code) {
+      *out << std::format("{:02x} ", x);
+    }
+    uint32_t a64opcode = 0;
+    for (const char& x : std::views::reverse(Code)) {
+      a64opcode <<= 8;
+      a64opcode |= (0xff & (uint32_t)x);
+    }
+    *out << " : " << std::format("0x{:08x}", a64opcode) << '\n';
 
     auto i1 = getIntTy(1);
     auto i8 = getIntTy(8);
@@ -9603,7 +9631,11 @@ pair<Function *, Function *> liftFunc(Module *OrigModule, Module *LiftedModule,
   Str.checkEntryBlock();
   Str.generateSuccessors();
 
-  auto liftedFn = arm2llvm(LiftedModule, Str.MF, *srcFn, IP.get()).run();
+
+  unique_ptr<MCCodeEmitter> MCE{Targ->createMCCodeEmitter(*MCII.get(), Ctx)};
+  assert(MCE && "createMCCodeEmitter failed.");
+
+  auto liftedFn = arm2llvm(LiftedModule, Str.MF, *srcFn, IP.get(), *MCE, *STI).run();
 
   std::string sss;
   llvm::raw_string_ostream ss(sss);
