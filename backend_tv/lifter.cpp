@@ -716,6 +716,20 @@ class arm2llvm {
       AArch64::ST1i16,
       AArch64::ST1i32,
       AArch64::ST1i64,
+      AArch64::ST4Fourv8b,
+      AArch64::ST4Fourv16b,
+      AArch64::ST4Fourv4h,
+      AArch64::ST4Fourv8h,
+      AArch64::ST4Fourv2s,
+      AArch64::ST4Fourv4s,
+      AArch64::ST4Fourv2d,
+      AArch64::ST4Fourv8b_POST,
+      AArch64::ST4Fourv16b_POST,
+      AArch64::ST4Fourv4h_POST,
+      AArch64::ST4Fourv8h_POST,
+      AArch64::ST4Fourv2s_POST,
+      AArch64::ST4Fourv4s_POST,
+      AArch64::ST4Fourv2d_POST,
       AArch64::CCMNXi,
       AArch64::CCMNXr,
       AArch64::STURXi,
@@ -5124,8 +5138,11 @@ public:
       case AArch64::LD4Fourv2s:
       case AArch64::LD4Fourv4s:
       case AArch64::LD4Fourv2d:
+      case AArch64::LD4Fourv8b_POST:
       case AArch64::LD4Fourv16b_POST:
+      case AArch64::LD4Fourv4h_POST:
       case AArch64::LD4Fourv8h_POST:
+      case AArch64::LD4Fourv2s_POST:
       case AArch64::LD4Fourv4s_POST:
       case AArch64::LD4Fourv2d_POST:
         nregs = 4;
@@ -5176,9 +5193,9 @@ public:
 
       // Outer loop control for register to store into
       for (unsigned j = 0; j < nregs; j++) {
-        for (unsigned i = 0, index = j; i < numElts; i++, index += nregs) {
-          assert(index < nregs * numElts);
-          mask[i] = index;
+        for (unsigned i = 0, maskVal = j; i < numElts; i++, maskVal += nregs) {
+          assert(maskVal < nregs * numElts);
+          mask[i] = maskVal;
         }
         res = createShuffleVector(casted, maskRef);
         updateReg(res, regCounter);
@@ -5475,6 +5492,162 @@ public:
       auto casted = createBitCast(src, getVecTy(eltSize, numElts));
       auto loaded = createExtractElement(casted, index);
       storeToMemoryImmOffset(base, 0, eltSize / 8, loaded);
+      break;
+    }
+
+    case AArch64::ST4Fourv8b:
+    case AArch64::ST4Fourv16b:
+    case AArch64::ST4Fourv4h:
+    case AArch64::ST4Fourv8h:
+    case AArch64::ST4Fourv2s:
+    case AArch64::ST4Fourv4s:
+    case AArch64::ST4Fourv2d:
+    case AArch64::ST4Fourv8b_POST:
+    case AArch64::ST4Fourv16b_POST:
+    case AArch64::ST4Fourv4h_POST:
+    case AArch64::ST4Fourv8h_POST:
+    case AArch64::ST4Fourv2s_POST:
+    case AArch64::ST4Fourv4s_POST:
+    case AArch64::ST4Fourv2d_POST: {
+      unsigned numElts, eltSize;
+      bool fullWidth;
+      switch (opcode) {
+      case AArch64::ST4Fourv8b:
+      case AArch64::ST4Fourv8b_POST:
+        numElts = 8;
+        eltSize = 8;
+        fullWidth = false;
+        break;
+      case AArch64::ST4Fourv16b:
+      case AArch64::ST4Fourv16b_POST:
+        numElts = 16;
+        eltSize = 8;
+        fullWidth = true;
+        break;
+      case AArch64::ST4Fourv4h:
+      case AArch64::ST4Fourv4h_POST:
+        numElts = 4;
+        eltSize = 16;
+        fullWidth = false;
+        break;
+      case AArch64::ST4Fourv8h:
+      case AArch64::ST4Fourv8h_POST:
+        numElts = 8;
+        eltSize = 16;
+        fullWidth = true;
+        break;
+      case AArch64::ST4Fourv2s:
+      case AArch64::ST4Fourv2s_POST:
+        numElts = 2;
+        eltSize = 32;
+        fullWidth = false;
+        break;
+      case AArch64::ST4Fourv4s:
+      case AArch64::ST4Fourv4s_POST:
+        numElts = 4;
+        eltSize = 32;
+        fullWidth = true;
+        break;
+      case AArch64::ST4Fourv2d:
+      case AArch64::ST4Fourv2d_POST:
+        numElts = 2;
+        eltSize = 64;
+        fullWidth = true;
+        break;
+      default:
+        assert(false);
+        break;
+      }
+      unsigned nregs;
+      switch (opcode) {
+      case AArch64::ST4Fourv8b:
+      case AArch64::ST4Fourv16b:
+      case AArch64::ST4Fourv4h:
+      case AArch64::ST4Fourv8h:
+      case AArch64::ST4Fourv2s:
+      case AArch64::ST4Fourv4s:
+      case AArch64::ST4Fourv2d:
+      case AArch64::ST4Fourv8b_POST:
+      case AArch64::ST4Fourv16b_POST:
+      case AArch64::ST4Fourv4h_POST:
+      case AArch64::ST4Fourv8h_POST:
+      case AArch64::ST4Fourv2s_POST:
+      case AArch64::ST4Fourv4s_POST:
+      case AArch64::ST4Fourv2d_POST:
+        nregs = 4;
+        break;
+      default:
+        assert(false);
+        break;
+      }
+
+      bool isPost = opcode == AArch64::ST4Fourv8b_POST ||
+                    opcode == AArch64::ST4Fourv16b_POST ||
+                    opcode == AArch64::ST4Fourv4h_POST ||
+                    opcode == AArch64::ST4Fourv8h_POST ||
+                    opcode == AArch64::ST4Fourv2s_POST ||
+                    opcode == AArch64::ST4Fourv4s_POST ||
+                    opcode == AArch64::ST4Fourv2d_POST;
+
+      auto regCounter =
+          decodeRegSet(CurInst->getOperand(isPost ? 1 : 0).getReg());
+      auto baseReg = CurInst->getOperand(isPost ? 2 : 1).getReg();
+      assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+             (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
+             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
+      assert((regCounter >= AArch64::Q0 && regCounter <= AArch64::Q31) ||
+             (regCounter >= AArch64::D0 && regCounter <= AArch64::D31));
+      Value *offset = nullptr;
+      if (isPost) {
+        if (CurInst->getOperand(3).isReg() &&
+            CurInst->getOperand(3).getReg() != AArch64::XZR) {
+          offset = readFromReg(CurInst->getOperand(3).getReg());
+        } else {
+          offset = getIntConst(nregs * numElts * (eltSize / 8), 64);
+        }
+      }
+
+      auto base = readPtrFromReg(baseReg);
+      auto baseAddr = createPtrToInt(base, i64);
+
+      int mask[nregs * numElts];
+      ArrayRef<int> maskRef(mask, nregs * numElts);
+
+      Value *valueToStore = getUndefVec(nregs, numElts * eltSize);
+      // Outer loop control for register to load from
+      for (unsigned j = 0; j < nregs; j++) {
+        Value *registerjValue = readFromReg(regCounter);
+        if (!fullWidth) {
+          registerjValue = createTrunc(registerjValue, i64);
+        }
+
+        valueToStore = createInsertElement(valueToStore, registerjValue, j);
+
+        // Creating mask for the shufflevector
+        for (unsigned i = 0, index = j; i < numElts; i++, index += nregs) {
+          assert(index < nregs * numElts);
+          mask[index] = j * numElts + i;
+        }
+
+        regCounter++;
+        if (fullWidth && regCounter > AArch64::Q31)
+          regCounter = AArch64::Q0;
+        else if (!fullWidth && regCounter > AArch64::D31)
+          regCounter = AArch64::D0;
+      }
+
+      // Shuffle the vector to interleave the nregs vectors
+      auto casted =
+          createBitCast(valueToStore, getVecTy(eltSize, nregs * numElts));
+      Value *res = createShuffleVector(casted, maskRef);
+
+      storeToMemoryImmOffset(base, 0, nregs * numElts * (eltSize / 8), res);
+
+      if (isPost) {
+        auto added = createAdd(baseAddr, offset);
+        updateOutputReg(added);
+      }
+
       break;
     }
 
