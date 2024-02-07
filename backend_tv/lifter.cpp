@@ -5958,15 +5958,16 @@ public:
     case AArch64::SCVTFUWDri:
     case AArch64::SCVTFUXSri:
     case AArch64::SCVTFUXDri: {
+      auto &op0 = CurInst->getOperand(0);
       auto &op1 = CurInst->getOperand(1);
-      assert(op1.isReg());
+      assert(op0.isReg() && op1.isReg());
 
       auto isSigned =
           opcode == AArch64::SCVTFUWSri || opcode == AArch64::SCVTFUWDri ||
           opcode == AArch64::SCVTFUXSri || opcode == AArch64::SCVTFUXDri;
 
-      auto fTy = getFPType(getRegSize(op1.getReg()));
-      auto val = readFromReg(op1.getReg());
+      auto fTy = getFPType(getRegSize(op0.getReg()));
+      auto val = readFromOperand(1, getRegSize(op1.getReg()));
       auto converted =
           isSigned ? createSIToFP(val, fTy) : createUIToFP(val, fTy);
 
