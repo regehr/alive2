@@ -9,18 +9,23 @@ message(STATUS "Found antlr4cpp libs: ${ANTLR4_LIB_DIR} and includes: ${ANTLR4_I
 message(STATUS "Found antlr: ${ANTLR4_DIR}")
 
 
-antlr4_generate(Semantics ${CMAKE_CURRENT_SOURCE_DIR}/Semantics.g4 BOTH TRUE TRUE grammar
+antlr4_generate(Semantics ${CMAKE_CURRENT_SOURCE_DIR}/Semantics.g4 BOTH TRUE TRUE aslt
   "${ANTLR4_TOKEN_FILES_Semantics}"
   "${ANTLR4_TOKEN_DIRECTORY_Semantics}")
 message(STATUS "antlr generated include: ${ANTLR4_INCLUDE_DIR_Semantics} ${ANTLR4_SRC_FILES_Semantics}")
 
-include_directories( ${PROJECT_BINARY_DIR}  ${ANTLR4_INCLUDE_DIR} ${ANTLR4_INCLUDE_DIR_Semantics})
+include_directories(${PROJECT_BINARY_DIR}  ${ANTLR4_INCLUDE_DIR} ${ANTLR4_INCLUDE_DIR_Semantics})
 
-add_executable(grammar main.cpp  "${ANTLR4_SRC_FILES_Semantics}" )
-add_dependencies(grammar antlr4_shared )
-target_link_libraries(grammar antlr4_shared)
+add_executable(bridge aslp_bridge.cpp aslt_visitor.cpp  "${ANTLR4_SRC_FILES_Semantics}" )
+add_dependencies(bridge antlr4_shared )
+target_link_libraries(bridge antlr4_shared)
 
-install(TARGETS grammar DESTINATION bin)
+install(TARGETS bridge DESTINATION bin)
 
-set_target_properties(grammar PROPERTIES
-  RUNTIME_OUTPUT_DIRECTORY bin)
+set_target_properties(
+  bridge 
+  PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY bin
+  LIBRARY_OUTPUT_DIRECTORY lib
+  ARCHIVE_OUTPUT_DIRECTORY lib
+)

@@ -1,0 +1,3 @@
+Stmt_Assign(LExpr_Var(BTypeNext),Expr_LitBits("00"))
+Stmt_Assign(LExpr_Var(__BranchTaken),Expr_Var(TRUE))
+Stmt_Assign(LExpr_Var(_PC),Expr_Array(Expr_Var(_R),Expr_LitInt("30")))
