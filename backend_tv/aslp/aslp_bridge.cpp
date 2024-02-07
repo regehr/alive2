@@ -3,6 +3,7 @@
 #include <filesystem>
 
 #include <antlr4-runtime.h>
+#include <llvm/ADT/ArrayRef.h>
 #include "ANTLRInputStream.h"
 #include "CommonTokenStream.h"
 #include "SemanticsParser.h"
@@ -10,8 +11,14 @@
 
 #include "SemanticsVisitor.h"
 #include "aslt_visitor.hpp"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/GlobalValue.h"
 
 namespace fs = std::filesystem;
+
+static llvm::LLVMContext Context;
 
 
 void parse(const fs::path& path) {
@@ -24,7 +31,14 @@ void parse(const fs::path& path) {
 
   parser.setBuildParseTree(true);
 
-  aslt_visitor visitor{};
+  std::unique_ptr<llvm::Module> Mod = std::make_unique<llvm::Module>("", Context);
+  assert(Mod);
+  auto funty = llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {}, false);
+  auto fun = llvm::Function::Create(funty, llvm::GlobalValue::LinkageTypes::ExternalLinkage, "aslp_entry", Mod.get());
+
+  aslt_visitor visitor{*fun};
+
+  visitor.visitStmts(parser.stmts());
 }
 
 int main() {
