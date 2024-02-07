@@ -949,12 +949,21 @@ class arm2llvm {
       AArch64::SADDLv8i8_v8i16,
       AArch64::SADDLv4i16_v4i32,
       AArch64::SADDLv2i32_v2i64,
+      AArch64::SADDWv8i8_v8i16,
+      AArch64::SADDWv4i16_v4i32,
+      AArch64::SADDWv2i32_v2i64,
       AArch64::USUBLv8i8_v8i16,
       AArch64::USUBLv4i16_v4i32,
       AArch64::USUBLv2i32_v2i64,
+      AArch64::USUBWv8i8_v8i16,
+      AArch64::USUBWv4i16_v4i32,
+      AArch64::USUBWv2i32_v2i64,
       AArch64::SSUBLv8i8_v8i16,
       AArch64::SSUBLv4i16_v4i32,
       AArch64::SSUBLv2i32_v2i64,
+      AArch64::SSUBWv8i8_v8i16,
+      AArch64::SSUBWv4i16_v4i32,
+      AArch64::SSUBWv2i32_v2i64,
       AArch64::FNEGv2f32,
       AArch64::UCVTFUXSri,
       AArch64::UCVTFUXDri,
@@ -975,12 +984,21 @@ class arm2llvm {
       AArch64::SADDLv16i8_v8i16,
       AArch64::SADDLv8i16_v4i32,
       AArch64::SADDLv4i32_v2i64,
+      AArch64::SADDWv16i8_v8i16,
+      AArch64::SADDWv8i16_v4i32,
+      AArch64::SADDWv4i32_v2i64,
       AArch64::USUBLv16i8_v8i16,
       AArch64::USUBLv8i16_v4i32,
       AArch64::USUBLv4i32_v2i64,
+      AArch64::USUBWv16i8_v8i16,
+      AArch64::USUBWv8i16_v4i32,
+      AArch64::USUBWv4i32_v2i64,
       AArch64::SSUBLv16i8_v8i16,
       AArch64::SSUBLv8i16_v4i32,
       AArch64::SSUBLv4i32_v2i64,
+      AArch64::SSUBWv16i8_v8i16,
+      AArch64::SSUBWv8i16_v4i32,
+      AArch64::SSUBWv4i32_v2i64,
       AArch64::UMLALv4i16_indexed,
       AArch64::UMLALv8i16_indexed,
       AArch64::UMLALv2i32_indexed,
@@ -7051,18 +7069,36 @@ public:
     case AArch64::SADDLv8i16_v4i32:
     case AArch64::SADDLv2i32_v2i64:
     case AArch64::SADDLv4i32_v2i64:
+    case AArch64::SADDWv8i8_v8i16:
+    case AArch64::SADDWv16i8_v8i16:
+    case AArch64::SADDWv4i16_v4i32:
+    case AArch64::SADDWv8i16_v4i32:
+    case AArch64::SADDWv2i32_v2i64:
+    case AArch64::SADDWv4i32_v2i64:
     case AArch64::USUBLv8i8_v8i16:
     case AArch64::USUBLv16i8_v8i16:
     case AArch64::USUBLv4i16_v4i32:
     case AArch64::USUBLv8i16_v4i32:
     case AArch64::USUBLv2i32_v2i64:
     case AArch64::USUBLv4i32_v2i64:
+    case AArch64::USUBWv8i8_v8i16:
+    case AArch64::USUBWv16i8_v8i16:
+    case AArch64::USUBWv4i16_v4i32:
+    case AArch64::USUBWv8i16_v4i32:
+    case AArch64::USUBWv2i32_v2i64:
+    case AArch64::USUBWv4i32_v2i64:
     case AArch64::SSUBLv8i8_v8i16:
     case AArch64::SSUBLv16i8_v8i16:
     case AArch64::SSUBLv4i16_v4i32:
     case AArch64::SSUBLv8i16_v4i32:
     case AArch64::SSUBLv2i32_v2i64:
     case AArch64::SSUBLv4i32_v2i64:
+    case AArch64::SSUBWv8i8_v8i16:
+    case AArch64::SSUBWv16i8_v8i16:
+    case AArch64::SSUBWv4i16_v4i32:
+    case AArch64::SSUBWv8i16_v4i32:
+    case AArch64::SSUBWv2i32_v2i64:
+    case AArch64::SSUBWv4i32_v2i64:
     case AArch64::SUBv2i32:
     case AArch64::SUBv2i64:
     case AArch64::SUBv4i16:
@@ -7119,7 +7155,16 @@ public:
       switch (opcode) {
       case AArch64::UADDWv8i8_v8i16:
       case AArch64::UADDWv4i16_v4i32:
-      case AArch64::UADDWv2i32_v2i64: {
+      case AArch64::UADDWv2i32_v2i64:
+      case AArch64::USUBWv8i8_v8i16:
+      case AArch64::USUBWv4i16_v4i32:
+      case AArch64::USUBWv2i32_v2i64:
+      case AArch64::SADDWv8i8_v8i16:
+      case AArch64::SADDWv4i16_v4i32:
+      case AArch64::SADDWv2i32_v2i64:
+      case AArch64::SSUBWv8i8_v8i16:
+      case AArch64::SSUBWv4i16_v4i32:
+      case AArch64::SSUBWv2i32_v2i64: {
         op1Size = 128;
         break;
       }
@@ -7279,7 +7324,10 @@ public:
       case AArch64::SADDLv16i8_v8i16:
       case AArch64::SADDLv8i16_v4i32:
       case AArch64::SADDLv4i32_v2i64:
-        // These cases are UADDL2, UADDW2 and SADDL2
+      case AArch64::SADDWv16i8_v8i16:
+      case AArch64::SADDWv8i16_v4i32:
+      case AArch64::SADDWv4i32_v2i64:
+        // These cases are UADDL2, UADDW2, SADDL2, SADDW2
         isUpper = true;
       case AArch64::UADDLv8i8_v8i16:
       case AArch64::UADDLv4i16_v4i32:
@@ -7290,12 +7338,21 @@ public:
       case AArch64::SADDLv8i8_v8i16:
       case AArch64::SADDLv4i16_v4i32:
       case AArch64::SADDLv2i32_v2i64:
+      case AArch64::SADDWv8i8_v8i16:
+      case AArch64::SADDWv4i16_v4i32:
+      case AArch64::SADDWv2i32_v2i64:
         if (opcode == AArch64::SADDLv8i8_v8i16 ||
             opcode == AArch64::SADDLv16i8_v8i16 ||
             opcode == AArch64::SADDLv4i16_v4i32 ||
             opcode == AArch64::SADDLv8i16_v4i32 ||
             opcode == AArch64::SADDLv2i32_v2i64 ||
-            opcode == AArch64::SADDLv4i32_v2i64) {
+            opcode == AArch64::SADDLv4i32_v2i64 ||
+            opcode == AArch64::SADDWv8i8_v8i16 ||
+            opcode == AArch64::SADDWv16i8_v8i16 ||
+            opcode == AArch64::SADDWv4i16_v4i32 ||
+            opcode == AArch64::SADDWv8i16_v4i32 ||
+            opcode == AArch64::SADDWv2i32_v2i64 ||
+            opcode == AArch64::SADDWv4i32_v2i64) {
           ext = extKind::SExt;
         } else {
           ext = extKind::ZExt;
@@ -7305,23 +7362,41 @@ public:
       case AArch64::USUBLv16i8_v8i16:
       case AArch64::USUBLv8i16_v4i32:
       case AArch64::USUBLv4i32_v2i64:
+      case AArch64::USUBWv16i8_v8i16:
+      case AArch64::USUBWv8i16_v4i32:
+      case AArch64::USUBWv4i32_v2i64:
       case AArch64::SSUBLv16i8_v8i16:
       case AArch64::SSUBLv8i16_v4i32:
       case AArch64::SSUBLv4i32_v2i64:
-        // These three cases are USUBL2 and SSUBL2
+      case AArch64::SSUBWv16i8_v8i16:
+      case AArch64::SSUBWv8i16_v4i32:
+      case AArch64::SSUBWv4i32_v2i64:
+        // These three cases are USUBL2, SSUBL2, USUBW2 and SSUBW2
         isUpper = true;
       case AArch64::USUBLv8i8_v8i16:
       case AArch64::USUBLv4i16_v4i32:
       case AArch64::USUBLv2i32_v2i64:
+      case AArch64::USUBWv8i8_v8i16:
+      case AArch64::USUBWv4i16_v4i32:
+      case AArch64::USUBWv2i32_v2i64:
       case AArch64::SSUBLv8i8_v8i16:
       case AArch64::SSUBLv4i16_v4i32:
       case AArch64::SSUBLv2i32_v2i64:
+      case AArch64::SSUBWv8i8_v8i16:
+      case AArch64::SSUBWv4i16_v4i32:
+      case AArch64::SSUBWv2i32_v2i64:
         if (opcode == AArch64::SSUBLv8i8_v8i16 ||
             opcode == AArch64::SSUBLv16i8_v8i16 ||
             opcode == AArch64::SSUBLv4i16_v4i32 ||
             opcode == AArch64::SSUBLv8i16_v4i32 ||
             opcode == AArch64::SSUBLv2i32_v2i64 ||
-            opcode == AArch64::SSUBLv4i32_v2i64) {
+            opcode == AArch64::SSUBLv4i32_v2i64 ||
+            opcode == AArch64::SSUBWv8i8_v8i16 ||
+            opcode == AArch64::SSUBWv16i8_v8i16 ||
+            opcode == AArch64::SSUBWv4i16_v4i32 ||
+            opcode == AArch64::SSUBWv8i16_v4i32 ||
+            opcode == AArch64::SSUBWv2i32_v2i64 ||
+            opcode == AArch64::SSUBWv4i32_v2i64) {
           ext = extKind::SExt;
         } else {
           ext = extKind::ZExt;
@@ -7423,8 +7498,11 @@ public:
       case AArch64::UADDLv2i32_v2i64:
       case AArch64::UADDWv2i32_v2i64:
       case AArch64::SADDLv2i32_v2i64:
+      case AArch64::SADDWv2i32_v2i64:
       case AArch64::USUBLv2i32_v2i64:
+      case AArch64::USUBWv2i32_v2i64:
       case AArch64::SSUBLv2i32_v2i64:
+      case AArch64::SSUBWv2i32_v2i64:
         numElts = 2;
         eltSize = 32;
         break;
@@ -7462,8 +7540,11 @@ public:
       case AArch64::UADDLv4i16_v4i32:
       case AArch64::UADDWv4i16_v4i32:
       case AArch64::SADDLv4i16_v4i32:
+      case AArch64::SADDWv4i16_v4i32:
       case AArch64::USUBLv4i16_v4i32:
+      case AArch64::USUBWv4i16_v4i32:
       case AArch64::SSUBLv4i16_v4i32:
+      case AArch64::SSUBWv4i16_v4i32:
         numElts = 4;
         eltSize = 16;
         break;
@@ -7488,8 +7569,11 @@ public:
       case AArch64::UADDLv4i32_v2i64:
       case AArch64::UADDWv4i32_v2i64:
       case AArch64::SADDLv4i32_v2i64:
+      case AArch64::SADDWv4i32_v2i64:
       case AArch64::USUBLv4i32_v2i64:
+      case AArch64::USUBWv4i32_v2i64:
       case AArch64::SSUBLv4i32_v2i64:
+      case AArch64::SSUBWv4i32_v2i64:
         numElts = 4;
         eltSize = 32;
         break;
@@ -7517,8 +7601,11 @@ public:
       case AArch64::UADDLv8i8_v8i16:
       case AArch64::UADDWv8i8_v8i16:
       case AArch64::SADDLv8i8_v8i16:
+      case AArch64::SADDWv8i8_v8i16:
       case AArch64::USUBLv8i8_v8i16:
+      case AArch64::USUBWv8i8_v8i16:
       case AArch64::SSUBLv8i8_v8i16:
+      case AArch64::SSUBWv8i8_v8i16:
         numElts = 8;
         eltSize = 8;
         break;
@@ -7543,8 +7630,11 @@ public:
       case AArch64::UADDLv8i16_v4i32:
       case AArch64::UADDWv8i16_v4i32:
       case AArch64::SADDLv8i16_v4i32:
+      case AArch64::SADDWv8i16_v4i32:
       case AArch64::USUBLv8i16_v4i32:
+      case AArch64::USUBWv8i16_v4i32:
       case AArch64::SSUBLv8i16_v4i32:
+      case AArch64::SSUBWv8i16_v4i32:
         numElts = 8;
         eltSize = 16;
         break;
@@ -7572,8 +7662,11 @@ public:
       case AArch64::UADDLv16i8_v8i16:
       case AArch64::UADDWv16i8_v8i16:
       case AArch64::SADDLv16i8_v8i16:
+      case AArch64::SADDWv16i8_v8i16:
       case AArch64::USUBLv16i8_v8i16:
+      case AArch64::USUBWv16i8_v8i16:
       case AArch64::SSUBLv16i8_v8i16:
+      case AArch64::SSUBWv16i8_v8i16:
         numElts = 16;
         eltSize = 8;
         break;
@@ -7593,6 +7686,24 @@ public:
       case AArch64::UADDWv8i16_v4i32:
       case AArch64::UADDWv2i32_v2i64:
       case AArch64::UADDWv4i32_v2i64:
+      case AArch64::SADDWv8i8_v8i16:
+      case AArch64::SADDWv16i8_v8i16:
+      case AArch64::SADDWv4i16_v4i32:
+      case AArch64::SADDWv8i16_v4i32:
+      case AArch64::SADDWv2i32_v2i64:
+      case AArch64::SADDWv4i32_v2i64:
+      case AArch64::USUBWv8i8_v8i16:
+      case AArch64::USUBWv16i8_v8i16:
+      case AArch64::USUBWv4i16_v4i32:
+      case AArch64::USUBWv8i16_v4i32:
+      case AArch64::USUBWv2i32_v2i64:
+      case AArch64::USUBWv4i32_v2i64:
+      case AArch64::SSUBWv8i8_v8i16:
+      case AArch64::SSUBWv16i8_v8i16:
+      case AArch64::SSUBWv4i16_v4i32:
+      case AArch64::SSUBWv8i16_v4i32:
+      case AArch64::SSUBWv2i32_v2i64:
+      case AArch64::SSUBWv4i32_v2i64:
         operandTypesDiffer = true;
         break;
       }
