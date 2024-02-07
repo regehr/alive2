@@ -16,8 +16,10 @@ message(STATUS "antlr generated include: ${ANTLR4_INCLUDE_DIR_Semantics}")
 
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}/.." ${PROJECT_BINARY_DIR} ${ANTLR4_INCLUDE_DIR} ${ANTLR4_INCLUDE_DIR_Semantics})
 
-find_package(LLVM REQUIRED) # llvm at head
-message(STATUS "Found LLVM: " ${LLVM_DIR})
+find_package(LLVM REQUIRED CONFIG) # llvm at head
+message(STATUS "Found LLVM: " ${LLVM_DIR} ", tools: " ${LLVM_TOOLS_BINARY_DIR})
+list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
+include(AddLLVM)
 
 add_definitions(${LLVM_DEFINITIONS})
 include_directories(${LLVM_INCLUDE_DIRS})
@@ -31,9 +33,10 @@ add_dependencies(bridge antlr4_shared )
 target_link_libraries(bridge PUBLIC antlr4_shared)
 
 
-llvm_map_components_to_libnames(llvm_libs support core irreader bitwriter)
+execute_process(COMMAND ${LLVM_TOOLS_BINARY_DIR}/llvm-config --libs support core irreader bitwriter
+                OUTPUT_VARIABLE llvm_libs OUTPUT_STRIP_TRAILING_WHITESPACE)
 message(STATUS "llvm_libs: ${llvm_libs}")
-target_link_libraries(bridge PRIVATE ${llvm_libs})
+target_link_options(bridge PRIVATE "${llvm_libs}")
 
 install(TARGETS bridge DESTINATION bin)
 

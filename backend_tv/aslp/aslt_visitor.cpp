@@ -98,12 +98,15 @@ std::any aslt_visitor::visitExprArray(SemanticsParser::ExprArrayContext *ctx) {
   return super::visitExprArray(ctx);
 }
 std::any aslt_visitor::visitExprLitInt(SemanticsParser::ExprLitIntContext *ctx) {
-  out << "visitExprLitInt" << ctx->getText() << '\n';
+  out << "visitExprLitInt>" << ctx->getText() << "<\n";
+  // XXX: it is an error for LitInt to appear outside of types.
   auto i100 = llvm::Type::getIntNTy(context, 100);
-  return (expr_t)llvm::ConstantInt::get(i100, ctx->DEC()->getText(), 10);
+  auto node = ctx->DEC() ? ctx->DEC() : ctx->BINARY();
+  return (expr_t)llvm::ConstantInt::get(i100, node->getText(), 10);
 }
 std::any aslt_visitor::visitExprLitHex(SemanticsParser::ExprLitHexContext *ctx) {
   out << "visitExprLitHex" << '\n';
+  assert(0);
   return super::visitExprLitHex(ctx);
 }
 std::any aslt_visitor::visitExprLitBits(SemanticsParser::ExprLitBitsContext *ctx) {
