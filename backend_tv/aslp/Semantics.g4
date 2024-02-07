@@ -32,14 +32,16 @@ conditional_stmt:
 	'Stmt_If' OPEN_PAREN expr COMMA OPEN_BRACKET stmt* COMMA? CLOSE_BRACKET COMMA 
 		OPEN_BRACKET CLOSE_BRACKET COMMA (OPEN_PAREN 'else' stmts CLOSE_PAREN)? CLOSE_PAREN;
 
-type : 'Type_Bits' OPEN_PAREN expr CLOSE_PAREN # TypeBits;
+type : 'Type_Bits' OPEN_PAREN expr CLOSE_PAREN;
 
-lexpr:
+lexpr: lexpr_;
+lexpr_:
 	'LExpr_Var' OPEN_PAREN (SSYMBOL | METHOD) CLOSE_PAREN			# LExprVar
 	| 'LExpr_Field' OPEN_PAREN lexpr COMMA SSYMBOL CLOSE_PAREN		# LExprField
 	| 'LExpr_Array' OPEN_PAREN (lexpr (COMMA expr)*)? CLOSE_PAREN	# LExprArray;
 
-expr:
+expr: expr_;
+expr_:
 	'Expr_Var' OPEN_PAREN (SSYMBOL | METHOD) CLOSE_PAREN # ExprVar
 	| 'Expr_TApply' OPEN_PAREN METHOD COMMA OPEN_BRACKET (
 		OPEN_PAREN targs CLOSE_PAREN (

@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(ANTLR4_JAR_LOCATION /usr/share/java/antlr-complete.jar CACHE STRING "antlr4 jar location")
@@ -13,13 +14,16 @@ antlr4_generate(Semantics ${CMAKE_CURRENT_SOURCE_DIR}/Semantics.g4 BOTH TRUE TRU
   "${ANTLR4_TOKEN_DIRECTORY_Semantics}")
 message(STATUS "antlr generated include: ${ANTLR4_INCLUDE_DIR_Semantics}")
 
-include_directories(${PROJECT_BINARY_DIR} ${ANTLR4_INCLUDE_DIR} ${ANTLR4_INCLUDE_DIR_Semantics})
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}/.." ${PROJECT_BINARY_DIR} ${ANTLR4_INCLUDE_DIR} ${ANTLR4_INCLUDE_DIR_Semantics})
 
 find_package(LLVM REQUIRED) # llvm at head
 message(STATUS "Found LLVM: " ${LLVM_DIR})
 
 add_definitions(${LLVM_DEFINITIONS})
 include_directories(${LLVM_INCLUDE_DIRS})
+
+add_compile_options(-g -fsanitize=address)
+add_link_options(-g -fsanitize=address)
 
 
 add_executable(bridge "aslp_bridge.cpp" "aslt_visitor.cpp" "${ANTLR4_SRC_FILES_Semantics}")

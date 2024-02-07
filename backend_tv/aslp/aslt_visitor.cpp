@@ -1,4 +1,3 @@
-#include "SemanticsBaseVisitor.h"
 #include "aslt_visitor.hpp"
 
 using namespace aslt;
@@ -19,15 +18,34 @@ std::any aslt_visitor::visitAssign(SemanticsParser::AssignContext *ctx) {
 }
 std::any aslt_visitor::visitConstDecl(SemanticsParser::ConstDeclContext *ctx) {
   out << "visitConstDecl" << '\n';
+  type_t ty = type(ctx->type());
+  auto name = ctx->METHOD();
+
+  std::cout << name->getText() << '\n';
+  assert(!locals.contains(name->getText()));
+
   return super::visitConstDecl(ctx);
 }
 std::any aslt_visitor::visitVarDecl(SemanticsParser::VarDeclContext *ctx) {
+  type_t ty = type(ctx->type());
+  auto name = ctx->METHOD();
+
+  std::cout << name->getText() << '\n';
+  assert(!locals.contains(name->getText()));
+
   out << "visitVarDecl" << '\n';
   return super::visitVarDecl(ctx);
 }
 std::any aslt_visitor::visitVarDeclsNoInit(SemanticsParser::VarDeclsNoInitContext *ctx) {
+  type_t ty = type(ctx->type());
+  auto names = ctx->METHOD();
+  for (auto name : names) {
+    std::cout << name->getText() << '\n';
+    assert(!locals.contains(name->getText()));
+  }
+
   out << "visitVarDeclsNoInit" << '\n';
-  return super::visitVarDeclsNoInit(ctx);
+  return 2;
 }
 std::any aslt_visitor::visitAssert(SemanticsParser::AssertContext *ctx) {
   out << "visitAssert" << '\n';
@@ -41,9 +59,11 @@ std::any aslt_visitor::visitConditional_stmt(SemanticsParser::Conditional_stmtCo
   out << "visitConditional_stmt" << '\n';
   return super::visitConditional_stmt(ctx);
 }
-std::any aslt_visitor::visitTypeBits(SemanticsParser::TypeBitsContext *ctx) {
-  out << "visitTypeBits" << '\n';
-  return super::visitTypeBits(ctx);
+std::any aslt_visitor::visitType(SemanticsParser::TypeContext *ctx) {
+  out << "visitType" << ' ' << ctx->getText() << '\n';
+  auto typeWidth = expr(ctx->expr());
+  auto x = llvm::cast<llvm::ConstantInt>(typeWidth);
+  return (type_t)llvm::Type::getIntNTy(context, x->getSExtValue());
 }
 std::any aslt_visitor::visitLExprVar(SemanticsParser::LExprVarContext *ctx) {
   out << "visitLExprVar" << '\n';
@@ -78,8 +98,9 @@ std::any aslt_visitor::visitExprArray(SemanticsParser::ExprArrayContext *ctx) {
   return super::visitExprArray(ctx);
 }
 std::any aslt_visitor::visitExprLitInt(SemanticsParser::ExprLitIntContext *ctx) {
-  out << "visitExprLitInt" << '\n';
-  return super::visitExprLitInt(ctx);
+  out << "visitExprLitInt" << ctx->getText() << '\n';
+  auto i100 = llvm::Type::getIntNTy(context, 100);
+  return (expr_t)llvm::ConstantInt::get(i100, ctx->DEC()->getText(), 10);
 }
 std::any aslt_visitor::visitExprLitHex(SemanticsParser::ExprLitHexContext *ctx) {
   out << "visitExprLitHex" << '\n';
