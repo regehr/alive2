@@ -68,6 +68,8 @@
 #include <utility>
 #include <vector>
 
+#include "aslp/interface.hpp"
+
 using namespace std;
 using namespace llvm;
 using namespace lifter;
@@ -187,7 +189,7 @@ public:
   }
 };
 
-class arm2llvm {
+class arm2llvm : public lifter_interface {
   Module *LiftedModule{nullptr};
   LLVMContext &Ctx = LiftedModule->getContext();
   MCFunction &MF;
@@ -1420,262 +1422,285 @@ class arm2llvm {
     }
   }
 
+  llvm::AllocaInst* get_reg(reg_t regtype, uint64_t num) override {
+    uint64_t reg;
+    if (regtype == reg_t::X) {
+      if (num <= 28)
+        reg = llvm::AArch64::X0 + num;
+      else if (num == 29)
+        reg = llvm::AArch64::FP;
+      else if (num == 30)
+        reg = llvm::AArch64::LR;
+      else if (num == 31)
+        reg = llvm::AArch64::SP;
+      else
+        assert(false && "X register out of range");
+    } else {
+      assert(false && "register not mapped");
+    }
+    return llvm::cast<llvm::AllocaInst>(RegFile.at(reg));
+  }
+
+  void set_bb(llvm::BasicBlock * bb) override {
+    LLVMBB = bb;
+  }
+
   // lifted instructions are named using the number of the ARM
   // instruction they come from
-  string nextName() {
+  string nextName() override {
     stringstream ss;
     ss << "a" << armInstNum << "_" << llvmInstNum++;
     return ss.str();
   }
 
-  AllocaInst *createAlloca(Type *ty, Value *sz, const string &NameStr) {
+  AllocaInst *createAlloca(Type *ty, Value *sz, const string &NameStr) override {
     return new AllocaInst(ty, 0, sz, NameStr, LLVMBB);
   }
 
   GetElementPtrInst *createGEP(Type *ty, Value *v, ArrayRef<Value *> idxlist,
-                               const string &NameStr) {
+                               const string &NameStr) override {
     return GetElementPtrInst::Create(ty, v, idxlist, NameStr, LLVMBB);
   }
 
-  void createBranch(Value *c, BasicBlock *t, BasicBlock *f) {
+  void createBranch(Value *c, BasicBlock *t, BasicBlock *f) override {
     BranchInst::Create(t, f, c, LLVMBB);
   }
 
-  void createBranch(BasicBlock *dst) {
+  void createBranch(BasicBlock *dst) override {
     BranchInst::Create(dst, LLVMBB);
   }
 
-  LoadInst *createLoad(Type *ty, Value *ptr) {
+  LoadInst *createLoad(Type *ty, Value *ptr) override {
     return new LoadInst(ty, ptr, nextName(), false, Align(1), LLVMBB);
   }
 
-  void createStore(Value *v, Value *ptr) {
+  void createStore(Value *v, Value *ptr) override {
     new StoreInst(v, ptr, false, Align(1), LLVMBB);
   }
 
-  Value *createTrap() {
+  Value *createTrap() override {
     auto decl = Intrinsic::getDeclaration(LiftedModule, Intrinsic::trap);
     return CallInst::Create(decl, "", LLVMBB);
   }
 
-  Value *createSMin(Value *a, Value *b) {
+  Value *createSMin(Value *a, Value *b) override {
     auto decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::smin, a->getType());
     return CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
   }
 
-  Value *createSMax(Value *a, Value *b) {
+  Value *createSMax(Value *a, Value *b) override {
     auto decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::smax, a->getType());
     return CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
   }
 
-  Value *createUMin(Value *a, Value *b) {
+  Value *createUMin(Value *a, Value *b) override {
     auto decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::umin, a->getType());
     return CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
   }
 
-  Value *createUMax(Value *a, Value *b) {
+  Value *createUMax(Value *a, Value *b) override {
     auto decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::umax, a->getType());
     return CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
   }
 
-  Value *createFNeg(Value *v) {
+  Value *createFNeg(Value *v) override {
     return UnaryOperator::CreateFNeg(v, nextName(), LLVMBB);
   }
 
-  Value *createFAbs(Value *v) {
+  Value *createFAbs(Value *v) override {
     auto fabs_decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::fabs, v->getType());
     return CallInst::Create(fabs_decl, {v}, nextName(), LLVMBB);
   }
 
-  CallInst *createSSubOverflow(Value *a, Value *b) {
+  CallInst *createSSubOverflow(Value *a, Value *b) override {
     auto ssub_decl = Intrinsic::getDeclaration(
         LiftedModule, Intrinsic::ssub_with_overflow, a->getType());
     return CallInst::Create(ssub_decl, {a, b}, nextName(), LLVMBB);
   }
 
-  CallInst *createSAddOverflow(Value *a, Value *b) {
+  CallInst *createSAddOverflow(Value *a, Value *b) override {
     auto sadd_decl = Intrinsic::getDeclaration(
         LiftedModule, Intrinsic::sadd_with_overflow, a->getType());
     return CallInst::Create(sadd_decl, {a, b}, nextName(), LLVMBB);
   }
 
-  CallInst *createUSubOverflow(Value *a, Value *b) {
+  CallInst *createUSubOverflow(Value *a, Value *b) override {
     auto usub_decl = Intrinsic::getDeclaration(
         LiftedModule, Intrinsic::usub_with_overflow, a->getType());
     return CallInst::Create(usub_decl, {a, b}, nextName(), LLVMBB);
   }
 
-  CallInst *createUAddOverflow(Value *a, Value *b) {
+  CallInst *createUAddOverflow(Value *a, Value *b) override {
     auto uadd_decl = Intrinsic::getDeclaration(
         LiftedModule, Intrinsic::uadd_with_overflow, a->getType());
     return CallInst::Create(uadd_decl, {a, b}, nextName(), LLVMBB);
   }
 
-  CallInst *createUAddSat(Value *a, Value *b) {
+  CallInst *createUAddSat(Value *a, Value *b) override {
     auto uadd_decl = Intrinsic::getDeclaration(
         LiftedModule, Intrinsic::uadd_sat, a->getType());
     return CallInst::Create(uadd_decl, {a, b}, nextName(), LLVMBB);
   }
 
-  CallInst *createUSubSat(Value *a, Value *b) {
+  CallInst *createUSubSat(Value *a, Value *b) override {
     auto usub_decl = Intrinsic::getDeclaration(
         LiftedModule, Intrinsic::usub_sat, a->getType());
     return CallInst::Create(usub_decl, {a, b}, nextName(), LLVMBB);
   }
 
-  CallInst *createSAddSat(Value *a, Value *b) {
+  CallInst *createSAddSat(Value *a, Value *b) override {
     auto sadd_decl = Intrinsic::getDeclaration(
         LiftedModule, Intrinsic::sadd_sat, a->getType());
     return CallInst::Create(sadd_decl, {a, b}, nextName(), LLVMBB);
   }
 
-  CallInst *createSSubSat(Value *a, Value *b) {
+  CallInst *createSSubSat(Value *a, Value *b) override {
     auto ssub_decl = Intrinsic::getDeclaration(
         LiftedModule, Intrinsic::ssub_sat, a->getType());
     return CallInst::Create(ssub_decl, {a, b}, nextName(), LLVMBB);
   }
 
-  CallInst *createCtPop(Value *v) {
+  CallInst *createCtPop(Value *v) override {
     auto decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::ctpop, v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
   // first argument is an i16
-  CallInst *createConvertFromFP16(Value *v, Type *ty) {
+  CallInst *createConvertFromFP16(Value *v, Type *ty) override {
     auto cvt_decl = Intrinsic::getDeclaration(LiftedModule,
                                               Intrinsic::convert_from_fp16, ty);
     return CallInst::Create(cvt_decl, {v}, nextName(), LLVMBB);
   }
 
-  CastInst *createConvertFPToSI(Value *v, Type *ty) {
+  CastInst *createConvertFPToSI(Value *v, Type *ty) override {
     return new FPToSIInst(v, ty, nextName(), LLVMBB);
   }
 
-  CastInst *createPtrToInt(Value *v, Type *ty) {
+  CastInst *createPtrToInt(Value *v, Type *ty) override {
     return new PtrToIntInst(v, ty, nextName(), LLVMBB);
   }
 
-  InsertElementInst *createInsertElement(Value *vec, Value *val, int idx) {
+  InsertElementInst *createInsertElement(Value *vec, Value *val, int idx) override {
     auto idxv = getIntConst(idx, 32);
     return InsertElementInst::Create(vec, val, idxv, nextName(), LLVMBB);
   }
 
-  ExtractElementInst *createExtractElement(Value *v, Value *idx) {
+  ExtractElementInst *createExtractElement(Value *v, Value *idx) override {
     return ExtractElementInst::Create(v, idx, nextName(), LLVMBB);
   }
 
-  ExtractElementInst *createExtractElement(Value *v, int idx) {
+  ExtractElementInst *createExtractElement(Value *v, int idx) override {
     auto idxv = getIntConst(idx, 32);
     return ExtractElementInst::Create(v, idxv, nextName(), LLVMBB);
   }
 
-  ShuffleVectorInst *createShuffleVector(Value *v, ArrayRef<int> mask) {
+  ShuffleVectorInst *createShuffleVector(Value *v, ArrayRef<int> mask) override {
     return new ShuffleVectorInst(v, mask, nextName(), LLVMBB);
   }
 
-  Value *getIndexedElement(unsigned idx, unsigned eltSize, unsigned reg) {
+  Value *getIndexedElement(unsigned idx, unsigned eltSize, unsigned reg) override {
     auto *ty = getVecTy(eltSize, 128 / eltSize);
     auto *r = createBitCast(readFromReg(reg), ty);
     return createExtractElement(r, idx);
   }
 
-  ExtractValueInst *createExtractValue(Value *v, ArrayRef<unsigned> idxs) {
+  ExtractValueInst *createExtractValue(Value *v, ArrayRef<unsigned> idxs) override {
     return ExtractValueInst::Create(v, idxs, nextName(), LLVMBB);
   }
 
-  ReturnInst *createReturn(Value *v) {
+  ReturnInst *createReturn(Value *v) override {
     return ReturnInst::Create(Ctx, v, LLVMBB);
   }
 
-  CallInst *createFShr(Value *a, Value *b, Value *c) {
+  CallInst *createFShr(Value *a, Value *b, Value *c) override {
     auto *decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::fshr, a->getType());
     return CallInst::Create(decl, {a, b, c}, nextName(), LLVMBB);
   }
 
-  CallInst *createFShl(Value *a, Value *b, Value *c) {
+  CallInst *createFShl(Value *a, Value *b, Value *c) override {
     auto *decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::fshl, a->getType());
     return CallInst::Create(decl, {a, b, c}, nextName(), LLVMBB);
   }
 
-  CallInst *createBitReverse(Value *v) {
+  CallInst *createBitReverse(Value *v) override {
     auto *decl = Intrinsic::getDeclaration(LiftedModule, Intrinsic::bitreverse,
                                            v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
-  CallInst *createAbs(Value *v) {
+  CallInst *createAbs(Value *v) override {
     auto *decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::abs, v->getType());
     return CallInst::Create(decl, {v, getIntConst(0, 1)}, nextName(), LLVMBB);
   }
 
-  CallInst *createCtlz(Value *v) {
+  CallInst *createCtlz(Value *v) override {
     auto *decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::ctlz, v->getType());
     return CallInst::Create(decl, {v, getIntConst(0, 1)}, nextName(), LLVMBB);
   }
 
-  CallInst *createBSwap(Value *v) {
+  CallInst *createBSwap(Value *v) override {
     auto *decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::bswap, v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
-  CallInst *createVectorReduceAdd(Value *v) {
+  CallInst *createVectorReduceAdd(Value *v) override {
     auto *decl = Intrinsic::getDeclaration(
         LiftedModule, Intrinsic::vector_reduce_add, v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
-  SelectInst *createSelect(Value *cond, Value *a, Value *b) {
+  SelectInst *createSelect(Value *cond, Value *a, Value *b) override {
     return SelectInst::Create(cond, a, b, nextName(), LLVMBB);
   }
 
-  ICmpInst *createICmp(ICmpInst::Predicate p, Value *a, Value *b) {
+  ICmpInst *createICmp(ICmpInst::Predicate p, Value *a, Value *b) override {
     return new ICmpInst(*LLVMBB, p, a, b, nextName());
   }
 
-  FCmpInst *createFCmp(FCmpInst::Predicate p, Value *a, Value *b) {
+  FCmpInst *createFCmp(FCmpInst::Predicate p, Value *a, Value *b) override {
     return new FCmpInst(*LLVMBB, p, a, b, nextName());
   }
 
-  BinaryOperator *createBinop(Value *a, Value *b, Instruction::BinaryOps op) {
+  BinaryOperator *createBinop(Value *a, Value *b, Instruction::BinaryOps op) override {
     return BinaryOperator::Create(op, a, b, nextName(), LLVMBB);
   }
 
-  BinaryOperator *createUDiv(Value *a, Value *b) {
+  BinaryOperator *createUDiv(Value *a, Value *b) override {
     return BinaryOperator::Create(Instruction::UDiv, a, b, nextName(), LLVMBB);
   }
 
-  BinaryOperator *createSDiv(Value *a, Value *b) {
+  BinaryOperator *createSDiv(Value *a, Value *b) override {
     return BinaryOperator::Create(Instruction::SDiv, a, b, nextName(), LLVMBB);
   }
 
-  BinaryOperator *createMul(Value *a, Value *b) {
+  BinaryOperator *createMul(Value *a, Value *b) override {
     return BinaryOperator::Create(Instruction::Mul, a, b, nextName(), LLVMBB);
   }
 
-  BinaryOperator *createAdd(Value *a, Value *b) {
+  BinaryOperator *createAdd(Value *a, Value *b) override {
     return BinaryOperator::Create(Instruction::Add, a, b, nextName(), LLVMBB);
   }
 
-  BinaryOperator *createSub(Value *a, Value *b) {
+  BinaryOperator *createSub(Value *a, Value *b) override {
     return BinaryOperator::Create(Instruction::Sub, a, b, nextName(), LLVMBB);
   }
 
-  Value *createRawLShr(Value *a, Value *b) {
+  Value *createRawLShr(Value *a, Value *b) override {
     return BinaryOperator::Create(Instruction::LShr, a, b, nextName(), LLVMBB);
   }
 
-  Value *createMaskedLShr(Value *a, Value *b) {
+  Value *createMaskedLShr(Value *a, Value *b) override {
     assert(a->getType() == b->getType() && "Expected values of same type");
 
     // Get an LLVM mask for b to get shift value less than bit width of a
@@ -1689,11 +1714,11 @@ class arm2llvm {
                                   LLVMBB);
   }
 
-  Value *createRawAShr(Value *a, Value *b) {
+  Value *createRawAShr(Value *a, Value *b) override {
     return BinaryOperator::Create(Instruction::AShr, a, b, nextName(), LLVMBB);
   }
 
-  Value *createMaskedAShr(Value *a, Value *b) {
+  Value *createMaskedAShr(Value *a, Value *b) override {
     assert(a->getType() == b->getType() && "Expected values of same type");
 
     // Get an LLVM mask for b to get shift value less than bit width of a
@@ -1707,11 +1732,11 @@ class arm2llvm {
                                   LLVMBB);
   }
 
-  Value *createRawShl(Value *a, Value *b) {
+  Value *createRawShl(Value *a, Value *b) override {
     return BinaryOperator::Create(Instruction::Shl, a, b, nextName(), LLVMBB);
   }
 
-  Value *createMaskedShl(Value *a, Value *b) {
+  Value *createMaskedShl(Value *a, Value *b) override {
     assert(a->getType() == b->getType() && "Expected values of same type");
 
     // Get an LLVM mask for b to get shift value less than bit width of a
@@ -1725,14 +1750,14 @@ class arm2llvm {
                                   LLVMBB);
   }
 
-  Value *getLowOnes(int ones, int w) {
+  Value *getLowOnes(int ones, int w) override {
     auto zero = getIntConst(0, ones);
     auto one = getIntConst(1, ones);
     auto minusOne = createSub(zero, one);
     return createZExt(minusOne, getIntTy(w));
   }
 
-  Value *createMSL(Value *a, int b) {
+  Value *createMSL(Value *a, int b) override {
     auto v = BinaryOperator::Create(Instruction::Shl, a,
                                     getIntConst(b, getBitWidth(a)), nextName(),
                                     LLVMBB);
@@ -1740,19 +1765,19 @@ class arm2llvm {
     return createOr(v, ones);
   }
 
-  BinaryOperator *createAnd(Value *a, Value *b) {
+  BinaryOperator *createAnd(Value *a, Value *b) override {
     return BinaryOperator::Create(Instruction::And, a, b, nextName(), LLVMBB);
   }
 
-  BinaryOperator *createOr(Value *a, Value *b) {
+  BinaryOperator *createOr(Value *a, Value *b) override {
     return BinaryOperator::Create(Instruction::Or, a, b, nextName(), LLVMBB);
   }
 
-  BinaryOperator *createXor(Value *a, Value *b) {
+  BinaryOperator *createXor(Value *a, Value *b) override {
     return BinaryOperator::Create(Instruction::Xor, a, b, nextName(), LLVMBB);
   }
 
-  BinaryOperator *createNot(Value *a) {
+  BinaryOperator *createNot(Value *a) override {
     auto *ty = a->getType();
     auto Zero = ConstantInt::get(ty, 0);
     auto One = ConstantInt::get(ty, 1);
@@ -1762,27 +1787,27 @@ class arm2llvm {
                                   LLVMBB);
   }
 
-  FreezeInst *createFreeze(Value *v) {
+  FreezeInst *createFreeze(Value *v) override {
     return new FreezeInst(v, nextName(), LLVMBB);
   }
 
-  CastInst *createTrunc(Value *v, Type *t) {
+  CastInst *createTrunc(Value *v, Type *t) override {
     return CastInst::Create(Instruction::Trunc, v, t, nextName(), LLVMBB);
   }
 
-  CastInst *createSExt(Value *v, Type *t) {
+  CastInst *createSExt(Value *v, Type *t) override {
     return CastInst::Create(Instruction::SExt, v, t, nextName(), LLVMBB);
   }
 
-  CastInst *createZExt(Value *v, Type *t) {
+  CastInst *createZExt(Value *v, Type *t) override {
     return CastInst::Create(Instruction::ZExt, v, t, nextName(), LLVMBB);
   }
 
-  CastInst *createBitCast(Value *v, Type *t) {
+  CastInst *createBitCast(Value *v, Type *t) override {
     return CastInst::Create(Instruction::BitCast, v, t, nextName(), LLVMBB);
   }
 
-  CastInst *createCast(Value *v, Type *t, Instruction::CastOps op) {
+  CastInst *createCast(Value *v, Type *t, Instruction::CastOps op) override {
     return CastInst::Create(op, v, t, nextName(), LLVMBB);
   }
 
@@ -9635,7 +9660,7 @@ pair<Function *, Function *> liftFunc(Module *OrigModule, Module *LiftedModule,
   unique_ptr<MCCodeEmitter> MCE{Targ->createMCCodeEmitter(*MCII.get(), Ctx)};
   assert(MCE && "createMCCodeEmitter failed.");
 
-  auto liftedFn = arm2llvm(LiftedModule, Str.MF, *srcFn, IP.get(), *MCE, *STI).run();
+  auto liftedFn = arm2llvm{LiftedModule, Str.MF, *srcFn, IP.get(), *MCE, *STI}.run();
 
   std::string sss;
   llvm::raw_string_ostream ss(sss);
