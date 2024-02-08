@@ -17,6 +17,8 @@ enum struct reg_t {
 class lifter_interface {
 public:
 
+  virtual ~lifter_interface() = default;
+
   // perform possibly non-atomic memory load/store  
   // virtual llvm::Value* mem_load(llvm::Value* addr, llvm::Value* size) = 0;
   // virtual void mem_store(llvm::Value* addr, llvm::Value* size, llvm::Value* rhs) = 0;

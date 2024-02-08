@@ -123,4 +123,6 @@ public:
   virtual std::any aggregateResult(std::any vec, std::any nextResult) override {
     return nextResult;
   }
+
+  virtual ~aslt_visitor() override = default;
 };

@@ -21,26 +21,11 @@ namespace fs = std::filesystem;
 
 static llvm::LLVMContext Context;
 
-class iface : public lifter_interface {
-  llvm::AllocaInst *var;
-public:
-  iface(llvm::BasicBlock& bb) {
-    var = new llvm::AllocaInst(llvm::Type::getInt64Ty(bb.getContext()), 0, "the register", &bb);
-  }
+namespace aslp {
 
-  llvm::AllocaInst * get_reg(reg_t, uint64_t num) override {
-    return var;
-  }
+static_assert(!std::is_abstract<aslt_visitor>(), "aslt_visitor must not be abstract");
 
-  // llvm::Value * mem_load(llvm::Value *addr, llvm::Value *size) override {
-  //   return nullptr;
-  // }
-  //
-  // void mem_store(llvm::Value *addr, llvm::Value *size, llvm::Value *rhs) override {
-  // }
-};
-
-void parse(const fs::path& path) {
+void parse(const fs::path& path, lifter_interface& iface) {
   std::ifstream file{path};
 
   antlr4::ANTLRInputStream input{file};
@@ -56,22 +41,29 @@ void parse(const fs::path& path) {
   auto fun = llvm::Function::Create(funty, llvm::GlobalValue::LinkageTypes::ExternalLinkage, "aslp_entry", Mod.get());
   auto *bb = llvm::BasicBlock::Create(Context, "", fun);
 
-  // auto x = iface{*bb};
-  // aslt_visitor visitor{*fun, x};
+  aslt_visitor visitor{*fun, iface};
 
-  // visitor.visitStmts(parser.stmts());
+  visitor.visitStmts(parser.stmts());
 }
+
+#ifndef ASLT_DIR
+#define ASLT_DIR "./aslt"
+#endif
+
+void run(lifter_interface& iface) {
+  fs::path aslt_dir{ASLT_DIR};
+  fs::path aslt_path{fs::absolute(aslt_dir / "adds.aslt")};
+
+  assert(fs::exists(aslt_path) && "aslt does not exist at");
+  std::cout << "aslt: " << aslt_path << '\n';
+
+  aslp::parse(aslt_path, iface);
+}
+
+} // namespace aslp
 
 int main() {
   std::cout << "Hello World" << std::endl;
-
-  // relative to backend_tv/aslp directory
-  fs::path aslt_path{fs::absolute({"./aslt/adds.aslt"})};
-
-  assert(fs::exists(aslt_path) && "aslt does not exist");
-  std::cout << "aslt: " << aslt_path << '\n';
-
-  parse(aslt_path);
 
   return 0;
 }
