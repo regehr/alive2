@@ -26,8 +26,9 @@ public:
   // should return a ptr type value suitable for load and store
   virtual llvm::AllocaInst* get_reg(reg_t, uint64_t num) = 0;
 
-  // sets the current basic block. expressions will emit instructions into this block. 
-  virtual void set_bb(llvm::BasicBlock*) = 0;
+  // XXX: callback for `aslt_visitor` to inform arm2llvm of changed basic blocks,
+  // so create* functions create instructions in the right place.
+  virtual void update_bb(llvm::BasicBlock*) = 0;
 
   // lifted instructions are named using the number of the ARM
   // instruction they come from

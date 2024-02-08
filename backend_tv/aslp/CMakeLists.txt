@@ -25,8 +25,8 @@ add_library(semantics STATIC "${ANTLR4_SRC_FILES_Semantics}")
 target_compile_options(semantics PUBLIC -Wno-error=overloaded-virtual -Wno-overloaded-virtual) # warnings in antlr-generated code
 target_include_directories(semantics PUBLIC ${PROJECT_BINARY_DIR} ${ANTLR4_INCLUDE_DIR} ${ANTLR4_INCLUDE_DIR_Semantics})
 
-add_executable(bridge "aslp_bridge.cpp" "aslt_visitor.cpp")
-add_dependencies(bridge antlr4_shared )
+add_library(bridge STATIC "aslp_bridge.cpp" "aslt_visitor.cpp")
+add_dependencies(bridge antlr4_shared)
 target_link_libraries(bridge PUBLIC antlr4_shared semantics)
 target_include_directories(bridge PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
@@ -39,15 +39,19 @@ execute_process(COMMAND ${LLVM_TOOLS_BINARY_DIR}/llvm-config --libs support core
 message(STATUS "llvm_libs: ${llvm_libs}")
 separate_arguments(llvm_libs UNIX_COMMAND "${llvm_libs}")
 # target_link_libraries(bridge PRIVATE "${lib_files}")
-target_link_options(bridge PRIVATE "${llvm_libs}")
-target_link_directories(bridge PRIVATE ${LLVM_LIBRARY_DIR})
-target_include_directories(bridge PRIVATE ${LLVM_INCLUDE_DIRS})
+target_link_options(bridge PUBLIC "${llvm_libs}")
+target_link_directories(bridge PUBLIC ${LLVM_LIBRARY_DIR})
+target_include_directories(bridge PUBLIC ${LLVM_INCLUDE_DIRS})
 
-install(TARGETS bridge DESTINATION bin)
+add_executable(bridge-bin aslp_main.cpp)
+target_link_libraries(bridge-bin PRIVATE bridge)
+
+install(TARGETS bridge-bin DESTINATION bin)
 
 set_target_properties(
-  bridge 
+  bridge-bin
   PROPERTIES
+  OUTPUT_NAME bridge
   RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin
   LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib
   ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib

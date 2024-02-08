@@ -206,6 +206,7 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
   add_library(backend_tv STATIC ${BACKEND_TV_SRCS})
   set(ALIVE_LIBS_LLVM llvm_util backend_tv ${ALIVE_LIBS})
   set(ALIVE_EXEC_LIBS_LLVM llvm_util backend_tv ${ALIVE_EXEC_LIBS})
+  target_link_libraries(backend_tv PUBLIC bridge)
 
   set(LLVM_LINK_COMPONENTS ${LLVM_LINK_COMPONENTS} TargetParser)
 

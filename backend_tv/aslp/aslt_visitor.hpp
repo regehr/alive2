@@ -1,12 +1,15 @@
 #pragma once
 
 #include <any>
+#include <functional>
 #include <map>
 
 #include <llvm/IR/Value.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Constants.h>
+#include <type_traits>
 
 #include "SemanticsBaseVisitor.h"
 
@@ -54,6 +57,7 @@ protected:
     depth--;
     return std::any_cast<type_t>(x);
   }
+
   virtual expr_t expr(aslt::SemanticsParser::ExprContext* ctx) {
     depth++;
     auto x = visitExpr(ctx);
@@ -61,6 +65,14 @@ protected:
     // std::cout << "expr cast" << '\n' << x.type().name() << '\n';
     return std::any_cast<expr_t>(x);
   }
+
+  virtual int64_t lit_int(aslt::SemanticsParser::ExprContext* ctx) {
+    assert(dynamic_cast<aslt::SemanticsParser::Expr_Context*>(ctx->expr_()) && "non-literal found where a ExprLitInt was expected");
+    auto x = expr(ctx);
+    auto i = llvm::cast<llvm::ConstantInt>(x);
+    return i->getSExtValue();
+  }
+
   virtual stmt_t stmt(aslt::SemanticsParser::StmtContext* ctx) {
     depth++;
     auto x = visitStmt(ctx);
@@ -68,16 +80,19 @@ protected:
     // std::cout << "stmt cast" << '\n';
     return std::any_cast<stmt_t>(x);
   }
+
   virtual stmt_t new_stmt() {
-    auto bb = llvm::BasicBlock::Create(context, "stmt", &func);
-    this->bb = bb;
-    return std::make_pair(bb, bb);
+    auto newbb = llvm::BasicBlock::Create(context, "stmt", &func);
+    bb = newbb;
+    iface.update_bb(newbb);
+    return std::make_pair(newbb, newbb);
   }
 
   stmt_t link(stmt_t head, stmt_t tail) {
     llvm::BranchInst::Create(tail.first, head.second);
     bb = tail.second;
     assert(bb);
+    iface.update_bb(bb);
     return std::make_pair(head.first, tail.second);
   }
 
@@ -88,6 +103,22 @@ protected:
   virtual void add_local(std::string s, var_t v) {
     assert(!locals.contains(s) && "local variable already exists in aslt!");
     locals.emplace(s, v);
+  }
+
+  template<std::ranges::range It, typename Ctx, typename U>
+  std::vector<U> map(const It &xs, U(aslt_visitor::*f)(Ctx)) {
+    std::vector<U> out{};
+    for (const auto& x : xs)
+      out.push_back((this->*f)(x));
+    return out;
+  }
+
+  template<std::ranges::range It, typename F, typename U = std::invoke_result_t<F, std::iter_value_t<It>>>
+  std::vector<U> map(const It &xs, F f) {
+    std::vector<U> out{};
+    for (const auto& x : xs)
+      out.push_back(f(x));
+    return out;
   }
 public:
   virtual std::any visitStmt(aslt::SemanticsParser::StmtContext *ctx) override;

@@ -68,7 +68,7 @@
 #include <utility>
 #include <vector>
 
-#include "aslp/interface.hpp"
+#include "aslp/aslp_bridge.hpp"
 
 using namespace std;
 using namespace llvm;
@@ -1441,7 +1441,7 @@ class arm2llvm : public lifter_interface {
     return llvm::cast<llvm::AllocaInst>(RegFile.at(reg));
   }
 
-  void set_bb(llvm::BasicBlock * bb) override {
+  void update_bb(llvm::BasicBlock * bb) override {
     LLVMBB = bb;
   }
 
@@ -3316,6 +3316,9 @@ public:
   // Visit an MCInst and convert it to LLVM IR
   // See: https://documentation-service.arm.com/static/6245e8f0f7d10f7540e0c054
   void liftInst(MCInst &I) {
+
+    aslp::run(*this);
+
     auto opcode = I.getOpcode();
     PrevInst = CurInst;
     CurInst = &I;

@@ -58,12 +58,10 @@ void run(lifter_interface& iface) {
   std::cout << "aslt: " << aslt_path << '\n';
 
   aslp::parse(aslt_path, iface);
+
+  std::cerr << "ASLP FINISHED!" << std::endl;
+  std::exit(0);
 }
 
 } // namespace aslp
 
-int main() {
-  std::cout << "Hello World" << std::endl;
-
-  return 0;
-}
