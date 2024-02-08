@@ -225,6 +225,8 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
     "tools/alive-exec.cpp"
   )
 
+  add_subdirectory(backend_tv/aslp)
+
 else()
   set(LLVM_UTIL_SRCS "")
   set(BACKEND_TV_SRCS "")
