@@ -1423,7 +1423,7 @@ class arm2llvm : public lifter_interface {
   }
 
   llvm::AllocaInst* get_reg(reg_t regtype, uint64_t num) override {
-    uint64_t reg;
+    uint64_t reg = 0;
     if (regtype == reg_t::X) {
       if (num <= 28)
         reg = llvm::AArch64::X0 + num;
@@ -1435,9 +1435,13 @@ class arm2llvm : public lifter_interface {
         reg = llvm::AArch64::SP;
       else
         assert(false && "X register out of range");
-    } else {
-      assert(false && "register not mapped");
+    } else if (regtype == reg_t::PSTATE) {
+      if (num == (int)pstate_t::N) reg = llvm::AArch64::N;
+      else if (num == (int)pstate_t::Z) reg = llvm::AArch64::Z;
+      else if (num == (int)pstate_t::C) reg = llvm::AArch64::C;
+      else if (num == (int)pstate_t::V) reg = llvm::AArch64::V;
     }
+    assert(reg && "register not mapped");
     return llvm::cast<llvm::AllocaInst>(RegFile.at(reg));
   }
 

@@ -20,6 +20,7 @@ public:
   using super = aslt::SemanticsBaseVisitor;
   using type_t = llvm::Type *;
   using expr_t = llvm::Value *;
+  using lexpr_t = llvm::AllocaInst *;
   using stmt_t = std::pair<llvm::BasicBlock *, llvm::BasicBlock *>;
   using var_t = llvm::AllocaInst *;
 
@@ -28,7 +29,8 @@ private:
   llvm::Function &func;
   lifter_interface &iface;
 
-  var_t x0;
+  var_t xreg_sentinel;
+  lexpr_t pstate_sentinel;
   uint64_t depth = 0;
   llvm::BasicBlock *bb = nullptr;
 
@@ -43,8 +45,10 @@ public:
   aslt_visitor(llvm::Function &func, lifter_interface &iface) : 
     context{func.getContext()},
     func{func},
-    iface{iface}, x0{iface.get_reg(reg_t::X, 0)} {
-    assert(x0);
+    iface{iface},
+    xreg_sentinel{iface.get_reg(reg_t::X, 0)},
+    pstate_sentinel{iface.get_reg(reg_t::PSTATE, (int)pstate_t::N)} {
+    assert(xreg_sentinel);
   }
 protected:
   std::ostream& log() const& {
@@ -62,9 +66,15 @@ protected:
     depth++;
     auto x = visitExpr(ctx);
     depth--;
-    // std::cout << "expr cast" << '\n' << x.type().name() << '\n';
     return std::any_cast<expr_t>(x);
   }
+  virtual lexpr_t lexpr(aslt::SemanticsParser::LexprContext* ctx) {
+    depth++;
+    auto x = visitLexpr(ctx);
+    depth--;
+    return std::any_cast<lexpr_t>(x);
+  }
+
 
   virtual int64_t lit_int(aslt::SemanticsParser::ExprContext* ctx) {
     assert(dynamic_cast<aslt::SemanticsParser::Expr_Context*>(ctx->expr_()) && "non-literal found where a ExprLitInt was expected");

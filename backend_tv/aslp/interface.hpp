@@ -4,7 +4,7 @@
 #include <llvm/IR/Instructions.h>
 
 
-enum struct pstate_t {
+enum struct pstate_t : uint64_t {
   N = 0, Z, C, V
 };
 

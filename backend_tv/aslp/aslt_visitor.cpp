@@ -1,4 +1,5 @@
 #include "aslt_visitor.hpp"
+#include "aslp/interface.hpp"
 #include "tree/TerminalNode.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instructions.h"
@@ -29,11 +30,18 @@ std::any aslt_visitor::visitStmts(SemanticsParser::StmtsContext *ctx) {
   for (auto& s2 : ctx->stmt() | std::ranges::views::drop(1)) {
     s = link(s, stmt(s2));
   }
+  bb = nullptr;
   return s;
 }
 std::any aslt_visitor::visitAssign(SemanticsParser::AssignContext *ctx) {
-  log() << "visitAssign TODO: " << ctx->getText() << '\n';
-  return super::visitAssign(ctx);
+  log() << "visitAssign : " << ctx->getText() << '\n';
+
+  stmt_t s = new_stmt();
+  auto lhs = lexpr(ctx->lexpr());
+  auto rhs = expr(ctx->expr());
+
+  iface.createStore(rhs, lhs);
+  return s;
 }
 std::any aslt_visitor::visitConstDecl(SemanticsParser::ConstDeclContext *ctx) {
   log() << "visitConstDecl" << '\n';
@@ -52,13 +60,13 @@ std::any aslt_visitor::visitConstDecl(SemanticsParser::ConstDeclContext *ctx) {
 }
 std::any aslt_visitor::visitVarDecl(SemanticsParser::VarDeclContext *ctx) {
   log() << "visitVarDecl" << '\n';
+  auto s = new_stmt();
   type_t ty = type(ctx->type());
   auto rhs = expr(ctx->expr());
 
   auto name = ctx->METHOD()->getText();
   log() << name << '\n';
 
-  auto s = new_stmt();
   auto v = new llvm::AllocaInst(ty, 0, name, s.second);
   new llvm::StoreInst(rhs, v, s.second);
 
@@ -67,9 +75,9 @@ std::any aslt_visitor::visitVarDecl(SemanticsParser::VarDeclContext *ctx) {
 }
 std::any aslt_visitor::visitVarDeclsNoInit(SemanticsParser::VarDeclsNoInitContext *ctx) {
   log() << "visitVarDeclsNoInit" << '\n';
+  auto s = new_stmt();
   type_t ty = type(ctx->type());
   auto names = ctx->METHOD();
-  auto s = new_stmt();
 
   for (auto namectx : names) {
     auto name = namectx->getText();
@@ -94,19 +102,32 @@ std::any aslt_visitor::visitConditional_stmt(SemanticsParser::Conditional_stmtCo
 }
 std::any aslt_visitor::visitType(SemanticsParser::TypeContext *ctx) {
   log() << "visitType" << ' ' << ctx->getText() << '\n';
-  auto typeWidth = expr(ctx->expr());
-  auto x = llvm::cast<llvm::ConstantInt>(typeWidth); // widths of types must be constant.
-  return (type_t)llvm::Type::getIntNTy(context, x->getSExtValue());
+  auto bits = lit_int(ctx->expr());
+  return (type_t)llvm::Type::getIntNTy(context, bits);
 }
 std::any aslt_visitor::visitLExprVar(SemanticsParser::LExprVarContext *ctx) {
-  log() << "TODO visitLExprVar" << '\n';
+  log() << "visitLExprVar" << '\n';
   auto name = OR(ctx->METHOD(), ctx->SSYMBOL())->getText();
 
-  return super::visitLExprVar(ctx);
+  if (name == "PSTATE") {
+    return static_cast<lexpr_t>(iface.get_reg(reg_t::PSTATE, (long)pstate_t::N));
+  }
+  assert(false && "lexprvar");
 }
 std::any aslt_visitor::visitLExprField(SemanticsParser::LExprFieldContext *ctx) {
-  log() << "TODO visitLExprField" << '\n';
-  return super::visitLExprField(ctx);
+  log() << "visitLExprField" << '\n';
+
+  lexpr_t base = lexpr(ctx->lexpr());
+  std::string field = ctx->SSYMBOL()->getText();
+
+  if (base == pstate_sentinel) {
+    if (field == "N") return iface.get_reg(reg_t::PSTATE, (int)pstate_t::N);
+    if (field == "Z") return iface.get_reg(reg_t::PSTATE, (int)pstate_t::Z);
+    if (field == "C") return iface.get_reg(reg_t::PSTATE, (int)pstate_t::C);
+    if (field == "V") return iface.get_reg(reg_t::PSTATE, (int)pstate_t::V);
+    assert(false && "pstate unexpect");
+  }
+  assert(false && "lexpr field unsup");
 }
 std::any aslt_visitor::visitLExprArray(SemanticsParser::LExprArrayContext *ctx) {
   log() << "TODO visitLExprArray" << '\n';
@@ -114,25 +135,25 @@ std::any aslt_visitor::visitLExprArray(SemanticsParser::LExprArrayContext *ctx) 
 }
 std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
   log() << "visitExprVar " << ctx->getText() << '\n';
-  auto _name = OR(ctx->METHOD(), ctx->SSYMBOL());
-  auto name = _name->getText();
+  auto name = OR(ctx->METHOD(), ctx->SSYMBOL())->getText();
 
   expr_t var;
   if (locals.contains(name))
     var = locals.at(name);
   else if (name == "_R")
-    var = iface.get_reg(reg_t::X, 0);
+    var = xreg_sentinel; // XXX return X0 as a sentinel for all X registers
   else
     assert(false && "unsupported or undefined variable!");
 
   auto ptr = llvm::cast<llvm::AllocaInst>(var);
   return static_cast<expr_t>(iface.createLoad(ptr->getAllocatedType(), ptr));
 }
+
 std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) {
   auto name = ctx->METHOD()->getText();
   log() 
     << "visitExprTApply " 
-    << std::format("{} [{}] ({})", name, ctx->targs().size(), ctx->expr().size())
+    << std::format("{} [{} targs] ({} args)", name, ctx->targs().size(), ctx->expr().size())
     << std::endl;
 
   auto args = map(ctx->expr(), &aslt_visitor::expr);
@@ -168,6 +189,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
   }
   assert(false && "unsupported TAPPLY");
 }
+
 std::any aslt_visitor::visitExprSlices(SemanticsParser::ExprSlicesContext *ctx) {
   log() << "TODO visitExprSlices" << '\n';
   return super::visitExprSlices(ctx);
@@ -192,7 +214,7 @@ std::any aslt_visitor::visitExprArray(SemanticsParser::ExprArrayContext *ctx) {
   assert(ctx->indices.size() == 1 && "array access has multiple indices");
   auto index = lit_int(ctx->indices.at(0));
 
-  if (base == x0) {
+  if (base == xreg_sentinel) {
     auto reg = iface.get_reg(reg_t::X, index);
     auto load = iface.createLoad(reg->getAllocatedType(), reg);
     return static_cast<expr_t>(load);
@@ -213,8 +235,16 @@ std::any aslt_visitor::visitExprLitHex(SemanticsParser::ExprLitHexContext *ctx) 
   return super::visitExprLitHex(ctx);
 }
 std::any aslt_visitor::visitExprLitBits(SemanticsParser::ExprLitBitsContext *ctx) {
-  log() << "TODO visitExprLitBits" << '\n';
-  return super::visitExprLitBits(ctx);
+  log() << "visitExprLitBits" << '\n';
+
+  auto isbit = [](char x) { return x == '1' || x == '0'; };
+  auto filtered = ctx->BINARY()->getText() | std::ranges::views::filter(isbit);
+
+  std::string s;
+  std::ranges::copy(filtered, std::back_inserter(s));
+
+  auto ty = llvm::Type::getIntNTy(context, s.length());
+  return static_cast<expr_t>(llvm::ConstantInt::get(ty, s, 2));
 }
 std::any aslt_visitor::visitExprLitMask(SemanticsParser::ExprLitMaskContext *ctx) {
   log() << "TODO visitExprLitMask" << '\n';
