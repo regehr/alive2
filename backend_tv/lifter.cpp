@@ -1234,6 +1234,20 @@ class arm2llvm {
       AArch64::LD1Rv4s,
       AArch64::LD1Rv1d,
       AArch64::LD1Rv2d,
+      AArch64::LD3Threev8b,
+      AArch64::LD3Threev16b,
+      AArch64::LD3Threev4h,
+      AArch64::LD3Threev8h,
+      AArch64::LD3Threev2s,
+      AArch64::LD3Threev4s,
+      AArch64::LD3Threev2d,
+      AArch64::LD3Threev8b_POST,
+      AArch64::LD3Threev16b_POST,
+      AArch64::LD3Threev4h_POST,
+      AArch64::LD3Threev8h_POST,
+      AArch64::LD3Threev2s_POST,
+      AArch64::LD3Threev4s_POST,
+      AArch64::LD3Threev2d_POST,
       AArch64::LD4Fourv8b,
       AArch64::LD4Fourv16b,
       AArch64::LD4Fourv4h,
@@ -5066,6 +5080,20 @@ public:
       break;
     }
 
+    case AArch64::LD3Threev8b:
+    case AArch64::LD3Threev16b:
+    case AArch64::LD3Threev4h:
+    case AArch64::LD3Threev8h:
+    case AArch64::LD3Threev2s:
+    case AArch64::LD3Threev4s:
+    case AArch64::LD3Threev2d:
+    case AArch64::LD3Threev8b_POST:
+    case AArch64::LD3Threev16b_POST:
+    case AArch64::LD3Threev4h_POST:
+    case AArch64::LD3Threev8h_POST:
+    case AArch64::LD3Threev2s_POST:
+    case AArch64::LD3Threev4s_POST:
+    case AArch64::LD3Threev2d_POST:
     case AArch64::LD4Fourv8b:
     case AArch64::LD4Fourv16b:
     case AArch64::LD4Fourv4h:
@@ -5083,42 +5111,56 @@ public:
       unsigned numElts, eltSize;
       bool fullWidth;
       switch (opcode) {
+      case AArch64::LD3Threev8b:
+      case AArch64::LD3Threev8b_POST:
       case AArch64::LD4Fourv8b:
       case AArch64::LD4Fourv8b_POST:
         numElts = 8;
         eltSize = 8;
         fullWidth = false;
         break;
+      case AArch64::LD3Threev16b:
+      case AArch64::LD3Threev16b_POST:
       case AArch64::LD4Fourv16b:
       case AArch64::LD4Fourv16b_POST:
         numElts = 16;
         eltSize = 8;
         fullWidth = true;
         break;
+      case AArch64::LD3Threev4h:
+      case AArch64::LD3Threev4h_POST:
       case AArch64::LD4Fourv4h:
       case AArch64::LD4Fourv4h_POST:
         numElts = 4;
         eltSize = 16;
         fullWidth = false;
         break;
+      case AArch64::LD3Threev8h:
+      case AArch64::LD3Threev8h_POST:
       case AArch64::LD4Fourv8h:
       case AArch64::LD4Fourv8h_POST:
         numElts = 8;
         eltSize = 16;
         fullWidth = true;
         break;
+      case AArch64::LD3Threev2s:
+      case AArch64::LD3Threev2s_POST:
       case AArch64::LD4Fourv2s:
       case AArch64::LD4Fourv2s_POST:
         numElts = 2;
         eltSize = 32;
         fullWidth = false;
         break;
+      case AArch64::LD3Threev4s:
+      case AArch64::LD3Threev4s_POST:
       case AArch64::LD4Fourv4s:
       case AArch64::LD4Fourv4s_POST:
         numElts = 4;
         eltSize = 32;
         fullWidth = true;
         break;
+      case AArch64::LD3Threev2d:
+      case AArch64::LD3Threev2d_POST:
       case AArch64::LD4Fourv2d:
       case AArch64::LD4Fourv2d_POST:
         numElts = 2;
@@ -5131,6 +5173,22 @@ public:
       }
       unsigned nregs;
       switch (opcode) {
+      case AArch64::LD3Threev8b:
+      case AArch64::LD3Threev16b:
+      case AArch64::LD3Threev4h:
+      case AArch64::LD3Threev8h:
+      case AArch64::LD3Threev2s:
+      case AArch64::LD3Threev4s:
+      case AArch64::LD3Threev2d:
+      case AArch64::LD3Threev8b_POST:
+      case AArch64::LD3Threev16b_POST:
+      case AArch64::LD3Threev4h_POST:
+      case AArch64::LD3Threev8h_POST:
+      case AArch64::LD3Threev2s_POST:
+      case AArch64::LD3Threev4s_POST:
+      case AArch64::LD3Threev2d_POST:
+        nregs = 3;
+        break;
       case AArch64::LD4Fourv8b:
       case AArch64::LD4Fourv16b:
       case AArch64::LD4Fourv4h:
@@ -5151,7 +5209,14 @@ public:
         assert(false);
         break;
       }
-      bool isPost = opcode == AArch64::LD4Fourv8b_POST ||
+      bool isPost = opcode == AArch64::LD3Threev8b_POST ||
+                    opcode == AArch64::LD3Threev16b_POST ||
+                    opcode == AArch64::LD3Threev4h_POST ||
+                    opcode == AArch64::LD3Threev8h_POST ||
+                    opcode == AArch64::LD3Threev2s_POST ||
+                    opcode == AArch64::LD3Threev4s_POST ||
+                    opcode == AArch64::LD3Threev2d_POST ||
+                    opcode == AArch64::LD4Fourv8b_POST ||
                     opcode == AArch64::LD4Fourv16b_POST ||
                     opcode == AArch64::LD4Fourv4h_POST ||
                     opcode == AArch64::LD4Fourv8h_POST ||
