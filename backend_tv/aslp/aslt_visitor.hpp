@@ -5,11 +5,12 @@
 
 #include <llvm/IR/Value.h>
 #include <llvm/IR/Function.h>
-#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/BasicBlock.h>
-#include <llvm/Support/Casting.h>
 
 #include "SemanticsBaseVisitor.h"
+
+#include "interface.hpp"
 
 class aslt_visitor : public aslt::SemanticsBaseVisitor { 
 public:
@@ -17,37 +18,78 @@ public:
   using type_t = llvm::Type *;
   using expr_t = llvm::Value *;
   using stmt_t = std::pair<llvm::BasicBlock *, llvm::BasicBlock *>;
+  using var_t = llvm::AllocaInst *;
 
 private:
   llvm::LLVMContext &context;
   llvm::Function &func;
+  lifter_interface &iface;
 
-  std::map<std::string, llvm::AllocaInst*> locals{};
-  stmt_t statements;
+  var_t x0;
+  uint64_t depth = 0;
+  llvm::BasicBlock *bb = nullptr;
 
-  stmt_t statements_init(llvm::Function &func) {
-    llvm::BasicBlock *bb = llvm::BasicBlock::Create(context, "", &func);
-    return std::make_pair(bb, bb);
-  }
+  std::map<std::string, var_t> locals{};
+
+  // stmt_t statements_init(llvm::Function &func) {
+  //   llvm::BasicBlock *bb = llvm::BasicBlock::Create(context, "", &func);
+  //   return std::make_pair(bb, bb);
+  // }
 
 public:
-  aslt_visitor(llvm::Function &func) : 
+  aslt_visitor(llvm::Function &func, lifter_interface &iface) : 
     context{func.getContext()},
     func{func},
-    statements{statements_init(func)} {}
+    iface{iface}, x0{iface.get_reg(reg_t::X, 0)} {
+    assert(x0);
+  }
+protected:
+  std::ostream& log() const& {
+    return std::cerr << std::string(depth, ' ');
+  }
 
   virtual type_t type(aslt::SemanticsParser::TypeContext* ctx) {
+    depth++;
     auto x = visitType(ctx);
+    depth--;
     return std::any_cast<type_t>(x);
   }
   virtual expr_t expr(aslt::SemanticsParser::ExprContext* ctx) {
+    depth++;
     auto x = visitExpr(ctx);
+    depth--;
+    // std::cout << "expr cast" << '\n' << x.type().name() << '\n';
     return std::any_cast<expr_t>(x);
   }
   virtual stmt_t stmt(aslt::SemanticsParser::StmtContext* ctx) {
-    return std::any_cast<stmt_t>(visitStmt(ctx));
+    depth++;
+    auto x = visitStmt(ctx);
+    depth--;
+    // std::cout << "stmt cast" << '\n';
+    return std::any_cast<stmt_t>(x);
+  }
+  virtual stmt_t new_stmt() {
+    auto bb = llvm::BasicBlock::Create(context, "stmt", &func);
+    this->bb = bb;
+    return std::make_pair(bb, bb);
   }
 
+  stmt_t link(stmt_t head, stmt_t tail) {
+    llvm::BranchInst::Create(tail.first, head.second);
+    bb = tail.second;
+    assert(bb);
+    return std::make_pair(head.first, tail.second);
+  }
+
+  virtual var_t get_local(std::string s) const& {
+    return locals.at(s);
+  }
+
+  virtual void add_local(std::string s, var_t v) {
+    assert(!locals.contains(s) && "local variable already exists in aslt!");
+    locals.emplace(s, v);
+  }
+public:
   virtual std::any visitStmt(aslt::SemanticsParser::StmtContext *ctx) override;
   virtual std::any visitStmts(aslt::SemanticsParser::StmtsContext *ctx) override;
   virtual std::any visitAssign(aslt::SemanticsParser::AssignContext *ctx) override;

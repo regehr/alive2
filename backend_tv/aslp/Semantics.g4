@@ -55,7 +55,7 @@ expr_:
 	| 'Expr_Slices' OPEN_PAREN expr COMMA OPEN_BRACKET OPEN_PAREN slice_expr CLOSE_PAREN
 		CLOSE_BRACKET CLOSE_PAREN										# ExprSlices
 	| 'Expr_Field' OPEN_PAREN expr COMMA SSYMBOL CLOSE_PAREN			# ExprField
-	| 'Expr_Array' OPEN_PAREN expr (COMMA expr)* CLOSE_PAREN			# ExprArray
+	| 'Expr_Array' OPEN_PAREN base=expr (COMMA indices+=expr)* CLOSE_PAREN			# ExprArray
 	| 'Expr_LitInt' OPEN_PAREN QUOTE (DEC | BINARY) QUOTE CLOSE_PAREN	# ExprLitInt
 	| 'Expr_LitHex' OPEN_PAREN QUOTE HEXDIGIT+ QUOTE CLOSE_PAREN		# ExprLitHex
 	| 'Expr_LitBits' OPEN_PAREN QUOTE BINARY QUOTE CLOSE_PAREN		# ExprLitBits

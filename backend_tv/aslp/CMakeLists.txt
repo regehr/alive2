@@ -23,9 +23,10 @@ include(AddLLVM)
 
 add_definitions(${LLVM_DEFINITIONS})
 include_directories(${LLVM_INCLUDE_DIRS})
+link_directories(${LLVM_LIBRARY_DIR})
 
-add_compile_options(-g -fsanitize=address)
-add_link_options(-g -fsanitize=address)
+add_compile_options(-g -O0 -fsanitize=address)
+add_link_options(-g -O0 -fsanitize=address)
 
 
 add_executable(bridge "aslp_bridge.cpp" "aslt_visitor.cpp" "${ANTLR4_SRC_FILES_Semantics}")
@@ -36,7 +37,9 @@ target_link_libraries(bridge PUBLIC antlr4_shared)
 execute_process(COMMAND ${LLVM_TOOLS_BINARY_DIR}/llvm-config --libs support core irreader bitwriter
                 OUTPUT_VARIABLE llvm_libs OUTPUT_STRIP_TRAILING_WHITESPACE)
 message(STATUS "llvm_libs: ${llvm_libs}")
-target_link_options(bridge PRIVATE "${llvm_libs}")
+separate_arguments(llvm_libs UNIX_COMMAND "${llvm_libs}")
+# target_link_libraries(bridge PRIVATE "${lib_files}")
+target_link_options(bridge PUBLIC "${llvm_libs}")
 
 install(TARGETS bridge DESTINATION bin)
 
