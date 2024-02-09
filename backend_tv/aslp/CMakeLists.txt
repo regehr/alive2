@@ -20,6 +20,9 @@ else()
   message(STATUS "... LLVM already found")
 endif()
 message(STATUS "Found LLVM: " ${LLVM_DIR} ", tools: " ${LLVM_TOOLS_BINARY_DIR})
+get_target_property(LLVM_CONFIG llvm-config LOCATION)
+
+message(STATUS "llvm-config: ${LLVM_CONFIG}")
 # list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 # include(AddLLVM)
 
@@ -37,7 +40,8 @@ target_compile_definitions(bridge PRIVATE ASLT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/
 target_compile_options(bridge PRIVATE -g -O0 -fsanitize=address -Wno-error=unused-variable -Wno-error=unused-function)
 target_link_options(bridge PRIVATE -g -O0 -fsanitize=address)
 
-execute_process(COMMAND ${LLVM_TOOLS_BINARY_DIR}/llvm-config --libs support core irreader bitwriter
+execute_process(COMMAND "${LLVM_CONFIG}" --libs support core irreader bitwriter
+                COMMAND_ERROR_IS_FATAL ANY
                 OUTPUT_VARIABLE llvm_libs OUTPUT_STRIP_TRAILING_WHITESPACE)
 message(STATUS "llvm_libs: ${llvm_libs}")
 separate_arguments(llvm_libs UNIX_COMMAND "${llvm_libs}")
