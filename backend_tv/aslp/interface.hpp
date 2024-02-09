@@ -3,6 +3,7 @@
 #include <llvm/IR/Instruction.h>
 #include <llvm/IR/Instructions.h>
 
+namespace aslp {
 
 enum struct pstate_t : uint64_t {
   N = 0, Z, C, V
@@ -28,7 +29,10 @@ public:
 
   // XXX: callback for `aslt_visitor` to inform arm2llvm of changed basic blocks,
   // so create* functions create instructions in the right place.
-  virtual void update_bb(llvm::BasicBlock*) = 0;
+  virtual void set_bb(llvm::BasicBlock*) = 0;
+  virtual llvm::BasicBlock* get_bb() = 0;
+
+  virtual llvm::Function& ll_function() = 0;
 
   // lifted instructions are named using the number of the ARM
   // instruction they come from
@@ -170,3 +174,4 @@ public:
 
 };
 
+}

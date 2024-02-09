@@ -1,7 +1,10 @@
 #pragma once
 
 #include "interface.hpp"
+#include "aslt_visitor.hpp"
 
 namespace aslp {
-void run(lifter_interface& iface);
+
+stmt_t run(lifter_interface& iface);
+
 }

@@ -49,6 +49,7 @@
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include <llvm/IR/BasicBlock.h>
 
 #define GET_INSTRINFO_ENUM
 #include "Target/AArch64/AArch64GenInstrInfo.inc"
@@ -189,7 +190,7 @@ public:
   }
 };
 
-class arm2llvm : public lifter_interface {
+class arm2llvm : public aslp::lifter_interface {
   Module *LiftedModule{nullptr};
   LLVMContext &Ctx = LiftedModule->getContext();
   MCFunction &MF;
@@ -1422,7 +1423,9 @@ class arm2llvm : public lifter_interface {
     }
   }
 
-  llvm::AllocaInst* get_reg(reg_t regtype, uint64_t num) override {
+  llvm::AllocaInst* get_reg(aslp::reg_t regtype, uint64_t num) override {
+    using namespace aslp; // reg_t and pstate_t
+
     uint64_t reg = 0;
     if (regtype == reg_t::X) {
       if (num <= 28)
@@ -1445,8 +1448,14 @@ class arm2llvm : public lifter_interface {
     return llvm::cast<llvm::AllocaInst>(RegFile.at(reg));
   }
 
-  void update_bb(llvm::BasicBlock * bb) override {
+  void set_bb(llvm::BasicBlock * bb) override {
     LLVMBB = bb;
+  }
+  llvm::BasicBlock* get_bb() override {
+    return LLVMBB;
+  }
+  llvm::Function& ll_function() override {
+    return *liftedFn;
   }
 
   // lifted instructions are named using the number of the ARM
@@ -3321,7 +3330,15 @@ public:
   // See: https://documentation-service.arm.com/static/6245e8f0f7d10f7540e0c054
   void liftInst(MCInst &I) {
 
-    aslp::run(*this);
+    auto entrybb = LLVMBB;
+    auto aslpresult = aslp::run(*this);
+
+    LLVMBB = entrybb;
+    this->createBranch(aslpresult.first);
+    LLVMBB = aslpresult.second;
+
+    liftedFn->dump();
+    std::exit(0);
 
     auto opcode = I.getOpcode();
     PrevInst = CurInst;
@@ -9230,7 +9247,7 @@ public:
       auto &mc_instrs = mc_bb->getInstrs();
 
       for (auto &inst : mc_instrs) {
-        llvmInstNum = 0;
+        llvmInstNum = 1000;
         liftInst(inst);
         ++armInstNum;
       }

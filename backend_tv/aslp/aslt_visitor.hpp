@@ -1,7 +1,7 @@
 #pragma once
 
 #include <any>
-#include <functional>
+#include <format>
 #include <map>
 
 #include <llvm/IR/Value.h>
@@ -15,26 +15,32 @@
 
 #include "interface.hpp"
 
+namespace aslp {
+
+using type_t = llvm::Type *;
+using expr_t = llvm::Value *;
+using lexpr_t = llvm::AllocaInst *;
+using stmt_t = std::pair<llvm::BasicBlock *, llvm::BasicBlock *>;
+struct slice_t {
+  unsigned lo;
+  unsigned wd;
+};
+
 class aslt_visitor : public aslt::SemanticsBaseVisitor { 
 public:
   using super = aslt::SemanticsBaseVisitor;
-  using type_t = llvm::Type *;
-  using expr_t = llvm::Value *;
-  using lexpr_t = llvm::AllocaInst *;
-  using stmt_t = std::pair<llvm::BasicBlock *, llvm::BasicBlock *>;
-  using var_t = llvm::AllocaInst *;
 
 private:
-  llvm::LLVMContext &context;
-  llvm::Function &func;
   lifter_interface &iface;
+  llvm::Function &func;  // needed to create basic blocks in here
+  llvm::LLVMContext &context;
 
-  var_t xreg_sentinel;
+  lexpr_t xreg_sentinel;
   lexpr_t pstate_sentinel;
   uint64_t depth = 0;
-  llvm::BasicBlock *bb = nullptr;
 
-  std::map<std::string, var_t> locals{};
+  std::map<std::string, lexpr_t> locals{};
+  std::map<unsigned, unsigned> stmt_counts{};
 
   // stmt_t statements_init(llvm::Function &func) {
   //   llvm::BasicBlock *bb = llvm::BasicBlock::Create(context, "", &func);
@@ -42,10 +48,10 @@ private:
   // }
 
 public:
-  aslt_visitor(llvm::Function &func, lifter_interface &iface) : 
-    context{func.getContext()},
-    func{func},
+  aslt_visitor(lifter_interface &iface) : 
     iface{iface},
+    func{iface.ll_function()},
+    context{func.getContext()},
     xreg_sentinel{iface.get_reg(reg_t::X, 0)},
     pstate_sentinel{iface.get_reg(reg_t::PSTATE, (int)pstate_t::N)} {
     assert(xreg_sentinel);
@@ -74,7 +80,12 @@ protected:
     depth--;
     return std::any_cast<lexpr_t>(x);
   }
-
+  virtual slice_t slice(aslt::SemanticsParser::Slice_exprContext* ctx) {
+    depth++;
+    auto x = visitSlice_expr(ctx);
+    depth--;
+    return std::any_cast<slice_t>(x);
+  }
 
   virtual int64_t lit_int(aslt::SemanticsParser::ExprContext* ctx) {
     assert(dynamic_cast<aslt::SemanticsParser::Expr_Context*>(ctx->expr_()) && "non-literal found where a ExprLitInt was expected");
@@ -91,26 +102,29 @@ protected:
     return std::any_cast<stmt_t>(x);
   }
 
-  virtual stmt_t new_stmt() {
-    auto newbb = llvm::BasicBlock::Create(context, "stmt", &func);
-    bb = newbb;
-    iface.update_bb(newbb);
+  virtual stmt_t new_stmt(const std::string_view& name) {
+    auto count = ++stmt_counts[depth];
+    std::string s = std::format("aslp_stmt_{}_{}_", depth, count);
+    s += name;
+    s += '_';
+    auto newbb = llvm::BasicBlock::Create(context, s, &func);
+    iface.set_bb(newbb);
     return std::make_pair(newbb, newbb);
   }
 
   stmt_t link(stmt_t head, stmt_t tail) {
     llvm::BranchInst::Create(tail.first, head.second);
-    bb = tail.second;
+    auto bb = tail.second;
     assert(bb);
-    iface.update_bb(bb);
+    iface.set_bb(bb);
     return std::make_pair(head.first, tail.second);
   }
 
-  virtual var_t get_local(std::string s) const& {
+  virtual lexpr_t get_local(std::string s) const& {
     return locals.at(s);
   }
 
-  virtual void add_local(std::string s, var_t v) {
+  virtual void add_local(std::string s, lexpr_t v) {
     assert(!locals.contains(s) && "local variable already exists in aslt!");
     locals.emplace(s, v);
   }
@@ -167,3 +181,5 @@ public:
 
   virtual ~aslt_visitor() override = default;
 };
+
+} // namespace aslp

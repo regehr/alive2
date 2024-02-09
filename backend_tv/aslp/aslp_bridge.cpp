@@ -19,13 +19,13 @@
 
 namespace fs = std::filesystem;
 
-static llvm::LLVMContext Context;
+llvm::LLVMContext* Context;
 
 namespace aslp {
 
 static_assert(!std::is_abstract<aslt_visitor>(), "aslt_visitor must not be abstract");
 
-void parse(const fs::path& path, lifter_interface& iface) {
+stmt_t parse(const fs::path& path, lifter_interface& iface) {
   std::ifstream file{path};
 
   antlr4::ANTLRInputStream input{file};
@@ -33,34 +33,33 @@ void parse(const fs::path& path, lifter_interface& iface) {
   antlr4::CommonTokenStream tokens{&lexer};
   aslt::SemanticsParser parser{&tokens};
 
-  parser.setBuildParseTree(true);
-
-  std::unique_ptr<llvm::Module> Mod = std::make_unique<llvm::Module>("", Context);
+  std::unique_ptr<llvm::Module> Mod = std::make_unique<llvm::Module>("", *Context);
   assert(Mod);
-  auto funty = llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {}, false);
+  auto funty = llvm::FunctionType::get(llvm::Type::getVoidTy(*Context), {}, false);
   auto fun = llvm::Function::Create(funty, llvm::GlobalValue::LinkageTypes::ExternalLinkage, "aslp_entry", Mod.get());
-  auto *bb = llvm::BasicBlock::Create(Context, "", fun);
+  auto *bb = llvm::BasicBlock::Create(*Context, "", fun);
 
-  aslt_visitor visitor{*fun, iface};
+  aslt_visitor visitor{iface};
 
-  visitor.visitStmts(parser.stmts());
+  return std::any_cast<stmt_t>(visitor.visitStmts(parser.stmts()));
 }
 
 #ifndef ASLT_DIR
 #define ASLT_DIR "./aslt"
 #endif
 
-void run(lifter_interface& iface) {
+stmt_t run(lifter_interface& iface) {
   fs::path aslt_dir{ASLT_DIR};
   fs::path aslt_path{fs::absolute(aslt_dir / "adds.aslt")};
 
   assert(fs::exists(aslt_path) && "aslt does not exist at");
   std::cout << "aslt: " << aslt_path << '\n';
 
-  aslp::parse(aslt_path, iface);
+  Context = &iface.ll_function().getContext();
+  auto ret = aslp::parse(aslt_path, iface);
 
   std::cerr << "ASLP FINISHED!" << std::endl;
-  std::exit(0);
+  return ret;
 }
 
 } // namespace aslp

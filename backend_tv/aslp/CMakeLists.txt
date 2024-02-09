@@ -14,8 +14,11 @@ antlr4_generate(Semantics ${CMAKE_CURRENT_SOURCE_DIR}/Semantics.g4 BOTH TRUE TRU
   "${ANTLR4_TOKEN_DIRECTORY_Semantics}")
 message(STATUS "antlr generated include: ${ANTLR4_INCLUDE_DIR_Semantics}")
 
-
-find_package(LLVM REQUIRED CONFIG) # llvm at head
+if (NOT LLVM_FOUND)
+  find_package(LLVM REQUIRED CONFIG)
+else()
+  message(STATUS "... LLVM already found")
+endif()
 message(STATUS "Found LLVM: " ${LLVM_DIR} ", tools: " ${LLVM_TOOLS_BINARY_DIR})
 # list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 # include(AddLLVM)
@@ -31,7 +34,7 @@ target_link_libraries(bridge PUBLIC antlr4_shared semantics)
 target_include_directories(bridge PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 target_compile_definitions(bridge PRIVATE ASLT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/aslt")
-target_compile_options(bridge PRIVATE -g -O0 -fsanitize=address -Wno-error=unused-variable)
+target_compile_options(bridge PRIVATE -g -O0 -fsanitize=address -Wno-error=unused-variable -Wno-error=unused-function)
 target_link_options(bridge PRIVATE -g -O0 -fsanitize=address)
 
 execute_process(COMMAND ${LLVM_TOOLS_BINARY_DIR}/llvm-config --libs support core irreader bitwriter
