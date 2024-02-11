@@ -1234,6 +1234,84 @@ class arm2llvm {
       AArch64::LD1Rv4s,
       AArch64::LD1Rv1d,
       AArch64::LD1Rv2d,
+      AArch64::LD1Onev8b,
+      AArch64::LD1Onev16b,
+      AArch64::LD1Onev4h,
+      AArch64::LD1Onev8h,
+      AArch64::LD1Onev2s,
+      AArch64::LD1Onev4s,
+      AArch64::LD1Onev1d,
+      AArch64::LD1Onev2d,
+      AArch64::LD1Onev8b_POST,
+      AArch64::LD1Onev16b_POST,
+      AArch64::LD1Onev4h_POST,
+      AArch64::LD1Onev8h_POST,
+      AArch64::LD1Onev2s_POST,
+      AArch64::LD1Onev4s_POST,
+      AArch64::LD1Onev1d_POST,
+      AArch64::LD1Onev2d_POST,
+      AArch64::LD1Twov8b,
+      AArch64::LD1Twov16b,
+      AArch64::LD1Twov4h,
+      AArch64::LD1Twov8h,
+      AArch64::LD1Twov2s,
+      AArch64::LD1Twov4s,
+      AArch64::LD1Twov1d,
+      AArch64::LD1Twov2d,
+      AArch64::LD1Twov8b_POST,
+      AArch64::LD1Twov16b_POST,
+      AArch64::LD1Twov4h_POST,
+      AArch64::LD1Twov8h_POST,
+      AArch64::LD1Twov2s_POST,
+      AArch64::LD1Twov4s_POST,
+      AArch64::LD1Twov1d_POST,
+      AArch64::LD1Twov2d_POST,
+      AArch64::LD1Threev8b,
+      AArch64::LD1Threev16b,
+      AArch64::LD1Threev4h,
+      AArch64::LD1Threev8h,
+      AArch64::LD1Threev2s,
+      AArch64::LD1Threev4s,
+      AArch64::LD1Threev1d,
+      AArch64::LD1Threev2d,
+      AArch64::LD1Threev8b_POST,
+      AArch64::LD1Threev16b_POST,
+      AArch64::LD1Threev4h_POST,
+      AArch64::LD1Threev8h_POST,
+      AArch64::LD1Threev2s_POST,
+      AArch64::LD1Threev4s_POST,
+      AArch64::LD1Threev1d_POST,
+      AArch64::LD1Threev2d_POST,
+      AArch64::LD1Fourv8b,
+      AArch64::LD1Fourv16b,
+      AArch64::LD1Fourv4h,
+      AArch64::LD1Fourv8h,
+      AArch64::LD1Fourv2s,
+      AArch64::LD1Fourv4s,
+      AArch64::LD1Fourv1d,
+      AArch64::LD1Fourv2d,
+      AArch64::LD1Fourv8b_POST,
+      AArch64::LD1Fourv16b_POST,
+      AArch64::LD1Fourv4h_POST,
+      AArch64::LD1Fourv8h_POST,
+      AArch64::LD1Fourv2s_POST,
+      AArch64::LD1Fourv4s_POST,
+      AArch64::LD1Fourv1d_POST,
+      AArch64::LD1Fourv2d_POST,
+      AArch64::LD2Twov8b,
+      AArch64::LD2Twov16b,
+      AArch64::LD2Twov4h,
+      AArch64::LD2Twov8h,
+      AArch64::LD2Twov2s,
+      AArch64::LD2Twov4s,
+      AArch64::LD2Twov2d,
+      AArch64::LD2Twov8b_POST,
+      AArch64::LD2Twov16b_POST,
+      AArch64::LD2Twov4h_POST,
+      AArch64::LD2Twov8h_POST,
+      AArch64::LD2Twov2s_POST,
+      AArch64::LD2Twov4s_POST,
+      AArch64::LD2Twov2d_POST,
       AArch64::LD3Threev8b,
       AArch64::LD3Threev16b,
       AArch64::LD3Threev4h,
@@ -5080,6 +5158,36 @@ public:
       break;
     }
 
+    case AArch64::LD1Onev8b:
+    case AArch64::LD1Onev16b:
+    case AArch64::LD1Onev4h:
+    case AArch64::LD1Onev8h:
+    case AArch64::LD1Onev2s:
+    case AArch64::LD1Onev4s:
+    case AArch64::LD1Onev1d:
+    case AArch64::LD1Onev2d:
+    case AArch64::LD1Onev8b_POST:
+    case AArch64::LD1Onev16b_POST:
+    case AArch64::LD1Onev4h_POST:
+    case AArch64::LD1Onev8h_POST:
+    case AArch64::LD1Onev2s_POST:
+    case AArch64::LD1Onev4s_POST:
+    case AArch64::LD1Onev1d_POST:
+    case AArch64::LD1Onev2d_POST:
+    case AArch64::LD2Twov8b:
+    case AArch64::LD2Twov16b:
+    case AArch64::LD2Twov4h:
+    case AArch64::LD2Twov8h:
+    case AArch64::LD2Twov2s:
+    case AArch64::LD2Twov4s:
+    case AArch64::LD2Twov2d:
+    case AArch64::LD2Twov8b_POST:
+    case AArch64::LD2Twov16b_POST:
+    case AArch64::LD2Twov4h_POST:
+    case AArch64::LD2Twov8h_POST:
+    case AArch64::LD2Twov2s_POST:
+    case AArch64::LD2Twov4s_POST:
+    case AArch64::LD2Twov2d_POST:
     case AArch64::LD3Threev8b:
     case AArch64::LD3Threev16b:
     case AArch64::LD3Threev4h:
@@ -5111,6 +5219,16 @@ public:
       unsigned numElts, eltSize;
       bool fullWidth;
       switch (opcode) {
+      case AArch64::LD1Onev8b:
+      case AArch64::LD1Onev8b_POST:
+      case AArch64::LD1Twov8b:
+      case AArch64::LD1Twov8b_POST:
+      case AArch64::LD1Threev8b:
+      case AArch64::LD1Threev8b_POST:
+      case AArch64::LD1Fourv8b:
+      case AArch64::LD1Fourv8b_POST:
+      case AArch64::LD2Twov8b:
+      case AArch64::LD2Twov8b_POST:
       case AArch64::LD3Threev8b:
       case AArch64::LD3Threev8b_POST:
       case AArch64::LD4Fourv8b:
@@ -5119,6 +5237,16 @@ public:
         eltSize = 8;
         fullWidth = false;
         break;
+      case AArch64::LD1Onev16b:
+      case AArch64::LD1Onev16b_POST:
+      case AArch64::LD1Twov16b:
+      case AArch64::LD1Twov16b_POST:
+      case AArch64::LD1Threev16b:
+      case AArch64::LD1Threev16b_POST:
+      case AArch64::LD1Fourv16b:
+      case AArch64::LD1Fourv16b_POST:
+      case AArch64::LD2Twov16b:
+      case AArch64::LD2Twov16b_POST:
       case AArch64::LD3Threev16b:
       case AArch64::LD3Threev16b_POST:
       case AArch64::LD4Fourv16b:
@@ -5127,6 +5255,16 @@ public:
         eltSize = 8;
         fullWidth = true;
         break;
+      case AArch64::LD1Onev4h:
+      case AArch64::LD1Onev4h_POST:
+      case AArch64::LD1Twov4h:
+      case AArch64::LD1Twov4h_POST:
+      case AArch64::LD1Threev4h:
+      case AArch64::LD1Threev4h_POST:
+      case AArch64::LD1Fourv4h:
+      case AArch64::LD1Fourv4h_POST:
+      case AArch64::LD2Twov4h:
+      case AArch64::LD2Twov4h_POST:
       case AArch64::LD3Threev4h:
       case AArch64::LD3Threev4h_POST:
       case AArch64::LD4Fourv4h:
@@ -5135,6 +5273,16 @@ public:
         eltSize = 16;
         fullWidth = false;
         break;
+      case AArch64::LD1Onev8h:
+      case AArch64::LD1Onev8h_POST:
+      case AArch64::LD1Twov8h:
+      case AArch64::LD1Twov8h_POST:
+      case AArch64::LD1Threev8h:
+      case AArch64::LD1Threev8h_POST:
+      case AArch64::LD1Fourv8h:
+      case AArch64::LD1Fourv8h_POST:
+      case AArch64::LD2Twov8h:
+      case AArch64::LD2Twov8h_POST:
       case AArch64::LD3Threev8h:
       case AArch64::LD3Threev8h_POST:
       case AArch64::LD4Fourv8h:
@@ -5143,6 +5291,16 @@ public:
         eltSize = 16;
         fullWidth = true;
         break;
+      case AArch64::LD1Onev2s:
+      case AArch64::LD1Onev2s_POST:
+      case AArch64::LD1Twov2s:
+      case AArch64::LD1Twov2s_POST:
+      case AArch64::LD1Threev2s:
+      case AArch64::LD1Threev2s_POST:
+      case AArch64::LD1Fourv2s:
+      case AArch64::LD1Fourv2s_POST:
+      case AArch64::LD2Twov2s:
+      case AArch64::LD2Twov2s_POST:
       case AArch64::LD3Threev2s:
       case AArch64::LD3Threev2s_POST:
       case AArch64::LD4Fourv2s:
@@ -5151,6 +5309,16 @@ public:
         eltSize = 32;
         fullWidth = false;
         break;
+      case AArch64::LD1Onev4s:
+      case AArch64::LD1Onev4s_POST:
+      case AArch64::LD1Twov4s:
+      case AArch64::LD1Twov4s_POST:
+      case AArch64::LD1Threev4s:
+      case AArch64::LD1Threev4s_POST:
+      case AArch64::LD1Fourv4s:
+      case AArch64::LD1Fourv4s_POST:
+      case AArch64::LD2Twov4s:
+      case AArch64::LD2Twov4s_POST:
       case AArch64::LD3Threev4s:
       case AArch64::LD3Threev4s_POST:
       case AArch64::LD4Fourv4s:
@@ -5159,6 +5327,28 @@ public:
         eltSize = 32;
         fullWidth = true;
         break;
+      case AArch64::LD1Onev1d:
+      case AArch64::LD1Onev1d_POST:
+      case AArch64::LD1Twov1d:
+      case AArch64::LD1Twov1d_POST:
+      case AArch64::LD1Threev1d:
+      case AArch64::LD1Threev1d_POST:
+      case AArch64::LD1Fourv1d:
+      case AArch64::LD1Fourv1d_POST:
+        numElts = 1;
+        eltSize = 64;
+        fullWidth = false;
+        break;
+      case AArch64::LD1Onev2d:
+      case AArch64::LD1Onev2d_POST:
+      case AArch64::LD1Twov2d:
+      case AArch64::LD1Twov2d_POST:
+      case AArch64::LD1Threev2d:
+      case AArch64::LD1Threev2d_POST:
+      case AArch64::LD1Fourv2d:
+      case AArch64::LD1Fourv2d_POST:
+      case AArch64::LD2Twov2d:
+      case AArch64::LD2Twov2d_POST:
       case AArch64::LD3Threev2d:
       case AArch64::LD3Threev2d_POST:
       case AArch64::LD4Fourv2d:
@@ -5171,8 +5361,75 @@ public:
         assert(false);
         break;
       }
+
       unsigned nregs;
       switch (opcode) {
+      case AArch64::LD1Onev8b:
+      case AArch64::LD1Onev16b:
+      case AArch64::LD1Onev4h:
+      case AArch64::LD1Onev8h:
+      case AArch64::LD1Onev2s:
+      case AArch64::LD1Onev4s:
+      case AArch64::LD1Onev1d:
+      case AArch64::LD1Onev2d:
+      case AArch64::LD1Onev8b_POST:
+      case AArch64::LD1Onev16b_POST:
+      case AArch64::LD1Onev4h_POST:
+      case AArch64::LD1Onev8h_POST:
+      case AArch64::LD1Onev2s_POST:
+      case AArch64::LD1Onev4s_POST:
+      case AArch64::LD1Onev1d_POST:
+      case AArch64::LD1Onev2d_POST:
+        nregs = 1;
+        break;
+      case AArch64::LD1Twov8b:
+      case AArch64::LD1Twov16b:
+      case AArch64::LD1Twov4h:
+      case AArch64::LD1Twov8h:
+      case AArch64::LD1Twov2s:
+      case AArch64::LD1Twov4s:
+      case AArch64::LD1Twov1d:
+      case AArch64::LD1Twov2d:
+      case AArch64::LD1Twov8b_POST:
+      case AArch64::LD1Twov16b_POST:
+      case AArch64::LD1Twov4h_POST:
+      case AArch64::LD1Twov8h_POST:
+      case AArch64::LD1Twov2s_POST:
+      case AArch64::LD1Twov4s_POST:
+      case AArch64::LD1Twov1d_POST:
+      case AArch64::LD1Twov2d_POST:
+      case AArch64::LD2Twov8b:
+      case AArch64::LD2Twov16b:
+      case AArch64::LD2Twov4h:
+      case AArch64::LD2Twov8h:
+      case AArch64::LD2Twov2s:
+      case AArch64::LD2Twov4s:
+      case AArch64::LD2Twov2d:
+      case AArch64::LD2Twov8b_POST:
+      case AArch64::LD2Twov16b_POST:
+      case AArch64::LD2Twov4h_POST:
+      case AArch64::LD2Twov8h_POST:
+      case AArch64::LD2Twov2s_POST:
+      case AArch64::LD2Twov4s_POST:
+      case AArch64::LD2Twov2d_POST:
+        nregs = 2;
+        break;
+      case AArch64::LD1Threev8b:
+      case AArch64::LD1Threev16b:
+      case AArch64::LD1Threev4h:
+      case AArch64::LD1Threev8h:
+      case AArch64::LD1Threev2s:
+      case AArch64::LD1Threev4s:
+      case AArch64::LD1Threev1d:
+      case AArch64::LD1Threev2d:
+      case AArch64::LD1Threev8b_POST:
+      case AArch64::LD1Threev16b_POST:
+      case AArch64::LD1Threev4h_POST:
+      case AArch64::LD1Threev8h_POST:
+      case AArch64::LD1Threev2s_POST:
+      case AArch64::LD1Threev4s_POST:
+      case AArch64::LD1Threev1d_POST:
+      case AArch64::LD1Threev2d_POST:
       case AArch64::LD3Threev8b:
       case AArch64::LD3Threev16b:
       case AArch64::LD3Threev4h:
@@ -5189,6 +5446,22 @@ public:
       case AArch64::LD3Threev2d_POST:
         nregs = 3;
         break;
+      case AArch64::LD1Fourv8b:
+      case AArch64::LD1Fourv16b:
+      case AArch64::LD1Fourv4h:
+      case AArch64::LD1Fourv8h:
+      case AArch64::LD1Fourv2s:
+      case AArch64::LD1Fourv4s:
+      case AArch64::LD1Fourv1d:
+      case AArch64::LD1Fourv2d:
+      case AArch64::LD1Fourv8b_POST:
+      case AArch64::LD1Fourv16b_POST:
+      case AArch64::LD1Fourv4h_POST:
+      case AArch64::LD1Fourv8h_POST:
+      case AArch64::LD1Fourv2s_POST:
+      case AArch64::LD1Fourv4s_POST:
+      case AArch64::LD1Fourv1d_POST:
+      case AArch64::LD1Fourv2d_POST:
       case AArch64::LD4Fourv8b:
       case AArch64::LD4Fourv16b:
       case AArch64::LD4Fourv4h:
@@ -5209,7 +5482,46 @@ public:
         assert(false);
         break;
       }
-      bool isPost = opcode == AArch64::LD3Threev8b_POST ||
+      bool isPost = opcode == AArch64::LD1Onev8b_POST ||
+                    opcode == AArch64::LD1Onev16b_POST ||
+                    opcode == AArch64::LD1Onev4h_POST ||
+                    opcode == AArch64::LD1Onev8h_POST ||
+                    opcode == AArch64::LD1Onev2s_POST ||
+                    opcode == AArch64::LD1Onev4s_POST ||
+                    opcode == AArch64::LD1Onev1d_POST ||
+                    opcode == AArch64::LD1Onev2d_POST ||
+                    opcode == AArch64::LD1Twov8b_POST ||
+                    opcode == AArch64::LD1Twov16b_POST ||
+                    opcode == AArch64::LD1Twov4h_POST ||
+                    opcode == AArch64::LD1Twov8h_POST ||
+                    opcode == AArch64::LD1Twov2s_POST ||
+                    opcode == AArch64::LD1Twov4s_POST ||
+                    opcode == AArch64::LD1Twov1d_POST ||
+                    opcode == AArch64::LD1Twov2d_POST ||
+                    opcode == AArch64::LD1Threev8b_POST ||
+                    opcode == AArch64::LD1Threev16b_POST ||
+                    opcode == AArch64::LD1Threev4h_POST ||
+                    opcode == AArch64::LD1Threev8h_POST ||
+                    opcode == AArch64::LD1Threev2s_POST ||
+                    opcode == AArch64::LD1Threev4s_POST ||
+                    opcode == AArch64::LD1Threev1d_POST ||
+                    opcode == AArch64::LD1Threev2d_POST ||
+                    opcode == AArch64::LD1Fourv8b_POST ||
+                    opcode == AArch64::LD1Fourv16b_POST ||
+                    opcode == AArch64::LD1Fourv4h_POST ||
+                    opcode == AArch64::LD1Fourv8h_POST ||
+                    opcode == AArch64::LD1Fourv2s_POST ||
+                    opcode == AArch64::LD1Fourv4s_POST ||
+                    opcode == AArch64::LD1Fourv1d_POST ||
+                    opcode == AArch64::LD1Fourv2d_POST ||
+                    opcode == AArch64::LD2Twov8b_POST ||
+                    opcode == AArch64::LD2Twov16b_POST ||
+                    opcode == AArch64::LD2Twov4h_POST ||
+                    opcode == AArch64::LD2Twov8h_POST ||
+                    opcode == AArch64::LD2Twov2s_POST ||
+                    opcode == AArch64::LD2Twov4s_POST ||
+                    opcode == AArch64::LD2Twov2d_POST ||
+                    opcode == AArch64::LD3Threev8b_POST ||
                     opcode == AArch64::LD3Threev16b_POST ||
                     opcode == AArch64::LD3Threev4h_POST ||
                     opcode == AArch64::LD3Threev8h_POST ||
