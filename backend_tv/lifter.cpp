@@ -50,6 +50,7 @@
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include <llvm/IR/BasicBlock.h>
+#include <variant>
 
 #define GET_INSTRINFO_ENUM
 #include "Target/AArch64/AArch64GenInstrInfo.inc"
@@ -217,6 +218,7 @@ class arm2llvm : public aslp::lifter_interface {
   Function *assertDecl;
   const MCCodeEmitter &MCE;
   const MCSubtargetInfo &STI;
+  const MCInstrAnalysis &IA;
 
   // Map of ADRP MCInsts to the string representations of the operand variable
   // names
@@ -3502,9 +3504,10 @@ class arm2llvm : public aslp::lifter_interface {
 public:
   arm2llvm(Module *LiftedModule, MCFunction &MF, Function &srcFn,
            MCInstPrinter *instrPrinter, const MCCodeEmitter &MCE,
-           const MCSubtargetInfo &STI)
+           const MCSubtargetInfo &STI, const MCInstrAnalysis& IA)
       : LiftedModule(LiftedModule), MF(MF), srcFn(srcFn),
-        instrPrinter(instrPrinter), MCE{MCE}, STI{STI}, DL(srcFn.getParent()->getDataLayout()) {
+        instrPrinter(instrPrinter), MCE{MCE}, STI{STI}, IA{IA},
+        DL(srcFn.getParent()->getDataLayout()) {
 
     // sanity checking
     assert(disjoint(instrs_32, instrs_64));
@@ -3521,44 +3524,77 @@ public:
                                   "llvm.assert", LiftedModule);
   }
 
+  std::optional<aslp::opcode_t> getArmOpcode(const MCInst &I) {
+    SmallVector<MCFixup> Fixups{};
+    SmallVector<char> Code{};
+
+    if (I.getOpcode() == AArch64::SEH_Nop)
+      return std::nullopt;
+
+    MCE.encodeInstruction(I, Code, Fixups, STI);
+
+    aslp::opcode_t ret;
+    unsigned i = 0;
+    for (const char& x : Code) {
+      ret.at(i++) = x;
+    }
+    return ret;
+  }
+
   // Visit an MCInst and convert it to LLVM IR
   // See: https://documentation-service.arm.com/static/6245e8f0f7d10f7540e0c054
   void liftInst(MCInst &I) {
 
-    auto entrybb = LLVMBB;
-    auto aslpresult = aslp::run(*this);
-
-    LLVMBB = entrybb;
-    this->createBranch(aslpresult.first);
-    LLVMBB = aslpresult.second;
-
-    liftedFn->dump();
-    std::exit(0);
-
+    *out << "mcinst: " << I.getOpcode() << " = ";
     auto opcode = I.getOpcode();
     PrevInst = CurInst;
     CurInst = &I;
 
-    *out << "mcinst: " << I.getOpcode() << " = ";
     std::string sss;
     llvm::raw_string_ostream ss{sss};
     I.dump_pretty(ss, instrPrinter);
     *out << sss << '\n';
 
-    SmallVector<MCFixup> Fixups{};
-    SmallVector<char> Code{};
-    if (I.getOpcode() != AArch64::SEH_Nop)
-      MCE.encodeInstruction(I, Code, Fixups, STI);
-    *out << "  ";
-    for (const char& x : Code) {
-      *out << std::format("{:02x} ", x);
+
+    auto entrybb = LLVMBB;
+    aslp::bridge bridge{*this, MCE, STI, IA};
+
+    if (auto a64Opcode = getArmOpcode(I)) {
+      auto aslpResult = bridge.run(I, a64Opcode.value());
+
+      if (auto stmts = std::get_if<aslp::stmt_t>(&aslpResult)) {
+
+        // branch lifter's entry BB to entry BB in ASLP result,
+        // then set ASLP's exit BB to be the next BB.
+        LLVMBB = entrybb;
+        this->createBranch(stmts->first);
+        LLVMBB = stmts->second;
+
+        *out 
+          << "lifted via aslp: " 
+          << instrPrinter->getOpcodeName(I.getOpcode()).str() 
+          << std::endl;
+        return;
+
+      } else {
+        switch (std::get<aslp::err_t>(aslpResult)) {
+          case aslp::err_t::missing:
+            *out << "aslp missing! "
+              << std::format("{:08x}", aslp::get_opnum(a64Opcode.value()))
+              << "  "
+              << aslp::format_opcode(a64Opcode.value())
+              << std::endl;
+            break;
+          case aslp::err_t::banned:
+            *out << "aslp banned\n";
+            break; // continue with classic.
+        }
+      }
+    } else {
+      *out << "arm opnum failed\n";
+      // arm opcode translation failed, possibly SEH_NOP. continue with classic.
     }
-    uint32_t a64opcode = 0;
-    for (const char& x : std::views::reverse(Code)) {
-      a64opcode <<= 8;
-      a64opcode |= (0xff & (uint32_t)x);
-    }
-    *out << " : " << std::format("0x{:08x}", a64opcode) << '\n';
+
 
     auto i1 = getIntTy(1);
     auto i8 = getIntTy(8);
@@ -9362,6 +9398,7 @@ public:
 
       // BitCast src to a vector of numElts x (2*eltSize) for narrowing
       assert(numElts * (2 * eltSize) == 128 && "BitCasting to wrong type");
+
       Value *src_vector = createBitCast(src, getVecTy(2 * eltSize, numElts));
       Value *narrowed_vector =
           createTrunc(src_vector, getVecTy(eltSize, numElts));
@@ -10005,9 +10042,9 @@ public:
       auto &mc_instrs = mc_bb->getInstrs();
 
       for (auto &inst : mc_instrs) {
-        llvmInstNum = 1000;
-        liftInst(inst);
+        llvmInstNum = 0;
         ++armInstNum;
+        liftInst(inst);
       }
 
       // machine code falls through but LLVM isn't allowed to
@@ -10442,7 +10479,7 @@ pair<Function *, Function *> liftFunc(Module *OrigModule, Module *LiftedModule,
   unique_ptr<MCCodeEmitter> MCE{Targ->createMCCodeEmitter(*MCII.get(), Ctx)};
   assert(MCE && "createMCCodeEmitter failed.");
 
-  auto liftedFn = arm2llvm{LiftedModule, Str.MF, *srcFn, IP.get(), *MCE, *STI}.run();
+  auto liftedFn = arm2llvm{LiftedModule, Str.MF, *srcFn, IP.get(), *MCE, *STI, *Ana}.run();
 
   std::string sss;
   llvm::raw_string_ostream ss(sss);
