@@ -1,6 +1,7 @@
 #include <cassert>
 #include <iostream>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <ranges>
 
@@ -24,42 +25,31 @@
 
 namespace fs = std::filesystem;
 
-llvm::LLVMContext* Context;
-
 namespace aslp {
 
 bridge::bridge(lifter_interface& iface, const llvm::MCCodeEmitter& mce, const llvm::MCSubtargetInfo& sti, const llvm::MCInstrAnalysis& ia) 
-  : iface{iface}, mce{mce}, sti{sti}, ia{ia} { }
+  : iface{iface}, context{iface.ll_function().getContext()}, mce{mce}, sti{sti}, ia{ia} { }
 
 
-std::optional<bridge::parsed_t> bridge::parse(const std::filesystem::path& path) const& {
+std::variant<err_t, stmt_t> bridge::parse(const std::filesystem::path& path) {
   std::ifstream file{path};
   if (file.fail()) {
-    return std::nullopt;
+    return err_t::missing;
   }
 
   antlr4::ANTLRInputStream input{file};
   aslt::SemanticsLexer lexer{&input};
   antlr4::CommonTokenStream tokens{&lexer};
-  aslt::SemanticsParser parser{&tokens};
 
-  std::unique_ptr<llvm::Module> Mod = std::make_unique<llvm::Module>("", *Context);
-  assert(Mod);
-  auto funty = llvm::FunctionType::get(llvm::Type::getVoidTy(*Context), {}, false);
-  auto fun = llvm::Function::Create(funty, llvm::GlobalValue::LinkageTypes::ExternalLinkage, "aslp_entry", Mod.get());
-  auto *bb = llvm::BasicBlock::Create(*Context, "", fun);
+  assert(!parser);
+  parser = std::make_unique<aslt::SemanticsParser>(&tokens);
 
   aslt_visitor visitor{iface};
 
-  auto ctx = parser.stmts();
+  auto ctx = parser->stmts();
   assert(ctx && "parsing failed! syntax error?");
-  return ctx ? std::make_optional(std::ref(*ctx)) : std::nullopt;
-}
 
-
-stmt_t bridge::visit(const bridge::parsed_t ctx) const& {
-  aslt_visitor visitor{iface};
-  return std::any_cast<stmt_t>(visitor.visitStmts(&ctx.get()));
+  return std::any_cast<stmt_t>(visitor.visitStmts(ctx));
 }
 
 #ifndef ASLT_DIR
@@ -67,11 +57,10 @@ stmt_t bridge::visit(const bridge::parsed_t ctx) const& {
 #endif
 
 
-std::variant<err_t, stmt_t> bridge::run(const llvm::MCInst& inst, const opcode_t& bytes) const& {
-  if (ia.isBranch(inst)) {
+std::variant<err_t, stmt_t> bridge::run(const llvm::MCInst& inst, const opcode_t& bytes) {
+  bool banned = ia.isBranch(inst) || ia.isReturn(inst) || ia.isCall(inst) || ia.isIndirectBranch(inst);
+  if (banned)
     return err_t::banned;
-  }
-
 
   std::string opstr = std::format("0x{:08x}", get_opnum(bytes));
 
@@ -80,12 +69,12 @@ std::variant<err_t, stmt_t> bridge::run(const llvm::MCInst& inst, const opcode_t
   aslt_path = std::filesystem::absolute(aslt_path);
 
   auto parsed = parse(aslt_path);
-  if (!parsed) return err_t::missing;
-
-  auto ret = visit(parsed.value());
+  auto ret = std::get_if<stmt_t>(&parsed);
+  if (!ret)
+    return parsed;
 
   std::cerr << "ASLP FINISHED!" << std::endl;
-  return ret;
+  return *ret;
 }
 
 

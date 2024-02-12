@@ -1,0 +1,3 @@
+Stmt_If(Expr_TApply(not_bool.0,[],[(Expr_TApply(eq_bits.0,[(Expr_LitInt("1"))],[(Expr_Field(Expr_Var(PSTATE),Z));(Expr_LitBits("1"))]))]),[
+Stmt_Assign(LExpr_Array(LExpr_Var(_R),Expr_LitInt("0")),Expr_LitBits("0000000000000000000000000000000000000000000000000000000000000000"))
+],[],(else Stmt_Assign(LExpr_Array(LExpr_Var(_R),Expr_LitInt("0")),Expr_LitBits("0000000000000000000000000000000000000000000000000000000000000001"))))

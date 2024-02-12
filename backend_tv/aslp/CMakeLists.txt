@@ -37,7 +37,8 @@ target_link_libraries(bridge PUBLIC antlr4_shared semantics)
 target_include_directories(bridge PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 target_compile_definitions(bridge PRIVATE ASLT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/aslt")
-target_compile_options(bridge PRIVATE -g -O0 -fsanitize=address -Wno-error=unused-variable -Wno-error=unused-function)
+target_compile_options(bridge PRIVATE -g -O0 -fsanitize=address
+  -Wno-error=unused-variable -Wno-error=unused-function -Wno-error=unused-but-set-variable)
 target_link_options(bridge PRIVATE -g -O0 -fsanitize=address)
 
 execute_process(COMMAND "${LLVM_CONFIG}" --libs support core irreader bitwriter

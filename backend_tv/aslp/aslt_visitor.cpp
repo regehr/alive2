@@ -18,6 +18,7 @@ namespace {
     return x ? x : y;
   }
 
+
  [[noreturn]] void die(llvm::Value* val, const std::string_view& str) {
    std::cerr << "Assertion failure! " << str << std::endl;
    std::string s;
@@ -40,11 +41,16 @@ std::any aslt_visitor::visitStmts(SemanticsParser::StmtsContext *ctx) {
   auto ctxs = ctx->stmt();
   assert(!ctxs.empty() && "statement list must not be empty!");
 
-  stmt_counts[depth] = 0;
+  // store and reset current bb to support nesting statements nicely
+  auto bb = iface.get_bb();
+
+  stmt_counts[depth+1] = 0;
   stmt_t s = stmt(ctxs.at(0));
   for (auto& s2 : ctx->stmt() | std::ranges::views::drop(1)) {
     s = link(s, stmt(s2));
   }
+
+  iface.set_bb(bb);
   return s;
 }
 
@@ -120,9 +126,25 @@ std::any aslt_visitor::visitCall_stmt(SemanticsParser::Call_stmtContext *ctx) {
   return super::visitCall_stmt(ctx);
 }
 
-std::any aslt_visitor::visitConditional_stmt(SemanticsParser::Conditional_stmtContext *ctx) {
-  log() << "TODO visitConditional_stmt" << '\n';
-  return super::visitConditional_stmt(ctx);
+std::any aslt_visitor::visitConditionalStmt(SemanticsParser::ConditionalStmtContext *ctx) {
+  log() << "visitConditional_stmt" << '\n';
+
+  auto entry = new_stmt("conditional");
+  
+  auto cond = expr(ctx->expr());
+  assert(cond->getType()->getIntegerBitWidth() == 1 && "condition must have type i1");
+
+  // NOTE! visitStmts will restore the bb after it concludes, i.e. reset to 'entry'
+  auto tstmts = std::any_cast<stmt_t>(visitStmts(ctx->tcase));
+  auto fstmts = std::any_cast<stmt_t>(visitStmts(ctx->fcase));
+
+  iface.createBranch(cond, tstmts.first, fstmts.first);
+
+  auto join = new_stmt("conditional_join");
+  link(tstmts, join);
+  link(fstmts, join);
+
+  return static_cast<stmt_t>(std::make_pair(entry.first, join.second));
 }
 
 std::any aslt_visitor::visitType(SemanticsParser::TypeContext *ctx) {
@@ -180,8 +202,10 @@ std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
   if (locals.contains(name))
     var = locals.at(name);
   else if (name == "_R")
-    var = xreg_sentinel; // XXX return X0 as a sentinel for all X registers
-  else
+    var = xreg_sentinel; // return X0 as a sentinel for all X registers
+  else if (name == "PSTATE")
+    var = pstate_sentinel;
+  else 
     assert(false && "unsupported or undefined variable!");
 
   auto ptr = llvm::cast<llvm::AllocaInst>(var);
@@ -205,10 +229,10 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       assert(x->getType()->getIntegerBitWidth() == 1 && "size mismatch in cvt bv bool");
       return x;
 
-    } else if (name == "not_bits.0") {
+    } else if (name == "not_bits.0" || name == "not_bool.0") {
       return static_cast<expr_t>(iface.createNot(x));
 
-    }
+    } 
   } else if (args.size() == 2) {
     auto x = args[0], y = args[1];
     if (name == "SignExtend.0" && targs.size() == 2) {
@@ -245,22 +269,29 @@ std::any aslt_visitor::visitExprSlices(SemanticsParser::ExprSlicesContext *ctx) 
 }
 
 std::any aslt_visitor::visitExprField(SemanticsParser::ExprFieldContext *ctx) {
-  log() << "TODO visitExprField" << '\n';
-  return super::visitExprField(ctx);
+  log() << "visitExprField" << '\n';
+
+  const static std::map<uint8_t, pstate_t> pstate_map{
+    {'N', pstate_t::N}, {'Z', pstate_t::Z}, {'C', pstate_t::C}, {'V', pstate_t::V}, 
+  };
+
+  auto base = expr_var(ctx->expr());
+  auto field = ctx->SSYMBOL()->getText();
+  if (base == pstate_sentinel) {
+    assert(field.length() == 1 && "pstate field name length unexpect");
+    auto c = field.at(0);
+    auto reg = iface.get_reg(reg_t::PSTATE, (unsigned)pstate_map.at(c));
+    auto load = iface.createLoad(reg->getAllocatedType(), reg);
+    return static_cast<expr_t>(load);
+  }
+
+  die(base, "expr field unsup");
 }
 
 std::any aslt_visitor::visitExprArray(SemanticsParser::ExprArrayContext *ctx) {
   // an array read is used for registers
   log() << "visitExprArray" << '\n';
-  auto _base = expr(ctx->base);
-
-  // XXX: HACK! since ExprVar are realised as LoadInst, this is incorrect in an array.
-  // hence, we undo the load to obtain the actual register.
-  auto load = llvm::cast<llvm::LoadInst>(_base);
-  auto base = load->getPointerOperand();
-  assert(load->isSafeToRemove());
-  load->eraseFromParent();
-
+  auto base = expr_var(ctx->base);
 
   assert(ctx->indices.size() == 1 && "array access has multiple indices");
   auto index = lit_int(ctx->indices.at(0));

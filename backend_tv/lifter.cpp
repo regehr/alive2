@@ -3553,8 +3553,10 @@ public:
     std::string sss;
     llvm::raw_string_ostream ss{sss};
     I.dump_pretty(ss, instrPrinter);
-    *out << sss << '\n';
-
+    *out << sss << " = " << std::flush;
+    if (I.getOpcode() != AArch64::SEH_Nop)
+      instrPrinter->printInst(&I, 100, "", STI, outs());
+    *out << '\n';
 
     auto entrybb = LLVMBB;
     aslp::bridge bridge{*this, MCE, STI, IA};
@@ -3571,7 +3573,7 @@ public:
         LLVMBB = stmts->second;
 
         *out 
-          << "lifted via aslp: " 
+          << "... lifted via aslp: " 
           << instrPrinter->getOpcodeName(I.getOpcode()).str() 
           << std::endl;
         return;
@@ -3579,19 +3581,19 @@ public:
       } else {
         switch (std::get<aslp::err_t>(aslpResult)) {
           case aslp::err_t::missing:
-            *out << "aslp missing! "
-              << std::format("{:08x}", aslp::get_opnum(a64Opcode.value()))
+            *out << "... aslp missing! "
+              << std::format("0x{:08x}", aslp::get_opnum(a64Opcode.value()))
               << "  "
               << aslp::format_opcode(a64Opcode.value())
               << std::endl;
             break;
           case aslp::err_t::banned:
-            *out << "aslp banned\n";
+            *out << "... aslp banned\n";
             break; // continue with classic.
         }
       }
     } else {
-      *out << "arm opnum failed\n";
+      *out << "... arm opnum failed\n";
       // arm opcode translation failed, possibly SEH_NOP. continue with classic.
     }
 
@@ -10480,6 +10482,8 @@ pair<Function *, Function *> liftFunc(Module *OrigModule, Module *LiftedModule,
   assert(MCE && "createMCCodeEmitter failed.");
 
   auto liftedFn = arm2llvm{LiftedModule, Str.MF, *srcFn, IP.get(), *MCE, *STI, *Ana}.run();
+
+  liftedFn->dump();
 
   std::string sss;
   llvm::raw_string_ostream ss(sss);

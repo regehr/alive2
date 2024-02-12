@@ -74,12 +74,14 @@ protected:
     depth--;
     return std::any_cast<expr_t>(x);
   }
+
   virtual lexpr_t lexpr(aslt::SemanticsParser::LexprContext* ctx) {
     depth++;
     auto x = visitLexpr(ctx);
     depth--;
     return std::any_cast<lexpr_t>(x);
   }
+
   virtual slice_t slice(aslt::SemanticsParser::Slice_exprContext* ctx) {
     depth++;
     auto x = visitSlice_expr(ctx);
@@ -94,6 +96,24 @@ protected:
     return i->getSExtValue();
   }
 
+  virtual lexpr_t expr_var(aslt::SemanticsParser::ExprContext* ctx) {
+    auto x = expr(ctx);
+
+    // XXX: HACK! since ExprVar are realised as LoadInst, this is incorrect in an array.
+    // hence, we undo the load to obtain the actual register.
+
+    auto load = llvm::cast<llvm::LoadInst>(x);
+    auto base = llvm::dyn_cast<llvm::AllocaInst>(load->getPointerOperand());
+
+    assert(base && "expr_var: attempt to reference non-allocainst in a lexpr context");
+    assert(load->isSafeToRemove() && "surely not");
+    load->eraseFromParent();
+
+    assert(base == xreg_sentinel || base == pstate_sentinel);
+
+    return llvm::cast<llvm::AllocaInst>(base);
+  }
+
   virtual stmt_t stmt(aslt::SemanticsParser::StmtContext* ctx) {
     depth++;
     auto x = visitStmt(ctx);
@@ -103,7 +123,7 @@ protected:
   }
 
   virtual stmt_t new_stmt(const std::string_view& name) {
-    auto count = ++stmt_counts[depth];
+    auto count = stmt_counts[depth]++;
     std::string s = std::format("aslp_stmt_{}_{}_", depth, count);
     s += name;
     s += '_';
@@ -153,7 +173,7 @@ public:
   virtual std::any visitVarDeclsNoInit(aslt::SemanticsParser::VarDeclsNoInitContext *ctx) override;
   virtual std::any visitAssert(aslt::SemanticsParser::AssertContext *ctx) override;
   virtual std::any visitCall_stmt(aslt::SemanticsParser::Call_stmtContext *ctx) override;
-  virtual std::any visitConditional_stmt(aslt::SemanticsParser::Conditional_stmtContext *ctx) override;
+  virtual std::any visitConditionalStmt(aslt::SemanticsParser::ConditionalStmtContext *ctx) override;
   virtual std::any visitType(aslt::SemanticsParser::TypeContext *ctx) override;
   virtual std::any visitLExprVar(aslt::SemanticsParser::LExprVarContext *ctx) override;
   virtual std::any visitLExprField(aslt::SemanticsParser::LExprFieldContext *ctx) override;

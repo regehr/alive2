@@ -24,21 +24,23 @@ enum struct err_t {
 
 class bridge {
   lifter_interface& iface;
+  llvm::LLVMContext& context;
   const llvm::MCCodeEmitter& mce;
   const llvm::MCSubtargetInfo& sti;
   const llvm::MCInstrAnalysis& ia;
 
+  std::unique_ptr<aslt::SemanticsParser> parser; // XXX not thread-safe
+
 public:
   bridge(lifter_interface&, const llvm::MCCodeEmitter&, const llvm::MCSubtargetInfo&, const llvm::MCInstrAnalysis&);
 
-  std::variant<err_t, stmt_t> run(const llvm::MCInst& inst, const opcode_t& bytes) const&;
+  std::variant<err_t, stmt_t> run(const llvm::MCInst& inst, const opcode_t& bytes);
 
 
 protected:
   using parsed_t = std::reference_wrapper<aslt::SemanticsParser::StmtsContext>;
 
-  std::optional<parsed_t> parse(const std::filesystem::path&) const&;
-  stmt_t visit(const parsed_t) const&;
+  std::variant<err_t, stmt_t> parse(const std::filesystem::path&);
 };
 
 std::string format_opcode(const opcode_t& bytes);
