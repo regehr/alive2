@@ -712,10 +712,6 @@ class arm2llvm {
       AArch64::STPDpre,
       AArch64::STPXpost,
       AArch64::STPDpost,
-      AArch64::ST1i8,
-      AArch64::ST1i16,
-      AArch64::ST1i32,
-      AArch64::ST1i64,
       AArch64::CCMNXi,
       AArch64::CCMNXr,
       AArch64::STURXi,
@@ -1330,6 +1326,14 @@ class arm2llvm {
       AArch64::STPQpre,
       AArch64::STPQpost,
       AArch64::STRQroX,
+      AArch64::ST1i8,
+      AArch64::ST1i16,
+      AArch64::ST1i32,
+      AArch64::ST1i64,
+      AArch64::ST1i8_POST,
+      AArch64::ST1i16_POST,
+      AArch64::ST1i32_POST,
+      AArch64::ST1i64_POST,
       AArch64::ST1Onev8b,
       AArch64::ST1Onev16b,
       AArch64::ST1Onev4h,
@@ -5919,36 +5923,31 @@ public:
     case AArch64::ST1i8:
     case AArch64::ST1i16:
     case AArch64::ST1i32:
-    case AArch64::ST1i64: {
-      auto &op0 = CurInst->getOperand(0);
-      auto &op1 = CurInst->getOperand(1);
-      auto &op2 = CurInst->getOperand(2);
-      assert(op0.isReg() && op1.isImm() && op2.isReg());
-
-      auto src = readFromReg(op0.getReg());
-      auto index = getImm(1);
-      auto baseReg = op2.getReg();
-      assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
-             (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
-             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
-      auto base = readPtrFromReg(baseReg);
-
+    case AArch64::ST1i64:
+    case AArch64::ST1i8_POST:
+    case AArch64::ST1i16_POST:
+    case AArch64::ST1i32_POST:
+    case AArch64::ST1i64_POST: {
       unsigned numElts, eltSize;
 
       switch (opcode) {
       case AArch64::ST1i8:
+      case AArch64::ST1i8_POST:
         numElts = 16;
         eltSize = 8;
         break;
       case AArch64::ST1i16:
+      case AArch64::ST1i16_POST:
         numElts = 8;
         eltSize = 16;
         break;
       case AArch64::ST1i32:
+      case AArch64::ST1i32_POST:
         numElts = 4;
         eltSize = 32;
         break;
       case AArch64::ST1i64:
+      case AArch64::ST1i64_POST:
         numElts = 2;
         eltSize = 64;
         break;
@@ -5958,9 +5957,69 @@ public:
         break;
       }
 
-      auto casted = createBitCast(src, getVecTy(eltSize, numElts));
-      auto loaded = createExtractElement(casted, index);
-      storeToMemoryImmOffset(base, 0, eltSize / 8, loaded);
+      unsigned nregs;
+      switch (opcode) {
+      case AArch64::ST1i8:
+      case AArch64::ST1i16:
+      case AArch64::ST1i32:
+      case AArch64::ST1i64:
+      case AArch64::ST1i8_POST:
+      case AArch64::ST1i16_POST:
+      case AArch64::ST1i32_POST:
+      case AArch64::ST1i64_POST:
+        nregs = 1;
+        break;
+      default:
+        assert(false);
+        break;
+      }
+      bool isPost =
+          opcode == AArch64::ST1i8_POST || opcode == AArch64::ST1i16_POST ||
+          opcode == AArch64::ST1i32_POST || opcode == AArch64::ST1i64_POST;
+
+      auto regCounter =
+          decodeRegSet(CurInst->getOperand(isPost ? 1 : 0).getReg());
+      auto index = getImm(isPost ? 2 : 1);
+      auto baseReg = CurInst->getOperand(isPost ? 3 : 2).getReg();
+      assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+             (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
+             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
+      assert((regCounter >= AArch64::Q0 && regCounter <= AArch64::Q31));
+
+      Value *offset = nullptr;
+      if (isPost) {
+        if (CurInst->getOperand(4).isReg() &&
+            CurInst->getOperand(4).getReg() != AArch64::XZR) {
+          offset = readFromReg(CurInst->getOperand(4).getReg());
+        } else {
+          offset = getIntConst(nregs * (eltSize / 8), 64);
+        }
+      }
+
+      auto base = readPtrFromReg(baseReg);
+      auto baseAddr = createPtrToInt(base, i64);
+
+      Value *valueToStore = getUndefVec(nregs, eltSize);
+      // Outer loop control for register to load from
+      for (unsigned j = 0; j < nregs; j++) {
+        Value *registerjValue = readFromReg(regCounter);
+
+        auto casted = createBitCast(registerjValue, getVecTy(eltSize, numElts));
+        auto loaded = createExtractElement(casted, index);
+
+        valueToStore = createInsertElement(valueToStore, loaded, j);
+
+        regCounter++;
+        if (regCounter > AArch64::Q31)
+          regCounter = AArch64::Q0;
+      }
+
+      storeToMemoryImmOffset(base, 0, nregs * eltSize / 8, valueToStore);
+
+      if (isPost) {
+        auto added = createAdd(baseAddr, offset);
+        updateOutputReg(added);
+      }
       break;
     }
 
