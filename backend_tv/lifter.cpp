@@ -152,7 +152,16 @@ public:
   vector<MCBasicBlock> BBs;
   vector<MCGlobal> MCglobals;
 
-  MCFunction() {}
+  MCFunction() {
+    MCGlobal g{
+        .name = "__stack_chk_guard",
+        .align = Align(8),
+        .section = ".rodata",
+        // FIXME -- use symbolic data here? does this matter?
+        .data = {'7', '7', '7', '7', '7', '7', '7', '7'},
+    };
+    MCglobals.push_back(g);
+  }
 
   void setName(const string &_name) {
     name = _name;
@@ -223,9 +232,19 @@ class arm2llvm : public aslp::lifter_interface {
   Constant *lazyAddGlobal(string newGlobal) {
     *out << "  lazyAddGlobal '" << newGlobal << "'\n";
 
-    // gross
+    // unmangle these
+    if (newGlobal == "memcpy")
+      newGlobal = "llvm.memcpy.p0.p0.i64";
     if (newGlobal == "memset")
       newGlobal = "llvm.memset.p0.i64";
+    if (newGlobal == "memmove")
+      newGlobal = "llvm.memmove.p0.p0.i64";
+
+    if (newGlobal == "__stack_chk_fail") {
+      return new GlobalVariable(*LiftedModule, getIntTy(8), false,
+                                GlobalValue::LinkageTypes::ExternalLinkage,
+                                nullptr, "__stack_chk_fail");
+    }
 
     // is the global the address of a function?
     if (newGlobal == liftedFn->getName()) {
@@ -238,9 +257,18 @@ class arm2llvm : public aslp::lifter_interface {
       if (name != newGlobal)
         continue;
       *out << "  creating function '" << newGlobal << "'\n";
-      return Function::Create(f.getFunctionType(),
-                              GlobalValue::LinkageTypes::ExternalLinkage, name,
-                              LiftedModule);
+      auto newF = Function::Create(f.getFunctionType(),
+                                   GlobalValue::LinkageTypes::ExternalLinkage,
+                                   name, LiftedModule);
+      if (f.hasFnAttribute(Attribute::NoReturn))
+        newF->addFnAttr(Attribute::NoReturn);
+      if (f.hasRetAttribute(Attribute::NoAlias))
+        newF->addRetAttr(Attribute::NoAlias);
+      if (f.hasRetAttribute(Attribute::SExt))
+        newF->addRetAttr(Attribute::SExt);
+      if (f.hasRetAttribute(Attribute::ZExt))
+        newF->addRetAttr(Attribute::ZExt);
+      return newF;
     }
 
     // globals that are definitions in the assembly can be lifted
@@ -559,6 +587,8 @@ class arm2llvm : public aslp::lifter_interface {
       AArch64::FCSELSrrr,  AArch64::FMULSrr,    AArch64::FABSSr,
       AArch64::UQADDv1i32, AArch64::SQSUBv1i32, AArch64::SQADDv1i32,
       AArch64::FMOVSr,     AArch64::FNEGSr,     AArch64::BRK,
+      AArch64::UCVTFUWSri, AArch64::UCVTFUWDri, AArch64::SCVTFUWSri,
+      AArch64::SCVTFUWDri,
   };
 
   const set<int> instrs_64 = {
@@ -695,6 +725,20 @@ class arm2llvm : public aslp::lifter_interface {
       AArch64::ST1i16,
       AArch64::ST1i32,
       AArch64::ST1i64,
+      AArch64::ST4Fourv8b,
+      AArch64::ST4Fourv16b,
+      AArch64::ST4Fourv4h,
+      AArch64::ST4Fourv8h,
+      AArch64::ST4Fourv2s,
+      AArch64::ST4Fourv4s,
+      AArch64::ST4Fourv2d,
+      AArch64::ST4Fourv8b_POST,
+      AArch64::ST4Fourv16b_POST,
+      AArch64::ST4Fourv4h_POST,
+      AArch64::ST4Fourv8h_POST,
+      AArch64::ST4Fourv2s_POST,
+      AArch64::ST4Fourv4s_POST,
+      AArch64::ST4Fourv2d_POST,
       AArch64::CCMNXi,
       AArch64::CCMNXr,
       AArch64::STURXi,
@@ -930,13 +974,26 @@ class arm2llvm : public aslp::lifter_interface {
       AArch64::SADDLv8i8_v8i16,
       AArch64::SADDLv4i16_v4i32,
       AArch64::SADDLv2i32_v2i64,
+      AArch64::SADDWv8i8_v8i16,
+      AArch64::SADDWv4i16_v4i32,
+      AArch64::SADDWv2i32_v2i64,
       AArch64::USUBLv8i8_v8i16,
       AArch64::USUBLv4i16_v4i32,
       AArch64::USUBLv2i32_v2i64,
+      AArch64::USUBWv8i8_v8i16,
+      AArch64::USUBWv4i16_v4i32,
+      AArch64::USUBWv2i32_v2i64,
       AArch64::SSUBLv8i8_v8i16,
       AArch64::SSUBLv4i16_v4i32,
       AArch64::SSUBLv2i32_v2i64,
+      AArch64::SSUBWv8i8_v8i16,
+      AArch64::SSUBWv4i16_v4i32,
+      AArch64::SSUBWv2i32_v2i64,
       AArch64::FNEGv2f32,
+      AArch64::UCVTFUXSri,
+      AArch64::UCVTFUXDri,
+      AArch64::SCVTFUXSri,
+      AArch64::SCVTFUXDri,
   };
 
   const set<int> instrs_128 = {
@@ -952,12 +1009,21 @@ class arm2llvm : public aslp::lifter_interface {
       AArch64::SADDLv16i8_v8i16,
       AArch64::SADDLv8i16_v4i32,
       AArch64::SADDLv4i32_v2i64,
+      AArch64::SADDWv16i8_v8i16,
+      AArch64::SADDWv8i16_v4i32,
+      AArch64::SADDWv4i32_v2i64,
       AArch64::USUBLv16i8_v8i16,
       AArch64::USUBLv8i16_v4i32,
       AArch64::USUBLv4i32_v2i64,
+      AArch64::USUBWv16i8_v8i16,
+      AArch64::USUBWv8i16_v4i32,
+      AArch64::USUBWv4i32_v2i64,
       AArch64::SSUBLv16i8_v8i16,
       AArch64::SSUBLv8i16_v4i32,
       AArch64::SSUBLv4i32_v2i64,
+      AArch64::SSUBWv16i8_v8i16,
+      AArch64::SSUBWv8i16_v4i32,
+      AArch64::SSUBWv4i32_v2i64,
       AArch64::UMLALv4i16_indexed,
       AArch64::UMLALv8i16_indexed,
       AArch64::UMLALv2i32_indexed,
@@ -1177,6 +1243,98 @@ class arm2llvm : public aslp::lifter_interface {
       AArch64::LD1Rv4s,
       AArch64::LD1Rv1d,
       AArch64::LD1Rv2d,
+      AArch64::LD1Onev8b,
+      AArch64::LD1Onev16b,
+      AArch64::LD1Onev4h,
+      AArch64::LD1Onev8h,
+      AArch64::LD1Onev2s,
+      AArch64::LD1Onev4s,
+      AArch64::LD1Onev1d,
+      AArch64::LD1Onev2d,
+      AArch64::LD1Onev8b_POST,
+      AArch64::LD1Onev16b_POST,
+      AArch64::LD1Onev4h_POST,
+      AArch64::LD1Onev8h_POST,
+      AArch64::LD1Onev2s_POST,
+      AArch64::LD1Onev4s_POST,
+      AArch64::LD1Onev1d_POST,
+      AArch64::LD1Onev2d_POST,
+      AArch64::LD1Twov8b,
+      AArch64::LD1Twov16b,
+      AArch64::LD1Twov4h,
+      AArch64::LD1Twov8h,
+      AArch64::LD1Twov2s,
+      AArch64::LD1Twov4s,
+      AArch64::LD1Twov1d,
+      AArch64::LD1Twov2d,
+      AArch64::LD1Twov8b_POST,
+      AArch64::LD1Twov16b_POST,
+      AArch64::LD1Twov4h_POST,
+      AArch64::LD1Twov8h_POST,
+      AArch64::LD1Twov2s_POST,
+      AArch64::LD1Twov4s_POST,
+      AArch64::LD1Twov1d_POST,
+      AArch64::LD1Twov2d_POST,
+      AArch64::LD1Threev8b,
+      AArch64::LD1Threev16b,
+      AArch64::LD1Threev4h,
+      AArch64::LD1Threev8h,
+      AArch64::LD1Threev2s,
+      AArch64::LD1Threev4s,
+      AArch64::LD1Threev1d,
+      AArch64::LD1Threev2d,
+      AArch64::LD1Threev8b_POST,
+      AArch64::LD1Threev16b_POST,
+      AArch64::LD1Threev4h_POST,
+      AArch64::LD1Threev8h_POST,
+      AArch64::LD1Threev2s_POST,
+      AArch64::LD1Threev4s_POST,
+      AArch64::LD1Threev1d_POST,
+      AArch64::LD1Threev2d_POST,
+      AArch64::LD1Fourv8b,
+      AArch64::LD1Fourv16b,
+      AArch64::LD1Fourv4h,
+      AArch64::LD1Fourv8h,
+      AArch64::LD1Fourv2s,
+      AArch64::LD1Fourv4s,
+      AArch64::LD1Fourv1d,
+      AArch64::LD1Fourv2d,
+      AArch64::LD1Fourv8b_POST,
+      AArch64::LD1Fourv16b_POST,
+      AArch64::LD1Fourv4h_POST,
+      AArch64::LD1Fourv8h_POST,
+      AArch64::LD1Fourv2s_POST,
+      AArch64::LD1Fourv4s_POST,
+      AArch64::LD1Fourv1d_POST,
+      AArch64::LD1Fourv2d_POST,
+      AArch64::LD2Twov8b,
+      AArch64::LD2Twov16b,
+      AArch64::LD2Twov4h,
+      AArch64::LD2Twov8h,
+      AArch64::LD2Twov2s,
+      AArch64::LD2Twov4s,
+      AArch64::LD2Twov2d,
+      AArch64::LD2Twov8b_POST,
+      AArch64::LD2Twov16b_POST,
+      AArch64::LD2Twov4h_POST,
+      AArch64::LD2Twov8h_POST,
+      AArch64::LD2Twov2s_POST,
+      AArch64::LD2Twov4s_POST,
+      AArch64::LD2Twov2d_POST,
+      AArch64::LD3Threev8b,
+      AArch64::LD3Threev16b,
+      AArch64::LD3Threev4h,
+      AArch64::LD3Threev8h,
+      AArch64::LD3Threev2s,
+      AArch64::LD3Threev4s,
+      AArch64::LD3Threev2d,
+      AArch64::LD3Threev8b_POST,
+      AArch64::LD3Threev16b_POST,
+      AArch64::LD3Threev4h_POST,
+      AArch64::LD3Threev8h_POST,
+      AArch64::LD3Threev2s_POST,
+      AArch64::LD3Threev4s_POST,
+      AArch64::LD3Threev2d_POST,
       AArch64::LD4Fourv8b,
       AArch64::LD4Fourv16b,
       AArch64::LD4Fourv4h,
@@ -1814,6 +1972,14 @@ class arm2llvm : public aslp::lifter_interface {
 
   CastInst *createZExt(Value *v, Type *t) override {
     return CastInst::Create(Instruction::ZExt, v, t, nextName(), LLVMBB);
+  }
+
+  CastInst *createUIToFP(Value *v, Type *t) {
+    return CastInst::Create(Instruction::UIToFP, v, t, nextName(), LLVMBB);
+  }
+
+  CastInst *createSIToFP(Value *v, Type *t) {
+    return CastInst::Create(Instruction::SIToFP, v, t, nextName(), LLVMBB);
   }
 
   CastInst *createBitCast(Value *v, Type *t) override {
@@ -2545,12 +2711,28 @@ class arm2llvm : public aslp::lifter_interface {
   }
 
   vector<Value *> marshallArgs(Function *fn) {
+    if (fn->getReturnType()->isStructTy()) {
+      *out << "\nERROR: we don't support structures in return values yet\n\n";
+      exit(-1);
+    }
+    if (fn->getReturnType()->isArrayTy()) {
+      *out << "\nERROR: we don't support arrays in return values yet\n\n";
+      exit(-1);
+    }
     unsigned vecArgNum = 0;
     unsigned scalarArgNum = 0;
     // unsigned stackSlot = 0;
     vector<Value *> args;
     for (auto arg = fn->arg_begin(); arg != fn->arg_end(); ++arg) {
       auto *argTy = arg->getType();
+      if (argTy->isStructTy()) {
+        *out << "\nERROR: we don't support structures in arguments yet\n\n";
+        exit(-1);
+      }
+      if (argTy->isArrayTy()) {
+        *out << "\nERROR: we don't support arrays in arguments yet\n\n";
+        exit(-1);
+      }
       Value *param{nullptr};
       if (argTy->isFloatingPointTy() || argTy->isVectorTy()) {
         if (scalarArgNum < 8) {
@@ -2592,25 +2774,38 @@ class arm2llvm : public aslp::lifter_interface {
     auto [expr, _] = getExprVar(op0.getExpr());
     assert(expr);
     string calleeName = (string)expr->getName();
+
+    // yikes
+    if (calleeName == "__stack_chk_fail") {
+      createTrap();
+      return;
+    }
+
     *out << "lifting a call, callee is: '" << calleeName << "'\n";
     auto *callee = dyn_cast<Function>(expr);
     assert(callee);
     auto FC = FunctionCallee(callee);
     auto args = marshallArgs(callee);
 
-    // yikes
-    if (calleeName == "llvm.memset.p0.i64") {
+    // yikes -- these functions have an LLVM "immediate" as their last
+    // argument; this is not present in the assembly at all, we have
+    // to provide it by hand
+    if (calleeName == "llvm.memset.p0.i64")
       args[3] = getIntConst(0, 1);
-    }
+    if (calleeName == "llvm.memcpy.p0.p0.i64")
+      args[3] = getIntConst(0, 1);
+    if (calleeName == "llvm.memmove.p0.p0.i64")
+      args[3] = getIntConst(0, 1);
 
     auto CI = CallInst::Create(FC, args, "", LLVMBB);
+    auto RV = enforceABIRules(CI, callee->hasRetAttribute(Attribute::SExt),
+                              callee->hasRetAttribute(Attribute::ZExt));
     // FIXME invalidate machine state that needs invalidating
-    // FIXME handle signext and zeroext
     auto retTy = callee->getReturnType();
     if (retTy->isIntegerTy() || retTy->isPointerTy()) {
-      updateReg(CI, AArch64::X0);
+      updateReg(RV, AArch64::X0);
     } else if (retTy->isFloatingPointTy() || retTy->isVectorTy()) {
-      updateReg(CI, AArch64::Q0);
+      updateReg(RV, AArch64::Q0);
     }
   }
 
@@ -5040,6 +5235,50 @@ public:
       break;
     }
 
+    case AArch64::LD1Onev8b:
+    case AArch64::LD1Onev16b:
+    case AArch64::LD1Onev4h:
+    case AArch64::LD1Onev8h:
+    case AArch64::LD1Onev2s:
+    case AArch64::LD1Onev4s:
+    case AArch64::LD1Onev1d:
+    case AArch64::LD1Onev2d:
+    case AArch64::LD1Onev8b_POST:
+    case AArch64::LD1Onev16b_POST:
+    case AArch64::LD1Onev4h_POST:
+    case AArch64::LD1Onev8h_POST:
+    case AArch64::LD1Onev2s_POST:
+    case AArch64::LD1Onev4s_POST:
+    case AArch64::LD1Onev1d_POST:
+    case AArch64::LD1Onev2d_POST:
+    case AArch64::LD2Twov8b:
+    case AArch64::LD2Twov16b:
+    case AArch64::LD2Twov4h:
+    case AArch64::LD2Twov8h:
+    case AArch64::LD2Twov2s:
+    case AArch64::LD2Twov4s:
+    case AArch64::LD2Twov2d:
+    case AArch64::LD2Twov8b_POST:
+    case AArch64::LD2Twov16b_POST:
+    case AArch64::LD2Twov4h_POST:
+    case AArch64::LD2Twov8h_POST:
+    case AArch64::LD2Twov2s_POST:
+    case AArch64::LD2Twov4s_POST:
+    case AArch64::LD2Twov2d_POST:
+    case AArch64::LD3Threev8b:
+    case AArch64::LD3Threev16b:
+    case AArch64::LD3Threev4h:
+    case AArch64::LD3Threev8h:
+    case AArch64::LD3Threev2s:
+    case AArch64::LD3Threev4s:
+    case AArch64::LD3Threev2d:
+    case AArch64::LD3Threev8b_POST:
+    case AArch64::LD3Threev16b_POST:
+    case AArch64::LD3Threev4h_POST:
+    case AArch64::LD3Threev8h_POST:
+    case AArch64::LD3Threev2s_POST:
+    case AArch64::LD3Threev4s_POST:
+    case AArch64::LD3Threev2d_POST:
     case AArch64::LD4Fourv8b:
     case AArch64::LD4Fourv16b:
     case AArch64::LD4Fourv4h:
@@ -5057,42 +5296,138 @@ public:
       unsigned numElts, eltSize;
       bool fullWidth;
       switch (opcode) {
+      case AArch64::LD1Onev8b:
+      case AArch64::LD1Onev8b_POST:
+      case AArch64::LD1Twov8b:
+      case AArch64::LD1Twov8b_POST:
+      case AArch64::LD1Threev8b:
+      case AArch64::LD1Threev8b_POST:
+      case AArch64::LD1Fourv8b:
+      case AArch64::LD1Fourv8b_POST:
+      case AArch64::LD2Twov8b:
+      case AArch64::LD2Twov8b_POST:
+      case AArch64::LD3Threev8b:
+      case AArch64::LD3Threev8b_POST:
       case AArch64::LD4Fourv8b:
       case AArch64::LD4Fourv8b_POST:
         numElts = 8;
         eltSize = 8;
         fullWidth = false;
         break;
+      case AArch64::LD1Onev16b:
+      case AArch64::LD1Onev16b_POST:
+      case AArch64::LD1Twov16b:
+      case AArch64::LD1Twov16b_POST:
+      case AArch64::LD1Threev16b:
+      case AArch64::LD1Threev16b_POST:
+      case AArch64::LD1Fourv16b:
+      case AArch64::LD1Fourv16b_POST:
+      case AArch64::LD2Twov16b:
+      case AArch64::LD2Twov16b_POST:
+      case AArch64::LD3Threev16b:
+      case AArch64::LD3Threev16b_POST:
       case AArch64::LD4Fourv16b:
       case AArch64::LD4Fourv16b_POST:
         numElts = 16;
         eltSize = 8;
         fullWidth = true;
         break;
+      case AArch64::LD1Onev4h:
+      case AArch64::LD1Onev4h_POST:
+      case AArch64::LD1Twov4h:
+      case AArch64::LD1Twov4h_POST:
+      case AArch64::LD1Threev4h:
+      case AArch64::LD1Threev4h_POST:
+      case AArch64::LD1Fourv4h:
+      case AArch64::LD1Fourv4h_POST:
+      case AArch64::LD2Twov4h:
+      case AArch64::LD2Twov4h_POST:
+      case AArch64::LD3Threev4h:
+      case AArch64::LD3Threev4h_POST:
       case AArch64::LD4Fourv4h:
       case AArch64::LD4Fourv4h_POST:
         numElts = 4;
         eltSize = 16;
         fullWidth = false;
         break;
+      case AArch64::LD1Onev8h:
+      case AArch64::LD1Onev8h_POST:
+      case AArch64::LD1Twov8h:
+      case AArch64::LD1Twov8h_POST:
+      case AArch64::LD1Threev8h:
+      case AArch64::LD1Threev8h_POST:
+      case AArch64::LD1Fourv8h:
+      case AArch64::LD1Fourv8h_POST:
+      case AArch64::LD2Twov8h:
+      case AArch64::LD2Twov8h_POST:
+      case AArch64::LD3Threev8h:
+      case AArch64::LD3Threev8h_POST:
       case AArch64::LD4Fourv8h:
       case AArch64::LD4Fourv8h_POST:
         numElts = 8;
         eltSize = 16;
         fullWidth = true;
         break;
+      case AArch64::LD1Onev2s:
+      case AArch64::LD1Onev2s_POST:
+      case AArch64::LD1Twov2s:
+      case AArch64::LD1Twov2s_POST:
+      case AArch64::LD1Threev2s:
+      case AArch64::LD1Threev2s_POST:
+      case AArch64::LD1Fourv2s:
+      case AArch64::LD1Fourv2s_POST:
+      case AArch64::LD2Twov2s:
+      case AArch64::LD2Twov2s_POST:
+      case AArch64::LD3Threev2s:
+      case AArch64::LD3Threev2s_POST:
       case AArch64::LD4Fourv2s:
       case AArch64::LD4Fourv2s_POST:
         numElts = 2;
         eltSize = 32;
         fullWidth = false;
         break;
+      case AArch64::LD1Onev4s:
+      case AArch64::LD1Onev4s_POST:
+      case AArch64::LD1Twov4s:
+      case AArch64::LD1Twov4s_POST:
+      case AArch64::LD1Threev4s:
+      case AArch64::LD1Threev4s_POST:
+      case AArch64::LD1Fourv4s:
+      case AArch64::LD1Fourv4s_POST:
+      case AArch64::LD2Twov4s:
+      case AArch64::LD2Twov4s_POST:
+      case AArch64::LD3Threev4s:
+      case AArch64::LD3Threev4s_POST:
       case AArch64::LD4Fourv4s:
       case AArch64::LD4Fourv4s_POST:
         numElts = 4;
         eltSize = 32;
         fullWidth = true;
         break;
+      case AArch64::LD1Onev1d:
+      case AArch64::LD1Onev1d_POST:
+      case AArch64::LD1Twov1d:
+      case AArch64::LD1Twov1d_POST:
+      case AArch64::LD1Threev1d:
+      case AArch64::LD1Threev1d_POST:
+      case AArch64::LD1Fourv1d:
+      case AArch64::LD1Fourv1d_POST:
+        numElts = 1;
+        eltSize = 64;
+        fullWidth = false;
+        break;
+      case AArch64::LD1Onev2d:
+      case AArch64::LD1Onev2d_POST:
+      case AArch64::LD1Twov2d:
+      case AArch64::LD1Twov2d_POST:
+      case AArch64::LD1Threev2d:
+      case AArch64::LD1Threev2d_POST:
+      case AArch64::LD1Fourv2d:
+      case AArch64::LD1Fourv2d_POST:
+      case AArch64::LD2Twov2d:
+      case AArch64::LD2Twov2d_POST:
+      case AArch64::LD3Threev2d:
+      case AArch64::LD3Threev2d_POST:
       case AArch64::LD4Fourv2d:
       case AArch64::LD4Fourv2d_POST:
         numElts = 2;
@@ -5103,8 +5438,107 @@ public:
         assert(false);
         break;
       }
+
       unsigned nregs;
       switch (opcode) {
+      case AArch64::LD1Onev8b:
+      case AArch64::LD1Onev16b:
+      case AArch64::LD1Onev4h:
+      case AArch64::LD1Onev8h:
+      case AArch64::LD1Onev2s:
+      case AArch64::LD1Onev4s:
+      case AArch64::LD1Onev1d:
+      case AArch64::LD1Onev2d:
+      case AArch64::LD1Onev8b_POST:
+      case AArch64::LD1Onev16b_POST:
+      case AArch64::LD1Onev4h_POST:
+      case AArch64::LD1Onev8h_POST:
+      case AArch64::LD1Onev2s_POST:
+      case AArch64::LD1Onev4s_POST:
+      case AArch64::LD1Onev1d_POST:
+      case AArch64::LD1Onev2d_POST:
+        nregs = 1;
+        break;
+      case AArch64::LD1Twov8b:
+      case AArch64::LD1Twov16b:
+      case AArch64::LD1Twov4h:
+      case AArch64::LD1Twov8h:
+      case AArch64::LD1Twov2s:
+      case AArch64::LD1Twov4s:
+      case AArch64::LD1Twov1d:
+      case AArch64::LD1Twov2d:
+      case AArch64::LD1Twov8b_POST:
+      case AArch64::LD1Twov16b_POST:
+      case AArch64::LD1Twov4h_POST:
+      case AArch64::LD1Twov8h_POST:
+      case AArch64::LD1Twov2s_POST:
+      case AArch64::LD1Twov4s_POST:
+      case AArch64::LD1Twov1d_POST:
+      case AArch64::LD1Twov2d_POST:
+      case AArch64::LD2Twov8b:
+      case AArch64::LD2Twov16b:
+      case AArch64::LD2Twov4h:
+      case AArch64::LD2Twov8h:
+      case AArch64::LD2Twov2s:
+      case AArch64::LD2Twov4s:
+      case AArch64::LD2Twov2d:
+      case AArch64::LD2Twov8b_POST:
+      case AArch64::LD2Twov16b_POST:
+      case AArch64::LD2Twov4h_POST:
+      case AArch64::LD2Twov8h_POST:
+      case AArch64::LD2Twov2s_POST:
+      case AArch64::LD2Twov4s_POST:
+      case AArch64::LD2Twov2d_POST:
+        nregs = 2;
+        break;
+      case AArch64::LD1Threev8b:
+      case AArch64::LD1Threev16b:
+      case AArch64::LD1Threev4h:
+      case AArch64::LD1Threev8h:
+      case AArch64::LD1Threev2s:
+      case AArch64::LD1Threev4s:
+      case AArch64::LD1Threev1d:
+      case AArch64::LD1Threev2d:
+      case AArch64::LD1Threev8b_POST:
+      case AArch64::LD1Threev16b_POST:
+      case AArch64::LD1Threev4h_POST:
+      case AArch64::LD1Threev8h_POST:
+      case AArch64::LD1Threev2s_POST:
+      case AArch64::LD1Threev4s_POST:
+      case AArch64::LD1Threev1d_POST:
+      case AArch64::LD1Threev2d_POST:
+      case AArch64::LD3Threev8b:
+      case AArch64::LD3Threev16b:
+      case AArch64::LD3Threev4h:
+      case AArch64::LD3Threev8h:
+      case AArch64::LD3Threev2s:
+      case AArch64::LD3Threev4s:
+      case AArch64::LD3Threev2d:
+      case AArch64::LD3Threev8b_POST:
+      case AArch64::LD3Threev16b_POST:
+      case AArch64::LD3Threev4h_POST:
+      case AArch64::LD3Threev8h_POST:
+      case AArch64::LD3Threev2s_POST:
+      case AArch64::LD3Threev4s_POST:
+      case AArch64::LD3Threev2d_POST:
+        nregs = 3;
+        break;
+      case AArch64::LD1Fourv8b:
+      case AArch64::LD1Fourv16b:
+      case AArch64::LD1Fourv4h:
+      case AArch64::LD1Fourv8h:
+      case AArch64::LD1Fourv2s:
+      case AArch64::LD1Fourv4s:
+      case AArch64::LD1Fourv1d:
+      case AArch64::LD1Fourv2d:
+      case AArch64::LD1Fourv8b_POST:
+      case AArch64::LD1Fourv16b_POST:
+      case AArch64::LD1Fourv4h_POST:
+      case AArch64::LD1Fourv8h_POST:
+      case AArch64::LD1Fourv2s_POST:
+      case AArch64::LD1Fourv4s_POST:
+      case AArch64::LD1Fourv1d_POST:
+      case AArch64::LD1Fourv2d_POST:
       case AArch64::LD4Fourv8b:
       case AArch64::LD4Fourv16b:
       case AArch64::LD4Fourv4h:
@@ -5112,8 +5546,11 @@ public:
       case AArch64::LD4Fourv2s:
       case AArch64::LD4Fourv4s:
       case AArch64::LD4Fourv2d:
+      case AArch64::LD4Fourv8b_POST:
       case AArch64::LD4Fourv16b_POST:
+      case AArch64::LD4Fourv4h_POST:
       case AArch64::LD4Fourv8h_POST:
+      case AArch64::LD4Fourv2s_POST:
       case AArch64::LD4Fourv4s_POST:
       case AArch64::LD4Fourv2d_POST:
         nregs = 4;
@@ -5122,7 +5559,53 @@ public:
         assert(false);
         break;
       }
-      bool isPost = opcode == AArch64::LD4Fourv8b_POST ||
+      bool isPost = opcode == AArch64::LD1Onev8b_POST ||
+                    opcode == AArch64::LD1Onev16b_POST ||
+                    opcode == AArch64::LD1Onev4h_POST ||
+                    opcode == AArch64::LD1Onev8h_POST ||
+                    opcode == AArch64::LD1Onev2s_POST ||
+                    opcode == AArch64::LD1Onev4s_POST ||
+                    opcode == AArch64::LD1Onev1d_POST ||
+                    opcode == AArch64::LD1Onev2d_POST ||
+                    opcode == AArch64::LD1Twov8b_POST ||
+                    opcode == AArch64::LD1Twov16b_POST ||
+                    opcode == AArch64::LD1Twov4h_POST ||
+                    opcode == AArch64::LD1Twov8h_POST ||
+                    opcode == AArch64::LD1Twov2s_POST ||
+                    opcode == AArch64::LD1Twov4s_POST ||
+                    opcode == AArch64::LD1Twov1d_POST ||
+                    opcode == AArch64::LD1Twov2d_POST ||
+                    opcode == AArch64::LD1Threev8b_POST ||
+                    opcode == AArch64::LD1Threev16b_POST ||
+                    opcode == AArch64::LD1Threev4h_POST ||
+                    opcode == AArch64::LD1Threev8h_POST ||
+                    opcode == AArch64::LD1Threev2s_POST ||
+                    opcode == AArch64::LD1Threev4s_POST ||
+                    opcode == AArch64::LD1Threev1d_POST ||
+                    opcode == AArch64::LD1Threev2d_POST ||
+                    opcode == AArch64::LD1Fourv8b_POST ||
+                    opcode == AArch64::LD1Fourv16b_POST ||
+                    opcode == AArch64::LD1Fourv4h_POST ||
+                    opcode == AArch64::LD1Fourv8h_POST ||
+                    opcode == AArch64::LD1Fourv2s_POST ||
+                    opcode == AArch64::LD1Fourv4s_POST ||
+                    opcode == AArch64::LD1Fourv1d_POST ||
+                    opcode == AArch64::LD1Fourv2d_POST ||
+                    opcode == AArch64::LD2Twov8b_POST ||
+                    opcode == AArch64::LD2Twov16b_POST ||
+                    opcode == AArch64::LD2Twov4h_POST ||
+                    opcode == AArch64::LD2Twov8h_POST ||
+                    opcode == AArch64::LD2Twov2s_POST ||
+                    opcode == AArch64::LD2Twov4s_POST ||
+                    opcode == AArch64::LD2Twov2d_POST ||
+                    opcode == AArch64::LD3Threev8b_POST ||
+                    opcode == AArch64::LD3Threev16b_POST ||
+                    opcode == AArch64::LD3Threev4h_POST ||
+                    opcode == AArch64::LD3Threev8h_POST ||
+                    opcode == AArch64::LD3Threev2s_POST ||
+                    opcode == AArch64::LD3Threev4s_POST ||
+                    opcode == AArch64::LD3Threev2d_POST ||
+                    opcode == AArch64::LD4Fourv8b_POST ||
                     opcode == AArch64::LD4Fourv16b_POST ||
                     opcode == AArch64::LD4Fourv4h_POST ||
                     opcode == AArch64::LD4Fourv8h_POST ||
@@ -5164,9 +5647,9 @@ public:
 
       // Outer loop control for register to store into
       for (unsigned j = 0; j < nregs; j++) {
-        for (unsigned i = 0, index = j; i < numElts; i++, index += nregs) {
-          assert(index < nregs * numElts);
-          mask[i] = index;
+        for (unsigned i = 0, maskVal = j; i < numElts; i++, maskVal += nregs) {
+          assert(maskVal < nregs * numElts);
+          mask[i] = maskVal;
         }
         res = createShuffleVector(casted, maskRef);
         updateReg(res, regCounter);
@@ -5463,6 +5946,162 @@ public:
       auto casted = createBitCast(src, getVecTy(eltSize, numElts));
       auto loaded = createExtractElement(casted, index);
       storeToMemoryImmOffset(base, 0, eltSize / 8, loaded);
+      break;
+    }
+
+    case AArch64::ST4Fourv8b:
+    case AArch64::ST4Fourv16b:
+    case AArch64::ST4Fourv4h:
+    case AArch64::ST4Fourv8h:
+    case AArch64::ST4Fourv2s:
+    case AArch64::ST4Fourv4s:
+    case AArch64::ST4Fourv2d:
+    case AArch64::ST4Fourv8b_POST:
+    case AArch64::ST4Fourv16b_POST:
+    case AArch64::ST4Fourv4h_POST:
+    case AArch64::ST4Fourv8h_POST:
+    case AArch64::ST4Fourv2s_POST:
+    case AArch64::ST4Fourv4s_POST:
+    case AArch64::ST4Fourv2d_POST: {
+      unsigned numElts, eltSize;
+      bool fullWidth;
+      switch (opcode) {
+      case AArch64::ST4Fourv8b:
+      case AArch64::ST4Fourv8b_POST:
+        numElts = 8;
+        eltSize = 8;
+        fullWidth = false;
+        break;
+      case AArch64::ST4Fourv16b:
+      case AArch64::ST4Fourv16b_POST:
+        numElts = 16;
+        eltSize = 8;
+        fullWidth = true;
+        break;
+      case AArch64::ST4Fourv4h:
+      case AArch64::ST4Fourv4h_POST:
+        numElts = 4;
+        eltSize = 16;
+        fullWidth = false;
+        break;
+      case AArch64::ST4Fourv8h:
+      case AArch64::ST4Fourv8h_POST:
+        numElts = 8;
+        eltSize = 16;
+        fullWidth = true;
+        break;
+      case AArch64::ST4Fourv2s:
+      case AArch64::ST4Fourv2s_POST:
+        numElts = 2;
+        eltSize = 32;
+        fullWidth = false;
+        break;
+      case AArch64::ST4Fourv4s:
+      case AArch64::ST4Fourv4s_POST:
+        numElts = 4;
+        eltSize = 32;
+        fullWidth = true;
+        break;
+      case AArch64::ST4Fourv2d:
+      case AArch64::ST4Fourv2d_POST:
+        numElts = 2;
+        eltSize = 64;
+        fullWidth = true;
+        break;
+      default:
+        assert(false);
+        break;
+      }
+      unsigned nregs;
+      switch (opcode) {
+      case AArch64::ST4Fourv8b:
+      case AArch64::ST4Fourv16b:
+      case AArch64::ST4Fourv4h:
+      case AArch64::ST4Fourv8h:
+      case AArch64::ST4Fourv2s:
+      case AArch64::ST4Fourv4s:
+      case AArch64::ST4Fourv2d:
+      case AArch64::ST4Fourv8b_POST:
+      case AArch64::ST4Fourv16b_POST:
+      case AArch64::ST4Fourv4h_POST:
+      case AArch64::ST4Fourv8h_POST:
+      case AArch64::ST4Fourv2s_POST:
+      case AArch64::ST4Fourv4s_POST:
+      case AArch64::ST4Fourv2d_POST:
+        nregs = 4;
+        break;
+      default:
+        assert(false);
+        break;
+      }
+
+      bool isPost = opcode == AArch64::ST4Fourv8b_POST ||
+                    opcode == AArch64::ST4Fourv16b_POST ||
+                    opcode == AArch64::ST4Fourv4h_POST ||
+                    opcode == AArch64::ST4Fourv8h_POST ||
+                    opcode == AArch64::ST4Fourv2s_POST ||
+                    opcode == AArch64::ST4Fourv4s_POST ||
+                    opcode == AArch64::ST4Fourv2d_POST;
+
+      auto regCounter =
+          decodeRegSet(CurInst->getOperand(isPost ? 1 : 0).getReg());
+      auto baseReg = CurInst->getOperand(isPost ? 2 : 1).getReg();
+      assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+             (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
+             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
+      assert((regCounter >= AArch64::Q0 && regCounter <= AArch64::Q31) ||
+             (regCounter >= AArch64::D0 && regCounter <= AArch64::D31));
+      Value *offset = nullptr;
+      if (isPost) {
+        if (CurInst->getOperand(3).isReg() &&
+            CurInst->getOperand(3).getReg() != AArch64::XZR) {
+          offset = readFromReg(CurInst->getOperand(3).getReg());
+        } else {
+          offset = getIntConst(nregs * numElts * (eltSize / 8), 64);
+        }
+      }
+
+      auto base = readPtrFromReg(baseReg);
+      auto baseAddr = createPtrToInt(base, i64);
+
+      int mask[nregs * numElts];
+      ArrayRef<int> maskRef(mask, nregs * numElts);
+
+      Value *valueToStore = getUndefVec(nregs, numElts * eltSize);
+      // Outer loop control for register to load from
+      for (unsigned j = 0; j < nregs; j++) {
+        Value *registerjValue = readFromReg(regCounter);
+        if (!fullWidth) {
+          registerjValue = createTrunc(registerjValue, i64);
+        }
+
+        valueToStore = createInsertElement(valueToStore, registerjValue, j);
+
+        // Creating mask for the shufflevector
+        for (unsigned i = 0, index = j; i < numElts; i++, index += nregs) {
+          assert(index < nregs * numElts);
+          mask[index] = j * numElts + i;
+        }
+
+        regCounter++;
+        if (fullWidth && regCounter > AArch64::Q31)
+          regCounter = AArch64::Q0;
+        else if (!fullWidth && regCounter > AArch64::D31)
+          regCounter = AArch64::D0;
+      }
+
+      // Shuffle the vector to interleave the nregs vectors
+      auto casted =
+          createBitCast(valueToStore, getVecTy(eltSize, nregs * numElts));
+      Value *res = createShuffleVector(casted, maskRef);
+
+      storeToMemoryImmOffset(base, 0, nregs * numElts * (eltSize / 8), res);
+
+      if (isPost) {
+        auto added = createAdd(baseAddr, offset);
+        updateOutputReg(added);
+      }
+
       break;
     }
 
@@ -5955,6 +6594,32 @@ public:
       auto v = readFromVecOperand(1, eltSize, numElts, false, true);
       auto res = createFNeg(v);
       updateOutputReg(res);
+      break;
+    }
+
+    case AArch64::UCVTFUWSri:
+    case AArch64::UCVTFUWDri:
+    case AArch64::UCVTFUXSri:
+    case AArch64::UCVTFUXDri:
+    case AArch64::SCVTFUWSri:
+    case AArch64::SCVTFUWDri:
+    case AArch64::SCVTFUXSri:
+    case AArch64::SCVTFUXDri: {
+      auto &op0 = CurInst->getOperand(0);
+      auto &op1 = CurInst->getOperand(1);
+      assert(op0.isReg() && op1.isReg());
+
+      auto isSigned =
+          opcode == AArch64::SCVTFUWSri || opcode == AArch64::SCVTFUWDri ||
+          opcode == AArch64::SCVTFUXSri || opcode == AArch64::SCVTFUXDri;
+
+      auto fTy = getFPType(getRegSize(op0.getReg()));
+      auto val = readFromOperand(1, getRegSize(op1.getReg()));
+      auto converted =
+          isSigned ? createSIToFP(val, fTy) : createUIToFP(val, fTy);
+
+      updateOutputReg(converted);
+
       break;
     }
 
@@ -7033,18 +7698,36 @@ public:
     case AArch64::SADDLv8i16_v4i32:
     case AArch64::SADDLv2i32_v2i64:
     case AArch64::SADDLv4i32_v2i64:
+    case AArch64::SADDWv8i8_v8i16:
+    case AArch64::SADDWv16i8_v8i16:
+    case AArch64::SADDWv4i16_v4i32:
+    case AArch64::SADDWv8i16_v4i32:
+    case AArch64::SADDWv2i32_v2i64:
+    case AArch64::SADDWv4i32_v2i64:
     case AArch64::USUBLv8i8_v8i16:
     case AArch64::USUBLv16i8_v8i16:
     case AArch64::USUBLv4i16_v4i32:
     case AArch64::USUBLv8i16_v4i32:
     case AArch64::USUBLv2i32_v2i64:
     case AArch64::USUBLv4i32_v2i64:
+    case AArch64::USUBWv8i8_v8i16:
+    case AArch64::USUBWv16i8_v8i16:
+    case AArch64::USUBWv4i16_v4i32:
+    case AArch64::USUBWv8i16_v4i32:
+    case AArch64::USUBWv2i32_v2i64:
+    case AArch64::USUBWv4i32_v2i64:
     case AArch64::SSUBLv8i8_v8i16:
     case AArch64::SSUBLv16i8_v8i16:
     case AArch64::SSUBLv4i16_v4i32:
     case AArch64::SSUBLv8i16_v4i32:
     case AArch64::SSUBLv2i32_v2i64:
     case AArch64::SSUBLv4i32_v2i64:
+    case AArch64::SSUBWv8i8_v8i16:
+    case AArch64::SSUBWv16i8_v8i16:
+    case AArch64::SSUBWv4i16_v4i32:
+    case AArch64::SSUBWv8i16_v4i32:
+    case AArch64::SSUBWv2i32_v2i64:
+    case AArch64::SSUBWv4i32_v2i64:
     case AArch64::SUBv2i32:
     case AArch64::SUBv2i64:
     case AArch64::SUBv4i16:
@@ -7101,7 +7784,16 @@ public:
       switch (opcode) {
       case AArch64::UADDWv8i8_v8i16:
       case AArch64::UADDWv4i16_v4i32:
-      case AArch64::UADDWv2i32_v2i64: {
+      case AArch64::UADDWv2i32_v2i64:
+      case AArch64::USUBWv8i8_v8i16:
+      case AArch64::USUBWv4i16_v4i32:
+      case AArch64::USUBWv2i32_v2i64:
+      case AArch64::SADDWv8i8_v8i16:
+      case AArch64::SADDWv4i16_v4i32:
+      case AArch64::SADDWv2i32_v2i64:
+      case AArch64::SSUBWv8i8_v8i16:
+      case AArch64::SSUBWv4i16_v4i32:
+      case AArch64::SSUBWv2i32_v2i64: {
         op1Size = 128;
         break;
       }
@@ -7261,7 +7953,10 @@ public:
       case AArch64::SADDLv16i8_v8i16:
       case AArch64::SADDLv8i16_v4i32:
       case AArch64::SADDLv4i32_v2i64:
-        // These cases are UADDL2, UADDW2 and SADDL2
+      case AArch64::SADDWv16i8_v8i16:
+      case AArch64::SADDWv8i16_v4i32:
+      case AArch64::SADDWv4i32_v2i64:
+        // These cases are UADDL2, UADDW2, SADDL2, SADDW2
         isUpper = true;
       case AArch64::UADDLv8i8_v8i16:
       case AArch64::UADDLv4i16_v4i32:
@@ -7272,12 +7967,21 @@ public:
       case AArch64::SADDLv8i8_v8i16:
       case AArch64::SADDLv4i16_v4i32:
       case AArch64::SADDLv2i32_v2i64:
+      case AArch64::SADDWv8i8_v8i16:
+      case AArch64::SADDWv4i16_v4i32:
+      case AArch64::SADDWv2i32_v2i64:
         if (opcode == AArch64::SADDLv8i8_v8i16 ||
             opcode == AArch64::SADDLv16i8_v8i16 ||
             opcode == AArch64::SADDLv4i16_v4i32 ||
             opcode == AArch64::SADDLv8i16_v4i32 ||
             opcode == AArch64::SADDLv2i32_v2i64 ||
-            opcode == AArch64::SADDLv4i32_v2i64) {
+            opcode == AArch64::SADDLv4i32_v2i64 ||
+            opcode == AArch64::SADDWv8i8_v8i16 ||
+            opcode == AArch64::SADDWv16i8_v8i16 ||
+            opcode == AArch64::SADDWv4i16_v4i32 ||
+            opcode == AArch64::SADDWv8i16_v4i32 ||
+            opcode == AArch64::SADDWv2i32_v2i64 ||
+            opcode == AArch64::SADDWv4i32_v2i64) {
           ext = extKind::SExt;
         } else {
           ext = extKind::ZExt;
@@ -7287,23 +7991,41 @@ public:
       case AArch64::USUBLv16i8_v8i16:
       case AArch64::USUBLv8i16_v4i32:
       case AArch64::USUBLv4i32_v2i64:
+      case AArch64::USUBWv16i8_v8i16:
+      case AArch64::USUBWv8i16_v4i32:
+      case AArch64::USUBWv4i32_v2i64:
       case AArch64::SSUBLv16i8_v8i16:
       case AArch64::SSUBLv8i16_v4i32:
       case AArch64::SSUBLv4i32_v2i64:
-        // These three cases are USUBL2 and SSUBL2
+      case AArch64::SSUBWv16i8_v8i16:
+      case AArch64::SSUBWv8i16_v4i32:
+      case AArch64::SSUBWv4i32_v2i64:
+        // These three cases are USUBL2, SSUBL2, USUBW2 and SSUBW2
         isUpper = true;
       case AArch64::USUBLv8i8_v8i16:
       case AArch64::USUBLv4i16_v4i32:
       case AArch64::USUBLv2i32_v2i64:
+      case AArch64::USUBWv8i8_v8i16:
+      case AArch64::USUBWv4i16_v4i32:
+      case AArch64::USUBWv2i32_v2i64:
       case AArch64::SSUBLv8i8_v8i16:
       case AArch64::SSUBLv4i16_v4i32:
       case AArch64::SSUBLv2i32_v2i64:
+      case AArch64::SSUBWv8i8_v8i16:
+      case AArch64::SSUBWv4i16_v4i32:
+      case AArch64::SSUBWv2i32_v2i64:
         if (opcode == AArch64::SSUBLv8i8_v8i16 ||
             opcode == AArch64::SSUBLv16i8_v8i16 ||
             opcode == AArch64::SSUBLv4i16_v4i32 ||
             opcode == AArch64::SSUBLv8i16_v4i32 ||
             opcode == AArch64::SSUBLv2i32_v2i64 ||
-            opcode == AArch64::SSUBLv4i32_v2i64) {
+            opcode == AArch64::SSUBLv4i32_v2i64 ||
+            opcode == AArch64::SSUBWv8i8_v8i16 ||
+            opcode == AArch64::SSUBWv16i8_v8i16 ||
+            opcode == AArch64::SSUBWv4i16_v4i32 ||
+            opcode == AArch64::SSUBWv8i16_v4i32 ||
+            opcode == AArch64::SSUBWv2i32_v2i64 ||
+            opcode == AArch64::SSUBWv4i32_v2i64) {
           ext = extKind::SExt;
         } else {
           ext = extKind::ZExt;
@@ -7405,8 +8127,11 @@ public:
       case AArch64::UADDLv2i32_v2i64:
       case AArch64::UADDWv2i32_v2i64:
       case AArch64::SADDLv2i32_v2i64:
+      case AArch64::SADDWv2i32_v2i64:
       case AArch64::USUBLv2i32_v2i64:
+      case AArch64::USUBWv2i32_v2i64:
       case AArch64::SSUBLv2i32_v2i64:
+      case AArch64::SSUBWv2i32_v2i64:
         numElts = 2;
         eltSize = 32;
         break;
@@ -7444,8 +8169,11 @@ public:
       case AArch64::UADDLv4i16_v4i32:
       case AArch64::UADDWv4i16_v4i32:
       case AArch64::SADDLv4i16_v4i32:
+      case AArch64::SADDWv4i16_v4i32:
       case AArch64::USUBLv4i16_v4i32:
+      case AArch64::USUBWv4i16_v4i32:
       case AArch64::SSUBLv4i16_v4i32:
+      case AArch64::SSUBWv4i16_v4i32:
         numElts = 4;
         eltSize = 16;
         break;
@@ -7470,8 +8198,11 @@ public:
       case AArch64::UADDLv4i32_v2i64:
       case AArch64::UADDWv4i32_v2i64:
       case AArch64::SADDLv4i32_v2i64:
+      case AArch64::SADDWv4i32_v2i64:
       case AArch64::USUBLv4i32_v2i64:
+      case AArch64::USUBWv4i32_v2i64:
       case AArch64::SSUBLv4i32_v2i64:
+      case AArch64::SSUBWv4i32_v2i64:
         numElts = 4;
         eltSize = 32;
         break;
@@ -7499,8 +8230,11 @@ public:
       case AArch64::UADDLv8i8_v8i16:
       case AArch64::UADDWv8i8_v8i16:
       case AArch64::SADDLv8i8_v8i16:
+      case AArch64::SADDWv8i8_v8i16:
       case AArch64::USUBLv8i8_v8i16:
+      case AArch64::USUBWv8i8_v8i16:
       case AArch64::SSUBLv8i8_v8i16:
+      case AArch64::SSUBWv8i8_v8i16:
         numElts = 8;
         eltSize = 8;
         break;
@@ -7525,8 +8259,11 @@ public:
       case AArch64::UADDLv8i16_v4i32:
       case AArch64::UADDWv8i16_v4i32:
       case AArch64::SADDLv8i16_v4i32:
+      case AArch64::SADDWv8i16_v4i32:
       case AArch64::USUBLv8i16_v4i32:
+      case AArch64::USUBWv8i16_v4i32:
       case AArch64::SSUBLv8i16_v4i32:
+      case AArch64::SSUBWv8i16_v4i32:
         numElts = 8;
         eltSize = 16;
         break;
@@ -7554,8 +8291,11 @@ public:
       case AArch64::UADDLv16i8_v8i16:
       case AArch64::UADDWv16i8_v8i16:
       case AArch64::SADDLv16i8_v8i16:
+      case AArch64::SADDWv16i8_v8i16:
       case AArch64::USUBLv16i8_v8i16:
+      case AArch64::USUBWv16i8_v8i16:
       case AArch64::SSUBLv16i8_v8i16:
+      case AArch64::SSUBWv16i8_v8i16:
         numElts = 16;
         eltSize = 8;
         break;
@@ -7575,6 +8315,24 @@ public:
       case AArch64::UADDWv8i16_v4i32:
       case AArch64::UADDWv2i32_v2i64:
       case AArch64::UADDWv4i32_v2i64:
+      case AArch64::SADDWv8i8_v8i16:
+      case AArch64::SADDWv16i8_v8i16:
+      case AArch64::SADDWv4i16_v4i32:
+      case AArch64::SADDWv8i16_v4i32:
+      case AArch64::SADDWv2i32_v2i64:
+      case AArch64::SADDWv4i32_v2i64:
+      case AArch64::USUBWv8i8_v8i16:
+      case AArch64::USUBWv16i8_v8i16:
+      case AArch64::USUBWv4i16_v4i32:
+      case AArch64::USUBWv8i16_v4i32:
+      case AArch64::USUBWv2i32_v2i64:
+      case AArch64::USUBWv4i32_v2i64:
+      case AArch64::SSUBWv8i8_v8i16:
+      case AArch64::SSUBWv16i8_v8i16:
+      case AArch64::SSUBWv4i16_v4i32:
+      case AArch64::SSUBWv8i16_v4i32:
+      case AArch64::SSUBWv2i32_v2i64:
+      case AArch64::SSUBWv4i32_v2i64:
         operandTypesDiffer = true;
         break;
       }
@@ -8976,11 +9734,12 @@ public:
   }
 
   /*
-   * the idea here is that if a parameter is, for example, 8 bits,
-   * then we only want to initialize the lower 8 bits of the register
-   * or stack slot, with the remaining bits containing junk, in order
-   * to detect cases where the compiler incorrectly emits code
-   * depending on that junk. on the other hand, if a parameter is
+   * the idea here is that if a parameter to the lifted function, or
+   * the return value from the lifted function is, for example, 8
+   * bits, then we only want to initialize the lower 8 bits of the
+   * register or stack slot, with the remaining bits containing junk,
+   * in order to detect cases where the compiler incorrectly emits
+   * code depending on that junk. on the other hand, if a parameter is
    * signext or zeroext then we have to actually initialize those
    * higher bits.
    *
@@ -8990,15 +9749,14 @@ public:
    * 128 bits, which seemed (as of Nov 2023) to be the only ones with
    * a stable ABI
    */
-  Value *parameterABIRules(Value *V, bool isSExt, bool isZExt) {
+  Value *enforceABIRules(Value *V, bool isSExt, bool isZExt) {
     auto i8 = getIntTy(8);
     auto i32 = getIntTy(32);
     auto argTy = V->getType();
     unsigned targetWidth;
 
-    // these are already sized appropriately for their register or
-    // stack slot
-    if (argTy->isPointerTy())
+    // no work needed
+    if (argTy->isPointerTy() || argTy->isVoidTy())
       return V;
 
     if (argTy->isVectorTy() || argTy->isFloatingPointTy()) {
@@ -9183,7 +9941,7 @@ public:
            << ", stackSlot = " << stackSlot;
       auto *argTy = arg->getType();
       auto *val =
-          parameterABIRules(arg, srcArg->hasSExtAttr(), srcArg->hasZExtAttr());
+          enforceABIRules(arg, srcArg->hasSExtAttr(), srcArg->hasZExtAttr());
 
       // first 8 integer parameters go in the first 8 integer registers
       if ((argTy->isIntegerTy() || argTy->isPointerTy()) && scalarArgNum < 8) {
