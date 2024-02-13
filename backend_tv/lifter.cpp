@@ -574,12 +574,14 @@ class arm2llvm {
       AArch64::STRWpre,    AArch64::STRSpre,    AArch64::FADDSrr,
       AArch64::FSUBSrr,    AArch64::FCMPSrr,    AArch64::FCMPSri,
       AArch64::FMOVSWr,    AArch64::INSvi32gpr, AArch64::INSvi16gpr,
-      AArch64::INSvi8gpr,  AArch64::FCVTSHr,    AArch64::FCVTZSUWSr,
-      AArch64::FCSELSrrr,  AArch64::FMULSrr,    AArch64::FABSSr,
-      AArch64::UQADDv1i32, AArch64::SQSUBv1i32, AArch64::SQADDv1i32,
-      AArch64::FMOVSr,     AArch64::FNEGSr,     AArch64::BRK,
-      AArch64::UCVTFUWSri, AArch64::UCVTFUWDri, AArch64::SCVTFUWSri,
-      AArch64::SCVTFUWDri,
+      AArch64::INSvi8gpr,  AArch64::FCVTZUUWHr, AArch64::FCVTZUUWSr,
+      AArch64::FCVTZUUXHr, AArch64::FCVTZUUXSr, AArch64::FCVTSHr,
+      AArch64::FCVTDHr,    AArch64::FCVTHSr,    AArch64::FCVTDSr,
+      AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,  AArch64::FMULSrr,
+      AArch64::FABSSr,     AArch64::UQADDv1i32, AArch64::SQSUBv1i32,
+      AArch64::SQADDv1i32, AArch64::FMOVSr,     AArch64::FNEGSr,
+      AArch64::BRK,        AArch64::UCVTFUWSri, AArch64::UCVTFUWDri,
+      AArch64::SCVTFUWSri, AArch64::SCVTFUWDri,
   };
 
   const set<int> instrs_64 = {
@@ -732,6 +734,10 @@ class arm2llvm {
       AArch64::FMOVDXr,
       AArch64::INSvi64gpr,
       AArch64::MOVID,
+      AArch64::FCVTZUUWDr,
+      AArch64::FCVTZUUXDr,
+      AArch64::FCVTHDr,
+      AArch64::FCVTSDr,
       AArch64::FCVTZSUWDr,
       AArch64::FMOVDr,
       AArch64::DUPv2i32gpr,
@@ -6955,6 +6961,27 @@ public:
       break;
     }
 
+    case AArch64::FCVTZUUWHr:
+    case AArch64::FCVTZUUWSr:
+    case AArch64::FCVTZUUWDr:
+    case AArch64::FCVTZUUXHr:
+    case AArch64::FCVTZUUXSr:
+    case AArch64::FCVTZUUXDr: {
+      auto &op0 = CurInst->getOperand(0);
+      auto &op1 = CurInst->getOperand(1);
+      assert(op0.isReg() && op1.isReg());
+
+      auto val = readFromOperand(1, getRegSize(op1.getReg()));
+      updateOutputReg(val);
+      break;
+    }
+
+    case AArch64::FCVTSHr:
+    case AArch64::FCVTDHr:
+    case AArch64::FCVTHSr:
+    case AArch64::FCVTDSr:
+    case AArch64::FCVTHDr:
+    case AArch64::FCVTSDr:
     case AArch64::UCVTFUWSri:
     case AArch64::UCVTFUWDri:
     case AArch64::UCVTFUXSri:
@@ -6977,7 +7004,6 @@ public:
           isSigned ? createSIToFP(val, fTy) : createUIToFP(val, fTy);
 
       updateOutputReg(converted);
-
       break;
     }
 
@@ -7041,23 +7067,15 @@ public:
 
     case AArch64::FCVTZSUWDr: {
       auto val1 = createBitCast(readFromOperand(1), Type::getDoubleTy(Ctx));
-      auto val2 = createConvertFPToSI(val1, getIntTy(32));
+      auto val2 = createConvertFPToSI(val1, i32);
       updateOutputReg(val2);
       break;
     }
 
     case AArch64::FCVTZSUWSr: {
       auto val1 = createBitCast(readFromOperand(1), Type::getFloatTy(Ctx));
-      auto val2 = createConvertFPToSI(val1, getIntTy(32));
+      auto val2 = createConvertFPToSI(val1, i32);
       updateOutputReg(val2);
-      break;
-    }
-
-    case AArch64::FCVTSHr: {
-      auto val1 = createTrunc(readFromOperand(1), i16);
-      auto val3 = createConvertFromFP16(val1, Type::getFloatTy(Ctx));
-      auto val4 = createBitCast(val3, i32);
-      updateOutputReg(val4);
       break;
     }
 
