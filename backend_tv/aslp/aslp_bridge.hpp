@@ -11,6 +11,9 @@
 #include "interface.hpp"
 #include "aslt_visitor.hpp"
 
+#include <aslp-cpp/aslp-cpp_export.hpp>
+#include <aslp-cpp/aslp-cpp.hpp>
+
 
 namespace aslp {
 
@@ -28,10 +31,11 @@ class bridge {
   const llvm::MCCodeEmitter& mce;
   const llvm::MCSubtargetInfo& sti;
   const llvm::MCInstrAnalysis& ia;
-
-  std::unique_ptr<aslt::SemanticsParser> parser; // XXX not thread-safe
+  aslp_connection conn;
 
 public:
+  const static bool debug{true};
+
   bridge(lifter_interface&, const llvm::MCCodeEmitter&, const llvm::MCSubtargetInfo&, const llvm::MCInstrAnalysis&);
 
   std::variant<err_t, stmt_t> run(const llvm::MCInst& inst, const opcode_t& bytes);
@@ -40,7 +44,7 @@ public:
 protected:
   using parsed_t = std::reference_wrapper<aslt::SemanticsParser::StmtsContext>;
 
-  std::variant<err_t, stmt_t> parse(const std::filesystem::path&);
+  std::variant<err_t, stmt_t> parse(std::string_view aslt);
 };
 
 std::string format_opcode(const opcode_t& bytes);

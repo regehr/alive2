@@ -157,10 +157,14 @@ std::any aslt_visitor::visitLExprVar(SemanticsParser::LExprVarContext *ctx) {
   log() << "visitLExprVar" << '\n';
   auto name = OR(ctx->METHOD(), ctx->SSYMBOL())->getText();
 
-  if (name == "_R") {
+  if (locals.contains(name)) {
+    return locals.at(name);
+  } else if (name == "_R") {
     return xreg_sentinel;
   } else if (name == "PSTATE") {
     return pstate_sentinel;
+  } else if (name == "_Z") {
+    return vreg_sentinel;
   }
   assert(false && "lexprvar");
 }
@@ -189,8 +193,10 @@ std::any aslt_visitor::visitLExprArray(SemanticsParser::LExprArrayContext *ctx) 
 
   if (lhs == xreg_sentinel) {
     return iface.get_reg(reg_t::X, index.at(0));
-
+  } else if (lhs == vreg_sentinel) {
+    return iface.get_reg(reg_t::V, index.at(0));
   }
+
   assert(false && "lexpr array unsup");
 }
 
@@ -203,6 +209,8 @@ std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
     var = locals.at(name);
   else if (name == "_R")
     var = xreg_sentinel; // return X0 as a sentinel for all X registers
+  else if (name == "_Z")
+    var = vreg_sentinel;
   else if (name == "PSTATE")
     var = pstate_sentinel;
   else 
@@ -250,6 +258,27 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 
     } else if (name == "add_bits.0") {
       return static_cast<expr_t>(iface.createAdd(x, y));
+
+    } else if (name == "sub_bits.0") {
+      return static_cast<expr_t>(iface.createSub(x, y));
+
+    } else if (name == "and_bits.0" || name == "and_bool.0") {
+      return static_cast<expr_t>(iface.createAnd(x, y));
+
+    } else if (name == "append_bits.0") {
+      auto upper = x, lower = y;
+
+      auto upperwd = upper->getType()->getIntegerBitWidth();
+      auto lowerwd = lower->getType()->getIntegerBitWidth();
+
+      auto finalty = iface.getIntTy(upperwd + lowerwd);
+
+      upper = iface.createZExt(upper, finalty);
+      upper = iface.createMaskedLShr(upper, iface.getIntConst(lowerwd, upperwd + lowerwd));
+
+      lower = iface.createZExt(lower, finalty);
+
+      return static_cast<expr_t>(iface.createOr(upper, lower));
     }
   }
   assert(false && "unsupported TAPPLY");
@@ -296,13 +325,16 @@ std::any aslt_visitor::visitExprArray(SemanticsParser::ExprArrayContext *ctx) {
   assert(ctx->indices.size() == 1 && "array access has multiple indices");
   auto index = lit_int(ctx->indices.at(0));
 
+  lexpr_t reg = nullptr;
   if (base == xreg_sentinel) {
-    auto reg = iface.get_reg(reg_t::X, index);
-    auto load = iface.createLoad(reg->getAllocatedType(), reg);
-    return static_cast<expr_t>(load);
+    reg = iface.get_reg(reg_t::X, index);
+  } else if (base == vreg_sentinel) {
+    reg = iface.get_reg(reg_t::V, index);
   }
+  assert(reg && "expr base array unsup");
 
-  assert(false && "expr array unsup");
+  auto load = iface.createLoad(reg->getAllocatedType(), reg);
+  return static_cast<expr_t>(load);
 }
 std::any aslt_visitor::visitExprLitInt(SemanticsParser::ExprLitIntContext *ctx) {
   log() << "visitExprLitInt >" << ctx->getText() << "<\n";

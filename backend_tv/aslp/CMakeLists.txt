@@ -9,10 +9,10 @@ find_package(antlr4-runtime REQUIRED antlr4_shared)
 
 message(STATUS "Found antlr4cpp libs: ${ANTLR4_LIB_DIR} and includes: ${ANTLR4_INCLUDE_DIR} ")
 
-antlr4_generate(Semantics ${CMAKE_CURRENT_SOURCE_DIR}/Semantics.g4 BOTH TRUE TRUE aslt
-  "${ANTLR4_TOKEN_FILES_Semantics}"
-  "${ANTLR4_TOKEN_DIRECTORY_Semantics}")
-message(STATUS "antlr generated include: ${ANTLR4_INCLUDE_DIR_Semantics}")
+antlr4_generate(Grammar ${CMAKE_CURRENT_SOURCE_DIR}/Semantics.g4 BOTH TRUE TRUE aslt
+  "${ANTLR4_TOKEN_FILES_Grammar}"
+  "${ANTLR4_TOKEN_DIRECTORY_Grammar}")
+message(STATUS "antlr generated include: ${ANTLR4_INCLUDE_DIR_Grammar}")
 
 if (NOT LLVM_FOUND)
   find_package(LLVM REQUIRED CONFIG)
@@ -26,14 +26,27 @@ message(STATUS "llvm-config: ${LLVM_CONFIG}")
 # list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 # include(AddLLVM)
 
+include(FetchContent)
+FetchContent_Declare(aslp-cpp
+  URL https://github.com/UQ-PAC/aslp/archive/refs/heads/clientserver.tar.gz
+  # GIT_REPOSITORY https://github.com/UQ-PAC/aslp.git
+  # GIT_TAG        clientserver
+  SOURCE_SUBDIR  aslp-cpp
+  DOWNLOAD_EXTRACT_TIMESTAMP false
+  FIND_PACKAGE_ARGS
+)
+FetchContent_MakeAvailable(aslp-cpp)
+FetchContent_GetProperties(aslp-cpp SOURCE_DIR ASLP_DIR)
+message(STATUS "Found aslp-cpp: ${ASLP_DIR} ${aslp-cpp_DIR}")
 
-add_library(semantics STATIC "${ANTLR4_SRC_FILES_Semantics}")
-target_compile_options(semantics PUBLIC -Wno-error=overloaded-virtual -Wno-overloaded-virtual) # warnings in antlr-generated code
-target_include_directories(semantics PUBLIC ${PROJECT_BINARY_DIR} ${ANTLR4_INCLUDE_DIR} ${ANTLR4_INCLUDE_DIR_Semantics})
+add_library(grammar STATIC "${ANTLR4_SRC_FILES_Grammar}")
+target_compile_options(grammar PUBLIC -Wno-error=overloaded-virtual -Wno-overloaded-virtual) # warnings in antlr-generated code
+target_include_directories(grammar PUBLIC ${PROJECT_BINARY_DIR} ${ANTLR4_INCLUDE_DIR} ${ANTLR4_INCLUDE_DIR_Grammar})
 
 add_library(bridge STATIC "aslp_bridge.cpp" "aslt_visitor.cpp")
 add_dependencies(bridge antlr4_shared)
-target_link_libraries(bridge PUBLIC antlr4_shared semantics)
+target_link_libraries(bridge PUBLIC aslp-cpp::aslp-cpp)
+target_link_libraries(bridge PUBLIC antlr4_shared grammar)
 target_include_directories(bridge PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 target_compile_definitions(bridge PRIVATE ASLT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/aslt")

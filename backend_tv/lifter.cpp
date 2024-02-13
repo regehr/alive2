@@ -50,7 +50,6 @@
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include <llvm/IR/BasicBlock.h>
-#include <variant>
 
 #define GET_INSTRINFO_ENUM
 #include "Target/AArch64/AArch64GenInstrInfo.inc"
@@ -433,7 +432,7 @@ class arm2llvm : public aslp::lifter_interface {
            (reg >= AArch64::S0 && reg <= AArch64::S31);
   }
 
-  Constant *getIntConst(uint64_t val, u_int64_t bits) {
+  Constant *getIntConst(uint64_t val, u_int64_t bits) override {
     return ConstantInt::get(Ctx, llvm::APInt(bits, val));
   }
 
@@ -459,7 +458,7 @@ class arm2llvm : public aslp::lifter_interface {
     return ConstantVector::getSplat(ec, getIntConst(0, eltSize));
   }
 
-  Type *getIntTy(unsigned bits) {
+  Type *getIntTy(unsigned bits) override {
     return Type::getIntNTy(Ctx, bits);
   }
 
@@ -1598,12 +1597,19 @@ class arm2llvm : public aslp::lifter_interface {
         reg = llvm::AArch64::SP;
       else
         assert(false && "X register out of range");
+
     } else if (regtype == reg_t::PSTATE) {
+
       if (num == (int)pstate_t::N) reg = llvm::AArch64::N;
       else if (num == (int)pstate_t::Z) reg = llvm::AArch64::Z;
       else if (num == (int)pstate_t::C) reg = llvm::AArch64::C;
       else if (num == (int)pstate_t::V) reg = llvm::AArch64::V;
+
+    } else if (regtype == reg_t::V) {
+      reg = llvm::AArch64::Q0 + num;
+
     }
+
     assert(reg && "register not mapped");
     return llvm::cast<llvm::AllocaInst>(RegFile.at(reg));
   }
@@ -3556,7 +3562,7 @@ public:
     *out << sss << " = " << std::flush;
     if (I.getOpcode() != AArch64::SEH_Nop)
       instrPrinter->printInst(&I, 100, "", STI, outs());
-    *out << '\n';
+    *out << std::endl;
 
     auto entrybb = LLVMBB;
     aslp::bridge bridge{*this, MCE, STI, IA};
@@ -3586,6 +3592,9 @@ public:
               << "  "
               << aslp::format_opcode(a64Opcode.value())
               << std::endl;
+            if (aslp::bridge::debug) {
+              throw std::runtime_error("missing aslp instruction in debug mode is not allowed!");
+            }
             break;
           case aslp::err_t::banned:
             *out << "... aslp banned\n";

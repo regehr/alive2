@@ -38,6 +38,10 @@ public:
   // instruction they come from
   virtual std::string nextName() = 0;
 
+  virtual llvm::Constant *getIntConst(uint64_t val, u_int64_t bits) = 0;
+
+  virtual llvm::Type *getIntTy(unsigned bits) = 0; 
+
   virtual llvm::AllocaInst *createAlloca(llvm::Type *ty, llvm::Value *sz, const std::string &NameStr) = 0;
 
   virtual llvm::GetElementPtrInst *createGEP(llvm::Type *ty, llvm::Value *v, llvm::ArrayRef<llvm::Value *> idxlist,

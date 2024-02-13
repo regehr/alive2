@@ -36,6 +36,7 @@ private:
   llvm::LLVMContext &context;
 
   lexpr_t xreg_sentinel;
+  lexpr_t vreg_sentinel;
   lexpr_t pstate_sentinel;
   uint64_t depth = 0;
 
@@ -53,7 +54,9 @@ public:
     func{iface.ll_function()},
     context{func.getContext()},
     xreg_sentinel{iface.get_reg(reg_t::X, 0)},
-    pstate_sentinel{iface.get_reg(reg_t::PSTATE, (int)pstate_t::N)} {
+    vreg_sentinel{iface.get_reg(reg_t::V, 0)},
+    pstate_sentinel{iface.get_reg(reg_t::PSTATE, (int)pstate_t::N)}
+  {
     assert(xreg_sentinel);
   }
 protected:
