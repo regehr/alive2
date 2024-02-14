@@ -575,13 +575,14 @@ class arm2llvm {
       AArch64::FSUBSrr,    AArch64::FCMPSrr,    AArch64::FCMPSri,
       AArch64::FMOVSWr,    AArch64::INSvi32gpr, AArch64::INSvi16gpr,
       AArch64::INSvi8gpr,  AArch64::FCVTZUUWHr, AArch64::FCVTZUUWSr,
-      AArch64::FCVTZUUXHr, AArch64::FCVTZUUXSr, AArch64::FCVTSHr,
-      AArch64::FCVTDHr,    AArch64::FCVTHSr,    AArch64::FCVTDSr,
-      AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,  AArch64::FMULSrr,
-      AArch64::FABSSr,     AArch64::UQADDv1i32, AArch64::SQSUBv1i32,
-      AArch64::SQADDv1i32, AArch64::FMOVSr,     AArch64::FNEGSr,
-      AArch64::BRK,        AArch64::UCVTFUWSri, AArch64::UCVTFUWDri,
-      AArch64::SCVTFUWSri, AArch64::SCVTFUWDri,
+      AArch64::FCVTZUUXHr, AArch64::FCVTZUUXSr, AArch64::FCVTZSUWHr,
+      AArch64::FCVTZSUWSr, AArch64::FCVTZSUXHr, AArch64::FCVTZSUXSr,
+      AArch64::FCVTSHr,    AArch64::FCVTDHr,    AArch64::FCVTHSr,
+      AArch64::FCVTDSr,    AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,
+      AArch64::FMULSrr,    AArch64::FABSSr,     AArch64::UQADDv1i32,
+      AArch64::SQSUBv1i32, AArch64::SQADDv1i32, AArch64::FMOVSr,
+      AArch64::FNEGSr,     AArch64::BRK,        AArch64::UCVTFUWSri,
+      AArch64::UCVTFUWDri, AArch64::SCVTFUWSri, AArch64::SCVTFUWDri,
   };
 
   const set<int> instrs_64 = {
@@ -736,6 +737,8 @@ class arm2llvm {
       AArch64::MOVID,
       AArch64::FCVTZUUWDr,
       AArch64::FCVTZUUXDr,
+      AArch64::FCVTZSUWDr,
+      AArch64::FCVTZSUXDr,
       AArch64::FCVTHDr,
       AArch64::FCVTSDr,
       AArch64::FCVTZSUWDr,
@@ -1807,10 +1810,6 @@ class arm2llvm {
     return CallInst::Create(cvt_decl, {v}, nextName(), LLVMBB);
   }
 
-  CastInst *createConvertFPToSI(Value *v, Type *ty) {
-    return new FPToSIInst(v, ty, nextName(), LLVMBB);
-  }
-
   CastInst *createPtrToInt(Value *v, Type *ty) {
     return new PtrToIntInst(v, ty, nextName(), LLVMBB);
   }
@@ -2024,12 +2023,20 @@ class arm2llvm {
     return CastInst::Create(Instruction::Trunc, v, t, nextName(), LLVMBB);
   }
 
+  CastInst *createZExt(Value *v, Type *t) {
+    return CastInst::Create(Instruction::ZExt, v, t, nextName(), LLVMBB);
+  }
+
   CastInst *createSExt(Value *v, Type *t) {
     return CastInst::Create(Instruction::SExt, v, t, nextName(), LLVMBB);
   }
 
-  CastInst *createZExt(Value *v, Type *t) {
-    return CastInst::Create(Instruction::ZExt, v, t, nextName(), LLVMBB);
+  CastInst *createFPToUI(Value *v, Type *t) {
+    return CastInst::Create(Instruction::FPToUI, v, t, nextName(), LLVMBB);
+  }
+
+  CastInst *createFPToSI(Value *v, Type *t) {
+    return CastInst::Create(Instruction::FPToSI, v, t, nextName(), LLVMBB);
   }
 
   CastInst *createUIToFP(Value *v, Type *t) {
@@ -2038,6 +2045,14 @@ class arm2llvm {
 
   CastInst *createSIToFP(Value *v, Type *t) {
     return CastInst::Create(Instruction::SIToFP, v, t, nextName(), LLVMBB);
+  }
+
+  CastInst *createFPTrunc(Value *v, Type *t) {
+    return CastInst::Create(Instruction::FPTrunc, v, t, nextName(), LLVMBB);
+  }
+
+  CastInst *createFPExt(Value *v, Type *t) {
+    return CastInst::Create(Instruction::FPExt, v, t, nextName(), LLVMBB);
   }
 
   CastInst *createBitCast(Value *v, Type *t) {
@@ -6966,13 +6981,31 @@ public:
     case AArch64::FCVTZUUWDr:
     case AArch64::FCVTZUUXHr:
     case AArch64::FCVTZUUXSr:
-    case AArch64::FCVTZUUXDr: {
+    case AArch64::FCVTZUUXDr:
+    case AArch64::FCVTZSUWHr:
+    case AArch64::FCVTZSUWSr:
+    case AArch64::FCVTZSUWDr:
+    case AArch64::FCVTZSUXHr:
+    case AArch64::FCVTZSUXSr:
+    case AArch64::FCVTZSUXDr: {
       auto &op0 = CurInst->getOperand(0);
       auto &op1 = CurInst->getOperand(1);
       assert(op0.isReg() && op1.isReg());
 
-      auto val = readFromOperand(1, getRegSize(op1.getReg()));
-      updateOutputReg(val);
+      auto isSigned =
+          opcode == AArch64::FCVTZSUWHr || opcode == AArch64::FCVTZSUWSr ||
+          opcode == AArch64::FCVTZSUWDr || opcode == AArch64::FCVTZSUXHr ||
+          opcode == AArch64::FCVTZSUXSr || opcode == AArch64::FCVTZSUXDr;
+
+      auto op0Size = getRegSize(op0.getReg());
+      auto op1Size = getRegSize(op1.getReg());
+
+      auto val = readFromOperand(1, op1Size);
+      auto fTy = getFPType(op1Size);
+      auto fp_val = createBitCast(val, fTy);
+      auto converted = isSigned ? createFPToSI(fp_val, getIntTy(op0Size))
+                                : createFPToUI(fp_val, getIntTy(op0Size));
+      updateOutputReg(converted);
       break;
     }
 
@@ -6981,7 +7014,25 @@ public:
     case AArch64::FCVTHSr:
     case AArch64::FCVTDSr:
     case AArch64::FCVTHDr:
-    case AArch64::FCVTSDr:
+    case AArch64::FCVTSDr: {
+      auto &op0 = CurInst->getOperand(0);
+      auto &op1 = CurInst->getOperand(1);
+      assert(op0.isReg() && op1.isReg());
+
+      auto op0Size = getRegSize(op0.getReg());
+      auto op1Size = getRegSize(op1.getReg());
+
+      auto fTy0 = getFPType(op0Size);
+      auto fTy1 = getFPType(op1Size);
+      auto val = readFromOperand(1, op1Size);
+      auto fp_val = createBitCast(val, fTy1);
+      auto converted = op0Size < op1Size ? createFPTrunc(fp_val, fTy0)
+                                         : createFPExt(fp_val, fTy0);
+
+      updateOutputReg(converted);
+      break;
+    }
+
     case AArch64::UCVTFUWSri:
     case AArch64::UCVTFUWDri:
     case AArch64::UCVTFUXSri:
@@ -7062,20 +7113,6 @@ public:
       auto sizeTy = getIntTy(getInstSize(opcode));
       auto res = createBitCast(createBinop(a, b, op), sizeTy);
       updateOutputReg(res);
-      break;
-    }
-
-    case AArch64::FCVTZSUWDr: {
-      auto val1 = createBitCast(readFromOperand(1), Type::getDoubleTy(Ctx));
-      auto val2 = createConvertFPToSI(val1, i32);
-      updateOutputReg(val2);
-      break;
-    }
-
-    case AArch64::FCVTZSUWSr: {
-      auto val1 = createBitCast(readFromOperand(1), Type::getFloatTy(Ctx));
-      auto val2 = createConvertFPToSI(val1, i32);
-      updateOutputReg(val2);
       break;
     }
 
