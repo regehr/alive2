@@ -47,8 +47,9 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x) {
     base = ref_expr(_base);
 
   } else if (auto load = llvm::dyn_cast<llvm::LoadInst>(x); load) {
-    base = ref_expr(x);
-    offset = iface.getIntConst(0, 1);
+    auto wd = load->getType()->getIntegerBitWidth();
+    base = ref_expr(load);
+    offset = iface.getIntConst(0, wd);
   }
 
   assert(base && offset && "unable to coerce to pointer");
@@ -149,12 +150,13 @@ std::any aslt_visitor::visitCall_stmt(SemanticsParser::Call_stmtContext *ctx) {
   auto name = ctx->METHOD()->getText();
   log() << "visitCall_stmt" << '\n';
 
+  auto s = new_stmt("call");
+
   auto args = map(ctx->expr(), &aslt_visitor::expr);
   auto targctxs = map(ctx->targs(), [](auto x) { return x->expr(); });
   auto targs = map(targctxs, &aslt_visitor::lit_int);
 
   if (args.size() == 4) {
-    auto x = args[0];
     if (name == "Mem.set.0") {
       // Mem[] - assignment (write) form
       // ===============================
@@ -162,12 +164,11 @@ std::any aslt_visitor::visitCall_stmt(SemanticsParser::Call_stmtContext *ctx) {
       // Mem[bits(64) address, integer size, AccType acctype] = bits(size*8) value
       auto addr = args[0], bytes = args[1], acctype = args[2], val = args[3];
 
-
-
-
-      return x;
+      auto size = llvm::cast<llvm::ConstantInt>(bytes)->getSExtValue();
+      auto [ptr, offset] = ptr_expr(addr);
+      iface.storeToMemoryValOffset(ptr, offset, size, val);
+      return s;
     }
-
   }
 
   assert(false && "call stmt unsup");
@@ -327,7 +328,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto finalty = iface.getIntTy(upperwd + lowerwd);
 
       upper = iface.createZExt(upper, finalty);
-      upper = iface.createMaskedShl(upper, iface.getIntConst(lowerwd, upperwd + lowerwd));
+      upper = iface.createRawShl(upper, iface.getIntConst(lowerwd, upperwd + lowerwd));
 
       lower = iface.createZExt(lower, finalty);
 
@@ -343,7 +344,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto base = iface.createZExt(x, finalty);
       expr_t ret = base;
       for (unsigned i = 1; i < count; i++) {
-        auto shifted = iface.createMaskedShl(base, iface.getIntConst(basewd * i, finalwd));
+        auto shifted = iface.createRawShl(base, iface.getIntConst(basewd * i, finalwd));
         ret = iface.createOr(ret, shifted);
       }
       return ret;

@@ -62,6 +62,9 @@ const config_t& bridge::config() {
   if (!inited) {
     const char* var = "(unknown)";
     try {
+      var = "ASLP";
+      config.enable = getenv_bool(var, true);
+
       var = "ASLP_FAIL_MISSING";
       config.fail_if_missing = getenv_bool(var, false);
 
@@ -125,12 +128,13 @@ std::variant<err_t, stmt_t> bridge::parse(std::string_view aslt) {
 
 std::variant<err_t, stmt_t> bridge::run(const llvm::MCInst& inst, const opcode_t& bytes) {
   const auto& mcinst_banned = config().mcinst_banned;
-  bool banned = 
-    ia.isBranch(inst) || 
-    ia.isReturn(inst) || 
-    ia.isCall(inst) || 
-    ia.isIndirectBranch(inst) ||
-    std::ranges::count(mcinst_banned, inst.getOpcode()) != 0
+  bool banned = !config().enable
+    || ia.isBranch(inst)
+    || ia.isReturn(inst)
+    || ia.isCall(inst)
+    || ia.isIndirectBranch(inst)
+    // || inst.getOpcode() == 1572 // adrp
+    || std::ranges::count(mcinst_banned, inst.getOpcode()) != 0
     ;
   if (banned)
     return err_t::banned;

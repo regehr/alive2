@@ -3463,7 +3463,7 @@ class arm2llvm : public aslp::lifter_interface {
   }
 
   void storeToMemoryValOffset(Value *base, Value *offset, u_int64_t size,
-                              Value *val) {
+                              Value *val) override {
     // Create a GEP instruction based on a byte addressing basis (8 bits)
     // returning pointer to base + offset
     assert(base);
@@ -3540,6 +3540,11 @@ public:
       return std::nullopt;
 
     MCE.encodeInstruction(I, Code, Fixups, STI);
+    for (auto x : Fixups) {
+      std::cerr << "fixup: " << x.getKind() << ' ' << x.getTargetKind() << ' ' << x.getOffset() << ' ' << std::flush;
+      x.getValue()->dump();
+      std::cout << std::endl;
+    }
 
     aslp::opcode_t ret;
     unsigned i = 0;

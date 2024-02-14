@@ -44,6 +44,7 @@ public:
 
 
   virtual llvm::Value *makeLoadWithOffset(llvm::Value *base, llvm::Value *offset, int size) = 0; 
+  virtual void storeToMemoryValOffset(llvm::Value *base, llvm::Value *offset, u_int64_t size, llvm::Value *val) = 0;
 
   virtual llvm::AllocaInst *createAlloca(llvm::Type *ty, llvm::Value *sz, const std::string &NameStr) = 0;
 
