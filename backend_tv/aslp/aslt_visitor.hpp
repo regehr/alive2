@@ -99,22 +99,28 @@ protected:
     return i->getSExtValue();
   }
 
-  virtual lexpr_t expr_var(aslt::SemanticsParser::ExprContext* ctx) {
-    auto x = expr(ctx);
 
+  virtual std::pair<expr_t, expr_t> ptr_expr(llvm::Value* x);
+
+  virtual lexpr_t ref_expr(expr_t expr) {
     // XXX: HACK! since ExprVar are realised as LoadInst, this is incorrect in an array.
     // hence, we undo the load to obtain the actual register.
 
-    auto load = llvm::cast<llvm::LoadInst>(x);
+    auto load = llvm::cast<llvm::LoadInst>(expr);
     auto base = llvm::dyn_cast<llvm::AllocaInst>(load->getPointerOperand());
 
     assert(base && "expr_var: attempt to reference non-allocainst in a lexpr context");
     assert(load->isSafeToRemove() && "surely not");
     load->eraseFromParent();
 
-    assert(base == xreg_sentinel || base == pstate_sentinel);
+    // assert(base == xreg_sentinel || base == pstate_sentinel);
 
     return llvm::cast<llvm::AllocaInst>(base);
+  }
+
+  virtual lexpr_t expr_var(aslt::SemanticsParser::ExprContext* ctx) {
+    auto x = expr(ctx);
+    return ref_expr(x);
   }
 
   virtual stmt_t stmt(aslt::SemanticsParser::StmtContext* ctx) {

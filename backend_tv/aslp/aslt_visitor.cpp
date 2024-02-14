@@ -32,6 +32,30 @@ namespace {
 
 namespace aslp {
 
+
+std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x) {
+  lexpr_t base = nullptr;
+  expr_t offset = nullptr;
+
+  auto Add = llvm::BinaryOperator::BinaryOps::Add;
+  if (auto add = llvm::dyn_cast<llvm::BinaryOperator>(x); add && add->getOpcode() == Add) {
+    // undo the add instruction into a GEP operation
+    auto _base = add->getOperand(0);
+    offset = add->getOperand(1);
+
+    add->eraseFromParent();
+    base = ref_expr(_base);
+
+  } else if (auto load = llvm::dyn_cast<llvm::LoadInst>(x); load) {
+    base = ref_expr(x);
+    offset = iface.getIntConst(0, 1);
+  }
+
+  assert(base && offset && "unable to coerce to pointer");
+  auto ptr = iface.createLoad(llvm::PointerType::get(context, 0), base);
+  return {ptr, offset};
+}
+
 std::any aslt_visitor::visitStmt(SemanticsParser::StmtContext *ctx) {
   return std::any_cast<stmt_t>(super::visitStmt(ctx));
 }
@@ -122,8 +146,31 @@ std::any aslt_visitor::visitAssert(SemanticsParser::AssertContext *ctx) {
 }
 
 std::any aslt_visitor::visitCall_stmt(SemanticsParser::Call_stmtContext *ctx) {
-  log() << "TODO visitCall_stmt" << '\n';
-  return super::visitCall_stmt(ctx);
+  auto name = ctx->METHOD()->getText();
+  log() << "visitCall_stmt" << '\n';
+
+  auto args = map(ctx->expr(), &aslt_visitor::expr);
+  auto targctxs = map(ctx->targs(), [](auto x) { return x->expr(); });
+  auto targs = map(targctxs, &aslt_visitor::lit_int);
+
+  if (args.size() == 4) {
+    auto x = args[0];
+    if (name == "Mem.set.0") {
+      // Mem[] - assignment (write) form
+      // ===============================
+      // Perform a write of 'size' bytes. The byte order is reversed for a big-endian access.
+      // Mem[bits(64) address, integer size, AccType acctype] = bits(size*8) value
+      auto addr = args[0], bytes = args[1], acctype = args[2], val = args[3];
+
+
+
+
+      return x;
+    }
+
+  }
+
+  assert(false && "call stmt unsup");
 }
 
 std::any aslt_visitor::visitConditionalStmt(SemanticsParser::ConditionalStmtContext *ctx) {
@@ -165,6 +212,8 @@ std::any aslt_visitor::visitLExprVar(SemanticsParser::LExprVarContext *ctx) {
     return pstate_sentinel;
   } else if (name == "_Z") {
     return vreg_sentinel;
+  } else if (name == "SP_EL0") {
+    return iface.get_reg(reg_t::X, 31);
   }
   assert(false && "lexprvar");
 }
@@ -213,6 +262,8 @@ std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
     var = vreg_sentinel;
   else if (name == "PSTATE")
     var = pstate_sentinel;
+  else if (name == "SP_EL0")
+    var = iface.get_reg(reg_t::X, 31);
   else 
     assert(false && "unsupported or undefined variable!");
 
@@ -270,15 +321,45 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 
       auto upperwd = upper->getType()->getIntegerBitWidth();
       auto lowerwd = lower->getType()->getIntegerBitWidth();
+      assert(upperwd > 0);
+      assert (lowerwd > 0);
 
       auto finalty = iface.getIntTy(upperwd + lowerwd);
 
       upper = iface.createZExt(upper, finalty);
-      upper = iface.createMaskedLShr(upper, iface.getIntConst(lowerwd, upperwd + lowerwd));
+      upper = iface.createMaskedShl(upper, iface.getIntConst(lowerwd, upperwd + lowerwd));
 
       lower = iface.createZExt(lower, finalty);
 
       return static_cast<expr_t>(iface.createOr(upper, lower));
+
+    } else if (name == "replicate_bits.0") {
+      auto count = llvm::cast<llvm::ConstantInt>(y)->getSExtValue();
+
+      auto basewd = x->getType()->getIntegerBitWidth() ;
+      auto finalwd = basewd * count;
+      auto finalty = iface.getIntTy(finalwd);
+
+      auto base = iface.createZExt(x, finalty);
+      expr_t ret = base;
+      for (unsigned i = 1; i < count; i++) {
+        auto shifted = iface.createMaskedShl(base, iface.getIntConst(basewd * i, finalwd));
+        ret = iface.createOr(ret, shifted);
+      }
+      return ret;
+    }
+  } else if (args.size() == 3) {
+    auto x = args[0], y = args[1], z = args[2];
+
+    if (name == "Mem.read.0") {
+      // Perform a read of 'size' bytes. The access byte order is reversed for a big-endian access.
+      // Instruction fetches would call AArch64.MemSingle directly.
+      // bits(size*8) Mem[bits(64) address, integer size, AccType acctype]
+
+      auto size = llvm::cast<llvm::ConstantInt>(y);
+      auto [ptr, offset] = ptr_expr(x);
+      auto load = iface.makeLoadWithOffset(ptr, offset, size->getSExtValue());
+      return static_cast<expr_t>(load);
     }
   }
   assert(false && "unsupported TAPPLY");

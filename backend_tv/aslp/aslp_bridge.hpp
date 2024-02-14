@@ -25,6 +25,14 @@ enum struct err_t {
   banned, 
 };
 
+struct config_t {
+  bool fail_if_missing;
+  std::vector<unsigned> mcinst_banned;
+
+  std::string server_addr;
+  unsigned server_port;
+};
+
 class bridge {
   lifter_interface& iface;
   llvm::LLVMContext& context;
@@ -34,12 +42,10 @@ class bridge {
   aslp_connection conn;
 
 public:
-  const static bool debug{true};
-
   bridge(lifter_interface&, const llvm::MCCodeEmitter&, const llvm::MCSubtargetInfo&, const llvm::MCInstrAnalysis&);
 
   std::variant<err_t, stmt_t> run(const llvm::MCInst& inst, const opcode_t& bytes);
-
+  static const config_t& config();
 
 protected:
   using parsed_t = std::reference_wrapper<aslt::SemanticsParser::StmtsContext>;

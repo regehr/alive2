@@ -1970,7 +1970,9 @@ class arm2llvm : public aslp::lifter_interface {
     return new FreezeInst(v, nextName(), LLVMBB);
   }
 
-  CastInst *createTrunc(Value *v, Type *t) override {
+  Value *createTrunc(Value *v, Type *t) override {
+    if (v->getType() == t)
+      return v;
     return CastInst::Create(Instruction::Trunc, v, t, nextName(), LLVMBB);
   }
 
@@ -3004,7 +3006,7 @@ class arm2llvm : public aslp::lifter_interface {
     return make_pair(baseAddr, offset);
   }
 
-  Value *makeLoadWithOffset(Value *base, Value *offset, int size) {
+  Value *makeLoadWithOffset(Value *base, Value *offset, int size) override {
     // Create a GEP instruction based on a byte addressing basis (8 bits)
     // returning pointer to base + offset
     assert(base);
@@ -3592,7 +3594,7 @@ public:
               << "  "
               << aslp::format_opcode(a64Opcode.value())
               << std::endl;
-            if (aslp::bridge::debug) {
+            if (aslp::bridge::config().fail_if_missing) {
               throw std::runtime_error("missing aslp instruction in debug mode is not allowed!");
             }
             break;

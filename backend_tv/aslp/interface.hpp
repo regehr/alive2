@@ -42,6 +42,9 @@ public:
 
   virtual llvm::Type *getIntTy(unsigned bits) = 0; 
 
+
+  virtual llvm::Value *makeLoadWithOffset(llvm::Value *base, llvm::Value *offset, int size) = 0; 
+
   virtual llvm::AllocaInst *createAlloca(llvm::Type *ty, llvm::Value *sz, const std::string &NameStr) = 0;
 
   virtual llvm::GetElementPtrInst *createGEP(llvm::Type *ty, llvm::Value *v, llvm::ArrayRef<llvm::Value *> idxlist,
@@ -166,7 +169,7 @@ public:
 
   virtual llvm::FreezeInst *createFreeze(llvm::Value *v) = 0;
 
-  virtual llvm::CastInst *createTrunc(llvm::Value *v, llvm::Type *t) = 0;
+  virtual llvm::Value *createTrunc(llvm::Value *v, llvm::Type *t) = 0;
 
   virtual llvm::CastInst *createSExt(llvm::Value *v, llvm::Type *t) = 0;
 

@@ -28,15 +28,21 @@
 
 namespace fs = std::filesystem;
 
+
+bool getenv_bool(const std::string& name, bool def = false) {
+  auto env = std::getenv(name.c_str());
+  if (!env) return def;
+
+  std::string str{env};
+  std::ranges::transform(str, str.begin(), 
+      [](char c){ return std::tolower(c); });
+
+  return (str == "1" || str == "on" || str == "yes" || str == "true");
+}
+
 aslp_connection make_conn() {
-  auto env = std::getenv("ASLP_SERVER");
-  std::string s{env ? env : "localhost:8000"};
-
-  auto split = s.find(':');
-  auto addr = s.substr(0, split);
-  auto port = std::stoul(s.substr(split+1));
-
-  auto conn = aslp_connection{addr, static_cast<int>(port)};
+  auto config = aslp::bridge::config();
+  auto conn = aslp_connection{config.server_addr, static_cast<int>(config.server_port)};
   conn.wait_active();
   return conn;
 }
@@ -45,6 +51,51 @@ namespace aslp {
 
 bridge::bridge(lifter_interface& iface, const llvm::MCCodeEmitter& mce, const llvm::MCSubtargetInfo& sti, const llvm::MCInstrAnalysis& ia) 
   : iface{iface}, context{iface.ll_function().getContext()}, mce{mce}, sti{sti}, ia{ia}, conn{make_conn()} { }
+
+
+const config_t& bridge::config() {
+  static bool inited{false};
+  static config_t config;
+
+  using namespace std::ranges::views;
+
+  if (!inited) {
+    const char* var = "(unknown)";
+    try {
+      var = "ASLP_FAIL_MISSING";
+      config.fail_if_missing = getenv_bool(var, false);
+
+      var = "ASLP_BANNED";
+      const char* ban_env = std::getenv(var);
+      ban_env = ban_env ? ban_env : "";
+
+      config.mcinst_banned.clear();
+      for (auto ban_str : std::string{ban_env} | split(',')) {
+        auto ban = std::stoul(std::string{ban_str.begin(), ban_str.end()});
+        config.mcinst_banned.push_back(ban);
+      }
+
+      var = "ASLP_SERVER";
+      const char* serv_env = std::getenv(var);
+      serv_env = serv_env ? serv_env : "localhost";
+      std::string s{serv_env};
+      auto split = s.find(':');
+
+      config.server_addr = s.substr(0, split);
+      auto port_str = split != s.npos ? s.substr(split + 1) : "8000";
+      config.server_port = std::stoul(port_str);
+
+      inited = true;
+
+    } catch (const std::invalid_argument& e) {
+      std::cerr 
+        << "\nERROR while parsing aslp environment variable: "
+        << var << '\n' << std::endl;
+      throw e;
+    }
+  }
+  return config;
+}
 
 
 std::variant<err_t, stmt_t> bridge::parse(std::string_view aslt) {
@@ -73,12 +124,13 @@ std::variant<err_t, stmt_t> bridge::parse(std::string_view aslt) {
 
 
 std::variant<err_t, stmt_t> bridge::run(const llvm::MCInst& inst, const opcode_t& bytes) {
+  const auto& mcinst_banned = config().mcinst_banned;
   bool banned = 
     ia.isBranch(inst) || 
     ia.isReturn(inst) || 
     ia.isCall(inst) || 
     ia.isIndirectBranch(inst) ||
-    inst.getOpcode() == 1572 // ADRP
+    std::ranges::count(mcinst_banned, inst.getOpcode()) != 0
     ;
   if (banned)
     return err_t::banned;
