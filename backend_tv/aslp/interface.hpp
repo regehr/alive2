@@ -1,5 +1,6 @@
 #pragma once
 
+#include <llvm/MC/MCExpr.h>
 #include <llvm/IR/Instruction.h>
 #include <llvm/IR/Instructions.h>
 
@@ -38,10 +39,13 @@ public:
   // instruction they come from
   virtual std::string nextName() = 0;
 
-  virtual llvm::Constant *getIntConst(uint64_t val, u_int64_t bits) = 0;
+  virtual llvm::Constant *lookupExprVar(const llvm::MCExpr&) = 0;
+  virtual void updateOutputReg(llvm::Value *V, bool SExt = false) = 0;
 
+  virtual llvm::Constant *getIntConst(uint64_t val, u_int64_t bits) = 0;
   virtual llvm::Type *getIntTy(unsigned bits) = 0; 
 
+  virtual void assertTrue(llvm::Value *cond) = 0;
 
   virtual llvm::Value *makeLoadWithOffset(llvm::Value *base, llvm::Value *offset, int size) = 0; 
   virtual void storeToMemoryValOffset(llvm::Value *base, llvm::Value *offset, u_int64_t size, llvm::Value *val) = 0;

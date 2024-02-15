@@ -2319,7 +2319,7 @@ class arm2llvm : public aslp::lifter_interface {
     return createBitCast(regVal, ty);
   }
 
-  void updateOutputReg(Value *V, bool SExt = false) {
+  void updateOutputReg(Value *V, bool SExt = false) override {
     auto destReg = CurInst->getOperand(0).getReg();
     updateReg(V, destReg, SExt);
   }
@@ -2367,6 +2367,10 @@ class arm2llvm : public aslp::lifter_interface {
 
     instExprVarMap[CurInst] = name;
     return name;
+  }
+
+  llvm::Constant *lookupExprVar(const llvm::MCExpr& expr) override {
+    return lookupGlobal(mapExprVar(&expr));
   }
 
   string demangle(const string &name) {
@@ -2679,10 +2683,15 @@ class arm2llvm : public aslp::lifter_interface {
     auto n = createICmp(ICmpInst::Predicate::ICMP_SLT, V, zero);
     setN(n);
   }
+  
+  void assertTrue(Value *cond) override {
+    assert(cond->getType()->getIntegerBitWidth() == 1 && "assert requires i1");
+    CallInst::Create(assertDecl, {cond}, "", LLVMBB);
+  }
 
   void assertSame(Value *a, Value *b) {
     auto *c = createICmp(ICmpInst::Predicate::ICMP_EQ, a, b);
-    CallInst::Create(assertDecl, {c}, "", LLVMBB);
+    assertTrue(c);
   }
 
   Type *getFPOperandType(unsigned opcode) {
@@ -3617,7 +3626,7 @@ public:
     }
 
     // always create new bb per instruction, to match aslp
-    auto newbb = BasicBlock::Create(Ctx, "", liftedFn);
+    auto newbb = BasicBlock::Create(Ctx, "lifter_" + nextName(), liftedFn);
     createBranch(newbb);
     LLVMBB = newbb;
 
@@ -6460,10 +6469,7 @@ public:
 
     case AArch64::ADRP: {
       assert(CurInst->getOperand(0).isReg());
-      auto global = lookupGlobal(mapExprVar(CurInst->getOperand(1).getExpr()));
-      auto alloc = createAlloca(global->getType(), nullptr, nextName());
-      createStore(global, alloc);
-      updateOutputReg(alloc);
+      mapExprVar(CurInst->getOperand(1).getExpr());
       break;
     }
 

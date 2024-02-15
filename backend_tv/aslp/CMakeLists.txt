@@ -48,6 +48,7 @@ add_dependencies(bridge antlr4_shared)
 target_link_libraries(bridge PUBLIC aslp-cpp::aslp-cpp)
 target_link_libraries(bridge PUBLIC antlr4_shared grammar)
 target_include_directories(bridge PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
+target_include_directories(bridge PRIVATE "${LLVM_SOURCE_DIR}/lib")
 
 target_compile_definitions(bridge PRIVATE ASLT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/aslt")
 target_compile_options(bridge PRIVATE -g -O0 -fsanitize=address

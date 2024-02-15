@@ -53,9 +53,21 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x) {
   }
 
   assert(base && offset && "unable to coerce to pointer");
-  auto ptr = iface.createLoad(llvm::PointerType::get(context, 0), base);
-  // auto ptr = new llvm::IntToPtrInst(load, llvm::PointerType::get(context, 0), "", iface.get_bb());
+  auto load = iface.createLoad(base->getAllocatedType(), base);
+  auto ptr = new llvm::IntToPtrInst(load, llvm::PointerType::get(context, 0), "", iface.get_bb());
   return {ptr, offset};
+}
+
+std::pair<llvm::Value*, llvm::Value*> aslt_visitor::unify_sizes(llvm::Value* x, llvm::Value* y) {
+  auto ty1 = x->getType(), ty2 = y->getType();
+  auto wd1 = ty1->getIntegerBitWidth(), wd2 = ty2->getIntegerBitWidth();
+
+  if (wd1 < wd2) {
+    x = iface.createSExt(x, ty2);
+  } else if (wd2 < wd1) {
+    y = iface.createSExt(y, ty1);
+  }
+  return std::make_pair(x, y);
 }
 
 std::any aslt_visitor::visitStmt(SemanticsParser::StmtContext *ctx) {
@@ -63,12 +75,19 @@ std::any aslt_visitor::visitStmt(SemanticsParser::StmtContext *ctx) {
 }
 
 std::any aslt_visitor::visitStmts(SemanticsParser::StmtsContext *ctx) {
-  log() << "visitStmts" << '\n';
-  auto ctxs = ctx->stmt();
-  assert(!ctxs.empty() && "statement list must not be empty!");
+  log() << "visitStmts " << '\n';
 
   // store and reset current bb to support nesting statements nicely
   auto bb = iface.get_bb();
+
+  if (ctx == nullptr) {
+    auto empty = new_stmt("stmtlist_empty");
+    iface.set_bb(bb);
+    return empty;
+  }
+
+  auto ctxs = ctx->stmt();
+  assert(!ctxs.empty() && "statement list must not be empty!");
 
   stmt_counts[depth+1] = 0;
   stmt_t s = stmt(ctxs.at(0));
@@ -143,8 +162,12 @@ std::any aslt_visitor::visitVarDeclsNoInit(SemanticsParser::VarDeclsNoInitContex
 }
 
 std::any aslt_visitor::visitAssert(SemanticsParser::AssertContext *ctx) {
-  log() << "TODO visitAssert" << '\n';
-  return super::visitAssert(ctx);
+  log() << "visitAssert" << '\n';
+
+  auto s = new_stmt("assert");
+  auto c = expr(ctx->expr());
+  iface.assertTrue(c);
+  return s;
 }
 
 std::any aslt_visitor::visitCall_stmt(SemanticsParser::Call_stmtContext *ctx) {
@@ -315,8 +338,56 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
     } else if (name == "sub_bits.0") {
       return static_cast<expr_t>(iface.createSub(x, y));
 
+    } else if (name == "eor_bits.0") {
+      return static_cast<expr_t>(iface.createBinop(x, y, llvm::BinaryOperator::BinaryOps::Xor));
+
     } else if (name == "and_bits.0" || name == "and_bool.0") {
       return static_cast<expr_t>(iface.createAnd(x, y));
+
+    } else if (name == "or_bits.0" || name == "or_bool.0") {
+      return static_cast<expr_t>(iface.createOr(x, y));
+
+    } else if (name == "mul_bits.0") {
+      return static_cast<expr_t>(iface.createMul(x, y));
+
+    } else if (name == "slt_bits.0") {
+      return static_cast<expr_t>(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_SLT, x, y));
+
+    } else if (name == "sle_bits.0") {
+      return static_cast<expr_t>(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_SLE, x, y));
+
+    } else if (name == "lsl_bits.0") {
+      std::tie(x, y) = unify_sizes(x, y);
+      auto wd = x->getType()->getIntegerBitWidth();
+      if (std::has_single_bit(wd))
+        return static_cast<expr_t>(iface.createMaskedShl(x, y));
+      auto max = iface.getIntConst(wd - 1, wd);
+      auto ok = iface.createICmp(llvm::ICmpInst::Predicate::ICMP_ULE, y, max);
+      auto shift = iface.createRawShl(x, y);
+      auto zero = iface.getIntConst(0, wd);
+      return static_cast<expr_t>(iface.createSelect(ok, shift, zero));
+
+    } else if (name == "lsr_bits.0") {
+      std::tie(x, y) = unify_sizes(x, y);
+      auto wd = x->getType()->getIntegerBitWidth();
+      if (std::has_single_bit(wd))
+        return static_cast<expr_t>(iface.createMaskedLShr(x, y));
+      auto max = iface.getIntConst(wd - 1, wd);
+      auto ok = iface.createICmp(llvm::ICmpInst::Predicate::ICMP_ULE, y, max);
+      auto shift = iface.createRawLShr(x, y);
+      auto zero = iface.getIntConst(0, wd);
+      return static_cast<expr_t>(iface.createSelect(ok, shift, zero));
+
+    } else if (name == "asr_bits.0") {
+      std::tie(x, y) = unify_sizes(x, y);
+      auto wd = x->getType()->getIntegerBitWidth();
+      if (std::has_single_bit(wd))
+        return static_cast<expr_t>(iface.createMaskedAShr(x, y));
+      auto max = iface.getIntConst(wd - 1, wd);
+      auto ok = iface.createICmp(llvm::ICmpInst::Predicate::ICMP_ULE, y, max);
+      auto shift = iface.createRawAShr(x, y);
+      auto zero = iface.getIntConst(0, wd);
+      return static_cast<expr_t>(iface.createSelect(ok, shift, zero));
 
     } else if (name == "append_bits.0") {
       auto upper = x, lower = y;

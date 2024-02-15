@@ -34,6 +34,7 @@ private:
   lifter_interface &iface;
   llvm::Function &func;  // needed to create basic blocks in here
   llvm::LLVMContext &context;
+  std::string block_prefix;
 
   lexpr_t xreg_sentinel;
   lexpr_t vreg_sentinel;
@@ -53,6 +54,7 @@ public:
     iface{iface},
     func{iface.ll_function()},
     context{func.getContext()},
+    block_prefix{"aslp_" + iface.nextName()},
     xreg_sentinel{iface.get_reg(reg_t::X, 0)},
     vreg_sentinel{iface.get_reg(reg_t::V, 0)},
     pstate_sentinel{iface.get_reg(reg_t::PSTATE, (int)pstate_t::N)}
@@ -61,7 +63,7 @@ public:
   }
 protected:
   std::ostream& log() const& {
-    return std::cerr << std::string(depth, ' ');
+    return std::cerr << std::string(depth, '|');
   }
 
   virtual type_t type(aslt::SemanticsParser::TypeContext* ctx) {
@@ -101,6 +103,7 @@ protected:
 
 
   virtual std::pair<expr_t, expr_t> ptr_expr(llvm::Value* x);
+  virtual std::pair<llvm::Value*, llvm::Value*> unify_sizes(llvm::Value* x, llvm::Value* y);
 
   virtual lexpr_t ref_expr(expr_t expr) {
     // XXX: HACK! since ExprVar are realised as LoadInst, this is incorrect in an array.
@@ -133,7 +136,7 @@ protected:
 
   virtual stmt_t new_stmt(const std::string_view& name) {
     auto count = stmt_counts[depth]++;
-    std::string s = std::format("aslp_stmt_{}_{}_", depth, count);
+    std::string s = std::format("{}__{}_{}_", block_prefix, depth, count);
     s += name;
     s += '_';
     auto newbb = llvm::BasicBlock::Create(context, s, &func);

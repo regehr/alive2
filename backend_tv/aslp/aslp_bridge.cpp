@@ -23,8 +23,8 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/GlobalValue.h"
+#include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInstrAnalysis.h"
-
 
 namespace fs = std::filesystem;
 
@@ -126,6 +126,44 @@ std::variant<err_t, stmt_t> bridge::parse(std::string_view aslt) {
 #endif
 
 
+std::variant<err_t, stmt_t> bridge::run_special(const llvm::MCInst& inst, const opcode_t& bytes) {
+  llvm::BasicBlock* bb{nullptr};
+
+  if (inst.getOpcode() == 1572) { // ADRP
+      assert(inst.getOperand(0).isReg());
+
+      bb = llvm::BasicBlock::Create(
+          context, "aslp_" + iface.nextName() + "_special", &iface.ll_function());
+      iface.set_bb(bb);
+
+
+      auto expr = inst.getOperand(1).getExpr();
+      llvm::Value* global = iface.lookupExprVar(*expr);
+
+      std::string sss;
+      llvm::raw_string_ostream ss(sss);
+      expr->print(ss, nullptr);
+      if (sss.length() > 0 && sss.at(0) == ':') {
+        // relocation, probably...
+
+        // create an alloc to emulate the behaviour of got. the got location, which is
+        // referenced by :got:varname, stores a pointer to the actual variable location.
+        // here, a new alloca fakes this indirection. 
+        auto alloc = iface.createAlloca(global->getType(), nullptr, iface.nextName());
+        iface.createStore(global, alloc);
+        global = alloc;
+      }
+
+      iface.updateOutputReg(global);
+  }
+
+  if (bb)
+    return stmt_t{bb, bb};
+  else
+    return err_t::banned;
+}
+
+
 std::variant<err_t, stmt_t> bridge::run(const llvm::MCInst& inst, const opcode_t& bytes) {
   const auto& mcinst_banned = config().mcinst_banned;
   bool banned = !config().enable
@@ -133,11 +171,15 @@ std::variant<err_t, stmt_t> bridge::run(const llvm::MCInst& inst, const opcode_t
     || ia.isReturn(inst)
     || ia.isCall(inst)
     || ia.isIndirectBranch(inst)
-    // || inst.getOpcode() == 1572 // adrp
     || std::ranges::count(mcinst_banned, inst.getOpcode()) != 0
     ;
   if (banned)
     return err_t::banned;
+
+  auto special = run_special(inst, bytes);
+  if (std::holds_alternative<stmt_t>(special)) {
+    return special;
+  }
 
   std::string semantics;
   try {

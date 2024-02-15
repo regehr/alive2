@@ -51,6 +51,7 @@ public:
 protected:
   using parsed_t = std::reference_wrapper<aslt::SemanticsParser::StmtsContext>;
 
+  std::variant<err_t, stmt_t> run_special(const llvm::MCInst& inst, const opcode_t& bytes);
   std::variant<err_t, stmt_t> parse(std::string_view aslt);
 };
 
