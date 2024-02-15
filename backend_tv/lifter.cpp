@@ -2339,7 +2339,7 @@ class arm2llvm : public aslp::lifter_interface {
   }
 
   // Reads an Expr and maps containing string variable to a global variable
-  void mapExprVar(const MCExpr *expr) {
+  std::string mapExprVar(const MCExpr *expr) {
     std::string name;
     llvm::raw_string_ostream ss(name);
     expr->print(ss, nullptr);
@@ -2366,6 +2366,7 @@ class arm2llvm : public aslp::lifter_interface {
     }
 
     instExprVarMap[CurInst] = name;
+    return name;
   }
 
   string demangle(const string &name) {
@@ -3567,8 +3568,10 @@ public:
     llvm::raw_string_ostream ss{sss};
     I.dump_pretty(ss, instrPrinter);
     *out << sss << " = " << std::flush;
-    if (I.getOpcode() != AArch64::SEH_Nop)
+    if (I.getOpcode() != AArch64::SEH_Nop) {
       instrPrinter->printInst(&I, 100, "", STI, outs());
+      outs().flush();
+    }
     *out << std::endl;
 
     auto entrybb = LLVMBB;
@@ -3613,6 +3616,10 @@ public:
       // arm opcode translation failed, possibly SEH_NOP. continue with classic.
     }
 
+    // always create new bb per instruction, to match aslp
+    auto newbb = BasicBlock::Create(Ctx, "", liftedFn);
+    createBranch(newbb);
+    LLVMBB = newbb;
 
     auto i1 = getIntTy(1);
     auto i8 = getIntTy(8);
@@ -6453,7 +6460,10 @@ public:
 
     case AArch64::ADRP: {
       assert(CurInst->getOperand(0).isReg());
-      mapExprVar(CurInst->getOperand(1).getExpr());
+      auto global = lookupGlobal(mapExprVar(CurInst->getOperand(1).getExpr()));
+      auto alloc = createAlloca(global->getType(), nullptr, nextName());
+      createStore(global, alloc);
+      updateOutputReg(alloc);
       break;
     }
 

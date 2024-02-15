@@ -54,6 +54,7 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x) {
 
   assert(base && offset && "unable to coerce to pointer");
   auto ptr = iface.createLoad(llvm::PointerType::get(context, 0), base);
+  // auto ptr = new llvm::IntToPtrInst(load, llvm::PointerType::get(context, 0), "", iface.get_bb());
   return {ptr, offset};
 }
 
@@ -374,7 +375,7 @@ std::any aslt_visitor::visitExprSlices(SemanticsParser::ExprSlicesContext *ctx) 
   // then, truncating to the "width" value
   auto lo = llvm::ConstantInt::get(base->getType(), sl.lo);
   auto wdty = llvm::Type::getIntNTy(context, sl.wd);
-  auto shifted = iface.createMaskedLShr(base, lo);
+  auto shifted = !lo->isZeroValue() ? iface.createMaskedLShr(base, lo) : base;
   auto trunced = iface.createTrunc(shifted, wdty);
   return static_cast<expr_t>(trunced);
 }
