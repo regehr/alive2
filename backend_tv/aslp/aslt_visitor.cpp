@@ -332,6 +332,9 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
     } else if (name == "eq_bits.0") {
       return static_cast<expr_t>(iface.createICmp(llvm::CmpInst::Predicate::ICMP_EQ, x, y));
 
+    } else if (name == "ne_bits.0") {
+      return static_cast<expr_t>(iface.createICmp(llvm::CmpInst::Predicate::ICMP_NE, x, y));
+
     } else if (name == "add_bits.0") {
       return static_cast<expr_t>(iface.createAdd(x, y));
 
@@ -349,6 +352,9 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 
     } else if (name == "mul_bits.0") {
       return static_cast<expr_t>(iface.createMul(x, y));
+
+    } else if (name == "sdiv_bits.0") {
+      return static_cast<expr_t>(iface.createSDiv(x, y));
 
     } else if (name == "slt_bits.0") {
       return static_cast<expr_t>(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_SLT, x, y));
