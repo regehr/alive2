@@ -219,10 +219,15 @@ std::any aslt_visitor::visitConditionalStmt(SemanticsParser::ConditionalStmtCont
   return static_cast<stmt_t>(std::make_pair(entry.first, join.second));
 }
 
-std::any aslt_visitor::visitType(SemanticsParser::TypeContext *ctx) {
-  log() << "visitType" << ' ' << ctx->getText() << '\n';
+std::any aslt_visitor::visitTypeBits(SemanticsParser::TypeBitsContext *ctx) {
+  log() << "visitTypeBits" << ' ' << ctx->getText() << '\n';
   auto bits = lit_int(ctx->expr());
-  return (type_t)llvm::Type::getIntNTy(context, bits);
+  return (type_t)iface.getIntTy(bits);
+}
+
+std::any aslt_visitor::visitTypeBoolean(SemanticsParser::TypeBooleanContext *ctx) {
+  log() << "visitTypeBoolean" << ' ' << ctx->getText() << '\n';
+  return (type_t)iface.getIntTy(1);
 }
 
 std::any aslt_visitor::visitLExprVar(SemanticsParser::LExprVarContext *ctx) {
@@ -239,6 +244,9 @@ std::any aslt_visitor::visitLExprVar(SemanticsParser::LExprVarContext *ctx) {
     return vreg_sentinel;
   } else if (name == "SP_EL0") {
     return iface.get_reg(reg_t::X, 31);
+  } else if (name == "FPSR") {
+    // XXX following classic lifter's ignoring of FPSR
+    return iface.createAlloca(iface.getIntTy(64), nullptr, "FPSR_void");
   }
   assert(false && "lexprvar");
 }
@@ -289,6 +297,11 @@ std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
     var = pstate_sentinel;
   else if (name == "SP_EL0")
     var = iface.get_reg(reg_t::X, 31);
+  else if (name == "TRUE" || name == "FALSE")
+    return static_cast<expr_t>(iface.getIntConst(name == "TRUE", 1));
+  else if (name == "FPSR")
+    // XXX following classic lifter's ignoring of FPSR
+    return static_cast<expr_t>(iface.getIntConst(0, 64));
   else 
     assert(false && "unsupported or undefined variable!");
 

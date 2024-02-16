@@ -36,7 +36,10 @@ conditional_stmt:
 		OPEN_BRACKET CLOSE_BRACKET COMMA (OPEN_PAREN 'else' fcase=stmts CLOSE_PAREN)? CLOSE_PAREN # ConditionalStmt;
 
 
-type : 'Type_Bits' OPEN_PAREN expr CLOSE_PAREN;
+type : type_;
+type_ :
+	'Type_Bits' OPEN_PAREN expr CLOSE_PAREN  # TypeBits
+	| 'Type_Constructor(boolean)'            # TypeBoolean;
 
 lexpr: lexpr_;
 lexpr_:

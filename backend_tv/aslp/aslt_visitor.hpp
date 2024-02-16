@@ -157,8 +157,10 @@ protected:
   }
 
   virtual void add_local(std::string s, lexpr_t v) {
-    assert(!locals.contains(s) && "local variable already exists in aslt!");
-    locals.emplace(s, v);
+    // assert(!locals.contains(s) && "local variable already exists in aslt!");
+    // XXX aslp will emit duplicated local variable names when a variable is declared within
+    // a for loop.  https://github.com/UQ-PAC/aslp/issues/43
+    locals.insert_or_assign(s, v);
   }
 
   template<std::ranges::range It, typename Ctx, typename U>
@@ -186,7 +188,8 @@ public:
   virtual std::any visitAssert(aslt::SemanticsParser::AssertContext *ctx) override;
   virtual std::any visitCall_stmt(aslt::SemanticsParser::Call_stmtContext *ctx) override;
   virtual std::any visitConditionalStmt(aslt::SemanticsParser::ConditionalStmtContext *ctx) override;
-  virtual std::any visitType(aslt::SemanticsParser::TypeContext *ctx) override;
+  virtual std::any visitTypeBits(aslt::SemanticsParser::TypeBitsContext *context) override;
+  virtual std::any visitTypeBoolean(aslt::SemanticsParser::TypeBooleanContext *context) override;
   virtual std::any visitLExprVar(aslt::SemanticsParser::LExprVarContext *ctx) override;
   virtual std::any visitLExprField(aslt::SemanticsParser::LExprFieldContext *ctx) override;
   virtual std::any visitLExprArray(aslt::SemanticsParser::LExprArrayContext *ctx) override;
