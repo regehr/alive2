@@ -13,7 +13,8 @@ assignment_stmt:
 	| 'Stmt_ConstDecl' OPEN_PAREN type COMMA METHOD COMMA expr CLOSE_PAREN	# ConstDecl
 	| 'Stmt_VarDecl' OPEN_PAREN type COMMA METHOD COMMA expr CLOSE_PAREN    # VarDecl
 	| 'Stmt_VarDeclsNoInit' OPEN_PAREN type COMMA OPEN_BRACKET OPEN_PAREN METHOD (COMMA METHOD)* CLOSE_PAREN CLOSE_BRACKET CLOSE_PAREN  # VarDeclsNoInit
-	| 'Stmt_Assert' OPEN_PAREN expr CLOSE_PAREN # Assert;
+	| 'Stmt_Assert' OPEN_PAREN expr CLOSE_PAREN # Assert
+	| 'Stmt_Throw' OPEN_PAREN (SSYMBOL | METHOD) CLOSE_PAREN # Throw;
 
 call_stmt:
 	'Stmt_TCall' OPEN_PAREN
@@ -35,11 +36,14 @@ conditional_stmt:
 	'Stmt_If' OPEN_PAREN expr COMMA OPEN_BRACKET tcase=stmts COMMA? CLOSE_BRACKET COMMA 
 		OPEN_BRACKET CLOSE_BRACKET COMMA (OPEN_PAREN 'else' fcase=stmts CLOSE_PAREN)? CLOSE_PAREN # ConditionalStmt;
 
+type_register_slices :
+	(COMMA OPEN_PAREN OPEN_BRACKET 'Slice_HiLo' OPEN_PAREN expr COMMA expr CLOSE_PAREN CLOSE_BRACKET COMMA (SSYMBOL|VAR|METHOD) CLOSE_PAREN)*;
 
 type : type_;
 type_ :
 	'Type_Bits' OPEN_PAREN expr CLOSE_PAREN  # TypeBits
-	| 'Type_Constructor(boolean)'            # TypeBoolean;
+	| 'Type_Constructor(boolean)'            # TypeBoolean
+	| 'Type_Register' OPEN_PAREN QUOTE width=(DEC|BINARY) QUOTE type_register_slices CLOSE_PAREN # TypeRegister;
 
 lexpr: lexpr_;
 lexpr_:

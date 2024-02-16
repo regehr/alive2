@@ -170,6 +170,12 @@ std::any aslt_visitor::visitAssert(SemanticsParser::AssertContext *ctx) {
   return s;
 }
 
+std::any aslt_visitor::visitThrow(aslt::SemanticsParser::ThrowContext *ctx) {
+  auto s = new_stmt("throw");
+  iface.assertTrue(iface.getIntConst(0, 1));
+  return s;
+}
+
 std::any aslt_visitor::visitCall_stmt(SemanticsParser::Call_stmtContext *ctx) {
   auto name = ctx->METHOD()->getText();
   log() << "visitCall_stmt" << '\n';
@@ -222,6 +228,11 @@ std::any aslt_visitor::visitConditionalStmt(SemanticsParser::ConditionalStmtCont
 std::any aslt_visitor::visitTypeBits(SemanticsParser::TypeBitsContext *ctx) {
   log() << "visitTypeBits" << ' ' << ctx->getText() << '\n';
   auto bits = lit_int(ctx->expr());
+  return (type_t)iface.getIntTy(bits);
+}
+
+std::any aslt_visitor::visitTypeRegister(aslt::SemanticsParser::TypeRegisterContext *context) {
+  auto bits = std::stoul(context->width->getText());
   return (type_t)iface.getIntTy(bits);
 }
 
@@ -465,7 +476,8 @@ std::any aslt_visitor::visitExprSlices(SemanticsParser::ExprSlicesContext *ctx) 
   // then, truncating to the "width" value
   auto lo = llvm::ConstantInt::get(base->getType(), sl.lo);
   auto wdty = llvm::Type::getIntNTy(context, sl.wd);
-  auto shifted = !lo->isZeroValue() ? iface.createMaskedLShr(base, lo) : base;
+  // raw shift ok, since slice must be within bounds.
+  auto shifted = !lo->isZeroValue() ? iface.createRawLShr(base, lo) : base;
   auto trunced = iface.createTrunc(shifted, wdty);
   return static_cast<expr_t>(trunced);
 }

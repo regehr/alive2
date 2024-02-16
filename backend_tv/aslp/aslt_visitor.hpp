@@ -186,10 +186,12 @@ public:
   virtual std::any visitVarDecl(aslt::SemanticsParser::VarDeclContext *ctx) override;
   virtual std::any visitVarDeclsNoInit(aslt::SemanticsParser::VarDeclsNoInitContext *ctx) override;
   virtual std::any visitAssert(aslt::SemanticsParser::AssertContext *ctx) override;
+  virtual std::any visitThrow(aslt::SemanticsParser::ThrowContext *ctx) override;
   virtual std::any visitCall_stmt(aslt::SemanticsParser::Call_stmtContext *ctx) override;
   virtual std::any visitConditionalStmt(aslt::SemanticsParser::ConditionalStmtContext *ctx) override;
   virtual std::any visitTypeBits(aslt::SemanticsParser::TypeBitsContext *context) override;
   virtual std::any visitTypeBoolean(aslt::SemanticsParser::TypeBooleanContext *context) override;
+  virtual std::any visitTypeRegister(aslt::SemanticsParser::TypeRegisterContext *context) override;
   virtual std::any visitLExprVar(aslt::SemanticsParser::LExprVarContext *ctx) override;
   virtual std::any visitLExprField(aslt::SemanticsParser::LExprFieldContext *ctx) override;
   virtual std::any visitLExprArray(aslt::SemanticsParser::LExprArrayContext *ctx) override;
