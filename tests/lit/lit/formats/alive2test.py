@@ -174,8 +174,10 @@ class Alive2Test(TestFormat):
     if xfail != None and output.find(xfail.group(1)) != -1:
       return lit.Test.XFAIL, ''
 
-    if is_timeout(output) or is_incomplete(output):
-      return lit.Test.PASS, ''
+    if is_timeout(output):
+      return lit.Test.TIMEOUT, ''
+    if is_incomplete(output):
+      return lit.Test.UNRESOLVED, ''
 
     # allow multiple 'CHECK: ..'
     chks = self.regex_check.findall(input)
