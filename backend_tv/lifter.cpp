@@ -611,6 +611,9 @@ class arm2llvm {
       AArch64::SUBv2i32,
       AArch64::SUBv4i16,
       AArch64::SUBv8i8,
+      AArch64::UABDv8i8,
+      AArch64::UABDv4i16,
+      AArch64::UABDv2i32,
       AArch64::SABDv8i8,
       AArch64::SABDv4i16,
       AArch64::SABDv2i32,
@@ -773,6 +776,12 @@ class arm2llvm {
       AArch64::SADDLPv8i8_v4i16,
       AArch64::SADDLPv4i16_v2i32,
       AArch64::SADDLPv2i32_v1i64,
+      AArch64::UABDLv8i8_v8i16,
+      AArch64::UABDLv4i16_v4i32,
+      AArch64::UABDLv2i32_v2i64,
+      AArch64::SABDLv8i8_v8i16,
+      AArch64::SABDLv4i16_v4i32,
+      AArch64::SABDLv2i32_v2i64,
       AArch64::UADALPv8i8_v4i16,
       AArch64::UADALPv4i16_v2i32,
       AArch64::UADALPv2i32_v1i64,
@@ -1462,6 +1471,9 @@ class arm2llvm {
       AArch64::SUBv2i64,
       AArch64::SUBv4i32,
       AArch64::SUBv16i8,
+      AArch64::UABDv16i8,
+      AArch64::UABDv8i16,
+      AArch64::UABDv4i32,
       AArch64::SABDv16i8,
       AArch64::SABDv8i16,
       AArch64::SABDv4i32,
@@ -1545,6 +1557,12 @@ class arm2llvm {
       AArch64::SADDLPv8i16_v4i32,
       AArch64::SADDLPv4i32_v2i64,
       AArch64::SADDLPv16i8_v8i16,
+      AArch64::UABDLv16i8_v8i16,
+      AArch64::UABDLv8i16_v4i32,
+      AArch64::UABDLv4i32_v2i64,
+      AArch64::SABDLv16i8_v8i16,
+      AArch64::SABDLv8i16_v4i32,
+      AArch64::SABDLv4i32_v2i64,
       AArch64::UADALPv4i32_v2i64,
       AArch64::UADALPv16i8_v8i16,
       AArch64::UADALPv8i16_v4i32,
@@ -9084,7 +9102,6 @@ public:
     }
 
 #define GET_SIZES6(INSN, SUFF)                                                 \
-  unsigned numElts, eltSize;                                                   \
   if (opcode == AArch64::INSN##v8i8##SUFF) {                                   \
     numElts = 8;                                                               \
     eltSize = 8;                                                               \
@@ -9103,8 +9120,6 @@ public:
   } else if (opcode == AArch64::INSN##v8i16##SUFF) {                           \
     numElts = 8;                                                               \
     eltSize = 16;                                                              \
-  } else {                                                                     \
-    assert(false);                                                             \
   }
 
     case AArch64::MLSv8i8:
@@ -9113,6 +9128,7 @@ public:
     case AArch64::MLSv16i8:
     case AArch64::MLSv8i16:
     case AArch64::MLSv4i32: {
+      unsigned numElts, eltSize;
       GET_SIZES6(MLS, );
       auto a = readFromVecOperand(1, eltSize, numElts);
       auto b = readFromVecOperand(2, eltSize, numElts);
@@ -9129,6 +9145,7 @@ public:
     case AArch64::MLAv16i8:
     case AArch64::MLAv8i16:
     case AArch64::MLAv4i32: {
+      unsigned numElts, eltSize;
       GET_SIZES6(MLA, );
       auto a = readFromVecOperand(1, eltSize, numElts);
       auto b = readFromVecOperand(2, eltSize, numElts);
@@ -9145,6 +9162,7 @@ public:
     case AArch64::SHRNv4i32_shift:
     case AArch64::SHRNv8i16_shift:
     case AArch64::SHRNv16i8_shift: {
+      unsigned numElts, eltSize;
       GET_SIZES6(SHRN, _shift);
       bool topHalf;
       switch (opcode) {
@@ -9183,6 +9201,94 @@ public:
         res = createInsertElement(res, trunc, pos);
       }
       updateOutputReg(res);
+      break;
+    }
+
+    case AArch64::UABDLv8i8_v8i16:
+    case AArch64::UABDLv16i8_v8i16:
+    case AArch64::UABDLv4i16_v4i32:
+    case AArch64::UABDLv8i16_v4i32:
+    case AArch64::UABDLv2i32_v2i64:
+    case AArch64::UABDLv4i32_v2i64:
+    case AArch64::SABDLv8i8_v8i16:
+    case AArch64::SABDLv16i8_v8i16:
+    case AArch64::SABDLv4i16_v4i32:
+    case AArch64::SABDLv8i16_v4i32:
+    case AArch64::SABDLv2i32_v2i64:
+    case AArch64::SABDLv4i32_v2i64: {
+      unsigned numElts, eltSize;
+      bool isUpper = false;
+      switch (opcode) {
+      case AArch64::UABDLv8i8_v8i16:
+      case AArch64::SABDLv8i8_v8i16:
+        numElts = 8;
+        eltSize = 8;
+        break;
+      case AArch64::UABDLv16i8_v8i16:
+      case AArch64::SABDLv16i8_v8i16:
+        numElts = 16;
+        eltSize = 8;
+        isUpper = true;
+        break;
+      case AArch64::UABDLv4i16_v4i32:
+      case AArch64::SABDLv4i16_v4i32:
+        numElts = 4;
+        eltSize = 16;
+        break;
+      case AArch64::UABDLv8i16_v4i32:
+      case AArch64::SABDLv8i16_v4i32:
+        numElts = 8;
+        eltSize = 16;
+        isUpper = true;
+        break;
+      case AArch64::UABDLv2i32_v2i64:
+      case AArch64::SABDLv2i32_v2i64:
+        numElts = 2;
+        eltSize = 32;
+        break;
+      case AArch64::UABDLv4i32_v2i64:
+      case AArch64::SABDLv4i32_v2i64:
+        numElts = 4;
+        eltSize = 32;
+        isUpper = true;
+        break;
+      default:
+        assert(false);
+      }
+
+      bool isSigned = false;
+      switch (opcode) {
+      case AArch64::SABDLv8i8_v8i16:
+      case AArch64::SABDLv16i8_v8i16:
+      case AArch64::SABDLv4i16_v4i32:
+      case AArch64::SABDLv8i16_v4i32:
+      case AArch64::SABDLv2i32_v2i64:
+      case AArch64::SABDLv4i32_v2i64:
+        isSigned = true;
+        break;
+      }
+
+      auto a = readFromVecOperand(1, eltSize, numElts, isUpper);
+      auto b = readFromVecOperand(2, eltSize, numElts, isUpper);
+
+      Value *extended_a, *extended_b;
+
+      if (isSigned) {
+        extended_a = createSExt(
+            a, getVecTy(2 * eltSize, isUpper ? numElts / 2 : numElts));
+        extended_b = createSExt(
+            b, getVecTy(2 * eltSize, isUpper ? numElts / 2 : numElts));
+      } else {
+        extended_a = createZExt(
+            a, getVecTy(2 * eltSize, isUpper ? numElts / 2 : numElts));
+        extended_b = createZExt(
+            b, getVecTy(2 * eltSize, isUpper ? numElts / 2 : numElts));
+      }
+
+      auto difference = createSub(extended_a, extended_b);
+      auto abs = createAbs(difference);
+
+      updateOutputReg(abs);
       break;
     }
 
@@ -9287,6 +9393,7 @@ public:
     case AArch64::SMLSLv2i32_v2i64:
     case AArch64::SMLSLv4i32_v2i64: {
       unsigned numElts, eltSize;
+      bool isUpper = false;
       switch (opcode) {
       case AArch64::UMLALv8i8_v8i16:
       case AArch64::UMLSLv8i8_v8i16:
@@ -9301,6 +9408,7 @@ public:
       case AArch64::SMLSLv16i8_v8i16:
         numElts = 16;
         eltSize = 8;
+        isUpper = true;
         break;
       case AArch64::UMLALv4i16_v4i32:
       case AArch64::UMLSLv4i16_v4i32:
@@ -9315,6 +9423,7 @@ public:
       case AArch64::SMLSLv8i16_v4i32:
         numElts = 8;
         eltSize = 16;
+        isUpper = true;
         break;
       case AArch64::UMLALv2i32_v2i64:
       case AArch64::UMLSLv2i32_v2i64:
@@ -9329,22 +9438,11 @@ public:
       case AArch64::SMLSLv4i32_v2i64:
         numElts = 4;
         eltSize = 32;
+        isUpper = true;
         break;
       default:
         assert(false);
       }
-      auto isUpper = opcode == AArch64::UMLALv16i8_v8i16 ||
-                     opcode == AArch64::UMLSLv16i8_v8i16 ||
-                     opcode == AArch64::SMLALv16i8_v8i16 ||
-                     opcode == AArch64::SMLSLv16i8_v8i16 ||
-                     opcode == AArch64::UMLALv8i16_v4i32 ||
-                     opcode == AArch64::UMLSLv8i16_v4i32 ||
-                     opcode == AArch64::SMLALv8i16_v4i32 ||
-                     opcode == AArch64::SMLSLv8i16_v4i32 ||
-                     opcode == AArch64::UMLALv4i32_v2i64 ||
-                     opcode == AArch64::UMLSLv4i32_v2i64 ||
-                     opcode == AArch64::SMLALv4i32_v2i64 ||
-                     opcode == AArch64::SMLSLv4i32_v2i64;
       auto isSigned = opcode == AArch64::SMLALv8i8_v8i16 ||
                       opcode == AArch64::SMLSLv8i8_v8i16 ||
                       opcode == AArch64::SMLALv16i8_v8i16 ||
@@ -9390,24 +9488,54 @@ public:
                                             isUpper ? numElts / 2 : numElts));
 
       auto mul = createMul(extended_a, extended_b);
-      auto sum = isSub ? createSub(destReg, mul) : createAdd(destReg, mul);
+      auto res = isSub ? createSub(destReg, mul) : createAdd(destReg, mul);
 
-      updateOutputReg(sum);
+      updateOutputReg(res);
       break;
     }
 
+    case AArch64::UABDv8i8:
+    case AArch64::UABDv16i8:
+    case AArch64::UABDv4i16:
+    case AArch64::UABDv8i16:
+    case AArch64::UABDv2i32:
+    case AArch64::UABDv4i32:
     case AArch64::SABDv8i8:
     case AArch64::SABDv16i8:
     case AArch64::SABDv4i16:
     case AArch64::SABDv8i16:
     case AArch64::SABDv2i32:
     case AArch64::SABDv4i32: {
+      unsigned numElts, eltSize;
       GET_SIZES6(SABD, );
+      GET_SIZES6(UABD, );
+
+      bool isSigned = false;
+      switch (opcode) {
+      case AArch64::SABDv8i8:
+      case AArch64::SABDv16i8:
+      case AArch64::SABDv4i16:
+      case AArch64::SABDv8i16:
+      case AArch64::SABDv2i32:
+      case AArch64::SABDv4i32: {
+        isSigned = true;
+        break;
+      }
+      }
+
       auto a = readFromVecOperand(1, eltSize, numElts);
       auto b = readFromVecOperand(2, eltSize, numElts);
 
-      auto extended_a = createSExt(a, getVecTy(2 * eltSize, numElts));
-      auto extended_b = createSExt(b, getVecTy(2 * eltSize, numElts));
+      Value *extended_a;
+      Value *extended_b;
+
+      if (isSigned) {
+        extended_a = createSExt(a, getVecTy(2 * eltSize, numElts));
+        extended_b = createSExt(b, getVecTy(2 * eltSize, numElts));
+      } else {
+        extended_a = createZExt(a, getVecTy(2 * eltSize, numElts));
+        extended_b = createZExt(b, getVecTy(2 * eltSize, numElts));
+      }
 
       auto difference = createSub(extended_a, extended_b);
       auto abs = createAbs(difference);
