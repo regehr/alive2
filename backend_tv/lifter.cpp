@@ -7461,7 +7461,7 @@ public:
           opcode == AArch64::FCMPESri || opcode == AArch64::FCMPEDri) {
         b = ConstantFP::get(getFPType(operandSize), 0.0);
       } else {
-        b = readFromOperand(1, getRegSize(CurInst->getOperand(1).getReg()));
+        b = readFromFPOperand(1, getRegSize(CurInst->getOperand(1).getReg()));
       }
       setN(createFCmp(FCmpInst::Predicate::FCMP_OLT, a, b));
       setZ(createFCmp(FCmpInst::Predicate::FCMP_OEQ, a, b));
