@@ -414,8 +414,8 @@ class arm2llvm {
     assert(false && "basic block not found in getBBByName()");
   }
 
-  static bool isSIMDandFPReg(MCOperand &op) {
-    assert(op.isReg() && "[isSIMDandFPReg] expected register operand");
+  static bool isSIMDandFPRegOperand(MCOperand &op) {
+    assert(op.isReg() && "[isSIMDandFPRegOperand] expected register operand");
     unsigned reg = op.getReg();
     return (reg >= AArch64::Q0 && reg <= AArch64::Q31) ||
            (reg >= AArch64::D0 && reg <= AArch64::D31) ||
@@ -519,72 +519,107 @@ class arm2llvm {
   };
 
   const set<int> instrs_32 = {
-      AArch64::TBNZW,      AArch64::TBZW,       AArch64::CBZW,
-      AArch64::CBNZW,      AArch64::ADDWrx,     AArch64::ADDSWrs,
-      AArch64::ADDSWri,    AArch64::ADDWrs,     AArch64::ADDWri,
-      AArch64::ADDSWrx,    AArch64::ADCWr,      AArch64::ADCSWr,
-      AArch64::ASRVWr,     AArch64::SUBWri,     AArch64::SUBWrs,
-      AArch64::SUBWrx,     AArch64::SUBSWrs,    AArch64::SUBSWri,
-      AArch64::SUBSWrx,    AArch64::SBFMWri,    AArch64::CSELWr,
-      AArch64::ANDWri,     AArch64::ANDWrr,     AArch64::ANDWrs,
-      AArch64::ANDSWri,    AArch64::ANDSWrr,    AArch64::ANDSWrs,
-      AArch64::MADDWrrr,   AArch64::MSUBWrrr,   AArch64::EORWri,
-      AArch64::CSINVWr,    AArch64::CSINCWr,    AArch64::MOVZWi,
-      AArch64::MOVNWi,     AArch64::MOVKWi,     AArch64::LSLVWr,
-      AArch64::LSRVWr,     AArch64::ORNWrs,     AArch64::UBFMWri,
-      AArch64::BFMWri,     AArch64::ORRWrs,     AArch64::ORRWri,
-      AArch64::SDIVWr,     AArch64::UDIVWr,     AArch64::EXTRWrri,
-      AArch64::EORWrs,     AArch64::RORVWr,     AArch64::RBITWr,
-      AArch64::CLZWr,      AArch64::REVWr,      AArch64::CSNEGWr,
-      AArch64::BICWrs,     AArch64::BICSWrs,    AArch64::EONWrs,
-      AArch64::REV16Wr,    AArch64::Bcc,        AArch64::CCMPWr,
-      AArch64::CCMPWi,     AArch64::LDRWui,     AArch64::LDRBBroW,
-      AArch64::LDRBBroX,   AArch64::LDRBroW,    AArch64::LDRBroX,
-      AArch64::LDRHHroW,   AArch64::LDRHHroX,   AArch64::LDRHroW,
-      AArch64::LDRHroX,    AArch64::LDRWroW,    AArch64::LDRWroX,
-      AArch64::LDRSBWroW,  AArch64::LDRSBWroX,  AArch64::LDRSBXroW,
-      AArch64::LDRSBXroX,  AArch64::LDRSHWroW,  AArch64::LDRSHWroX,
-      AArch64::LDRSHXroW,  AArch64::LDRSHXroX,  AArch64::LDRSWroW,
-      AArch64::LDRSWroX,   AArch64::LDRSui,     AArch64::LDRBBui,
-      AArch64::LDRBui,     AArch64::LDRSBWui,   AArch64::LDRSHWui,
-      AArch64::LDRSBWpre,  AArch64::LDRSHWpre,  AArch64::LDRSBWpost,
-      AArch64::LDRSHWpost, AArch64::LDRHHui,    AArch64::LDRHui,
-      AArch64::LDURBi,     AArch64::LDURBBi,    AArch64::LDURHi,
-      AArch64::LDURHHi,    AArch64::LDURSi,     AArch64::LDURWi,
-      AArch64::LDURSBWi,   AArch64::LDURSHWi,   AArch64::LDRBBpre,
-      AArch64::LDRBpre,    AArch64::LDRHHpre,   AArch64::LDRHpre,
-      AArch64::LDRWpre,    AArch64::LDRSpre,    AArch64::LDRBBpost,
-      AArch64::LDRBpost,   AArch64::LDRHHpost,  AArch64::LDRHpost,
-      AArch64::LDRWpost,   AArch64::LDRSpost,   AArch64::STRBBpost,
-      AArch64::STRBpost,   AArch64::STRHHpost,  AArch64::STRHpost,
-      AArch64::STRWpost,   AArch64::STRSpost,   AArch64::STRWui,
-      AArch64::STRBBroW,   AArch64::STRBBroX,   AArch64::STRBroW,
-      AArch64::STRBroX,    AArch64::STRHHroW,   AArch64::STRHHroX,
-      AArch64::STRHroW,    AArch64::STRHroX,    AArch64::STRWroW,
-      AArch64::STRWroX,    AArch64::CCMNWi,     AArch64::CCMNWr,
-      AArch64::STRBBui,    AArch64::STRBui,     AArch64::STPWi,
-      AArch64::STPSi,      AArch64::STPWpre,    AArch64::STPSpre,
-      AArch64::STPWpost,   AArch64::STPSpost,   AArch64::STRHHui,
-      AArch64::STRHui,     AArch64::STURBBi,    AArch64::STURBi,
-      AArch64::STURHHi,    AArch64::STURHi,     AArch64::STURWi,
-      AArch64::STURSi,     AArch64::STRSui,     AArch64::LDPWi,
-      AArch64::LDPSi,      AArch64::LDPWpre,    AArch64::LDPSpre,
-      AArch64::LDPWpost,   AArch64::LDPSpost,   AArch64::STRBBpre,
-      AArch64::STRBpre,    AArch64::STRHHpre,   AArch64::STRHpre,
-      AArch64::STRWpre,    AArch64::STRSpre,    AArch64::FADDSrr,
-      AArch64::FSUBSrr,    AArch64::FCMPSrr,    AArch64::FCMPESrr,
-      AArch64::FCMPSri,    AArch64::FCMPESri,   AArch64::FMOVSWr,
-      AArch64::INSvi32gpr, AArch64::INSvi16gpr, AArch64::INSvi8gpr,
-      AArch64::FCVTZUUWHr, AArch64::FCVTZUUWSr, AArch64::FCVTZUUXHr,
-      AArch64::FCVTZUUXSr, AArch64::FCVTZSUWHr, AArch64::FCVTZSUWSr,
-      AArch64::FCVTZSUXHr, AArch64::FCVTZSUXSr, AArch64::FCVTZSv1i32,
-      AArch64::FCVTSHr,    AArch64::FCVTDHr,    AArch64::FCVTHSr,
-      AArch64::FCVTDSr,    AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,
-      AArch64::FMULSrr,    AArch64::FABSSr,     AArch64::UQADDv1i32,
-      AArch64::SQSUBv1i32, AArch64::SQADDv1i32, AArch64::FMOVSr,
-      AArch64::FNEGSr,     AArch64::BRK,        AArch64::UCVTFUWSri,
-      AArch64::UCVTFUWDri, AArch64::SCVTFUWSri, AArch64::SCVTFUWDri,
-      AArch64::SCVTFv1i32,
+      AArch64::TBNZW,       AArch64::TBZW,
+      AArch64::CBZW,        AArch64::CBNZW,
+      AArch64::ADDWrx,      AArch64::ADDSWrs,
+      AArch64::ADDSWri,     AArch64::ADDWrs,
+      AArch64::ADDWri,      AArch64::ADDSWrx,
+      AArch64::ADCWr,       AArch64::ADCSWr,
+      AArch64::ASRVWr,      AArch64::SUBWri,
+      AArch64::SUBWrs,      AArch64::SUBWrx,
+      AArch64::SUBSWrs,     AArch64::SUBSWri,
+      AArch64::SUBSWrx,     AArch64::SBFMWri,
+      AArch64::CSELWr,      AArch64::ANDWri,
+      AArch64::ANDWrr,      AArch64::ANDWrs,
+      AArch64::ANDSWri,     AArch64::ANDSWrr,
+      AArch64::ANDSWrs,     AArch64::MADDWrrr,
+      AArch64::MSUBWrrr,    AArch64::EORWri,
+      AArch64::CSINVWr,     AArch64::CSINCWr,
+      AArch64::MOVZWi,      AArch64::MOVNWi,
+      AArch64::MOVKWi,      AArch64::LSLVWr,
+      AArch64::LSRVWr,      AArch64::ORNWrs,
+      AArch64::UBFMWri,     AArch64::BFMWri,
+      AArch64::ORRWrs,      AArch64::ORRWri,
+      AArch64::SDIVWr,      AArch64::UDIVWr,
+      AArch64::EXTRWrri,    AArch64::EORWrs,
+      AArch64::RORVWr,      AArch64::RBITWr,
+      AArch64::CLZWr,       AArch64::REVWr,
+      AArch64::CSNEGWr,     AArch64::BICWrs,
+      AArch64::BICSWrs,     AArch64::EONWrs,
+      AArch64::REV16Wr,     AArch64::Bcc,
+      AArch64::CCMPWr,      AArch64::CCMPWi,
+      AArch64::LDRWui,      AArch64::LDRBBroW,
+      AArch64::LDRBBroX,    AArch64::LDRBroW,
+      AArch64::LDRBroX,     AArch64::LDRHHroW,
+      AArch64::LDRHHroX,    AArch64::LDRHroW,
+      AArch64::LDRHroX,     AArch64::LDRWroW,
+      AArch64::LDRWroX,     AArch64::LDRSBWroW,
+      AArch64::LDRSBWroX,   AArch64::LDRSBXroW,
+      AArch64::LDRSBXroX,   AArch64::LDRSHWroW,
+      AArch64::LDRSHWroX,   AArch64::LDRSHXroW,
+      AArch64::LDRSHXroX,   AArch64::LDRSWroW,
+      AArch64::LDRSWroX,    AArch64::LDRSui,
+      AArch64::LDRBBui,     AArch64::LDRBui,
+      AArch64::LDRSBWui,    AArch64::LDRSHWui,
+      AArch64::LDRSBWpre,   AArch64::LDRSHWpre,
+      AArch64::LDRSBWpost,  AArch64::LDRSHWpost,
+      AArch64::LDRHHui,     AArch64::LDRHui,
+      AArch64::LDURBi,      AArch64::LDURBBi,
+      AArch64::LDURHi,      AArch64::LDURHHi,
+      AArch64::LDURSi,      AArch64::LDURWi,
+      AArch64::LDURSBWi,    AArch64::LDURSHWi,
+      AArch64::LDRBBpre,    AArch64::LDRBpre,
+      AArch64::LDRHHpre,    AArch64::LDRHpre,
+      AArch64::LDRWpre,     AArch64::LDRSpre,
+      AArch64::LDRBBpost,   AArch64::LDRBpost,
+      AArch64::LDRHHpost,   AArch64::LDRHpost,
+      AArch64::LDRWpost,    AArch64::LDRSpost,
+      AArch64::STRBBpost,   AArch64::STRBpost,
+      AArch64::STRHHpost,   AArch64::STRHpost,
+      AArch64::STRWpost,    AArch64::STRSpost,
+      AArch64::STRWui,      AArch64::STRBBroW,
+      AArch64::STRBBroX,    AArch64::STRBroW,
+      AArch64::STRBroX,     AArch64::STRHHroW,
+      AArch64::STRHHroX,    AArch64::STRHroW,
+      AArch64::STRHroX,     AArch64::STRWroW,
+      AArch64::STRWroX,     AArch64::CCMNWi,
+      AArch64::CCMNWr,      AArch64::STRBBui,
+      AArch64::STRBui,      AArch64::STPWi,
+      AArch64::STPSi,       AArch64::STPWpre,
+      AArch64::STPSpre,     AArch64::STPWpost,
+      AArch64::STPSpost,    AArch64::STRHHui,
+      AArch64::STRHui,      AArch64::STURBBi,
+      AArch64::STURBi,      AArch64::STURHHi,
+      AArch64::STURHi,      AArch64::STURWi,
+      AArch64::STURSi,      AArch64::STRSui,
+      AArch64::LDPWi,       AArch64::LDPSi,
+      AArch64::LDPWpre,     AArch64::LDPSpre,
+      AArch64::LDPWpost,    AArch64::LDPSpost,
+      AArch64::STRBBpre,    AArch64::STRBpre,
+      AArch64::STRHHpre,    AArch64::STRHpre,
+      AArch64::STRWpre,     AArch64::STRSpre,
+      AArch64::FADDSrr,     AArch64::FSUBSrr,
+      AArch64::FCMPSrr,     AArch64::FCMPESrr,
+      AArch64::FCMPSri,     AArch64::FCMPESri,
+      AArch64::FMOVSWr,     AArch64::INSvi32gpr,
+      AArch64::INSvi16gpr,  AArch64::INSvi8gpr,
+      AArch64::FCVTZUUWHr,  AArch64::FCVTZUUWSr,
+      AArch64::FCVTZUUXHr,  AArch64::FCVTZUUXSr,
+      AArch64::FCVTZSUWHr,  AArch64::FCVTZSUWSr,
+      AArch64::FCVTZSUXHr,  AArch64::FCVTZSUXSr,
+      AArch64::FCVTZSv1i32, AArch64::FCVTSHr,
+      AArch64::FCVTDHr,     AArch64::FCVTHSr,
+      AArch64::FCVTDSr,     AArch64::FCVTZSUWSr,
+      AArch64::FCSELSrrr,   AArch64::FMULSrr,
+      AArch64::FMADDSrrr,   AArch64::FMSUBSrrr,
+      AArch64::FNMADDSrrr,  AArch64::FNMSUBSrrr,
+      AArch64::FNMULSrr,    AArch64::FMULv1i32_indexed,
+      AArch64::FABSSr,      AArch64::UQADDv1i32,
+      AArch64::SQSUBv1i32,  AArch64::SQADDv1i32,
+      AArch64::FMOVSr,      AArch64::FNEGSr,
+      AArch64::BRK,         AArch64::UCVTFUWSri,
+      AArch64::UCVTFUWDri,  AArch64::SCVTFUWSri,
+      AArch64::SCVTFUWDri,  AArch64::SCVTFv1i32,
   };
 
   const set<int> instrs_64 = {
@@ -729,6 +764,12 @@ class arm2llvm {
       AArch64::STRDpre,
       AArch64::FADDDrr,
       AArch64::FMULDrr,
+      AArch64::FNMULDrr,
+      AArch64::FMADDDrrr,
+      AArch64::FMSUBDrrr,
+      AArch64::FNMADDDrrr,
+      AArch64::FNMSUBDrrr,
+      AArch64::FMULv1i64_indexed,
       AArch64::FABSDr,
       AArch64::FSUBDrr,
       AArch64::FCMPDrr,
@@ -1859,9 +1900,16 @@ class arm2llvm {
   }
 
   Value *getIndexedElement(unsigned idx, unsigned eltSize, unsigned reg) {
+    assert(getRegSize(reg) == 128 && "Expected 128-bit register");
     auto *ty = getVecTy(eltSize, 128 / eltSize);
     auto *r = createBitCast(readFromReg(reg), ty);
     return createExtractElement(r, idx);
+  }
+
+  Value *getIndexedFPElement(unsigned idx, unsigned eltSize, unsigned reg) {
+    assert(getRegSize(reg) == 128 && "Expected 128-bit register");
+    auto *element = getIndexedElement(idx, eltSize, reg);
+    return createBitCast(element, getFPType(eltSize));
   }
 
   ExtractValueInst *createExtractValue(Value *v, ArrayRef<unsigned> idxs) {
@@ -1912,6 +1960,12 @@ class arm2llvm {
     auto *decl = Intrinsic::getDeclaration(
         LiftedModule, Intrinsic::vector_reduce_add, v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
+  }
+
+  CallInst *createFusedMultiplyAdd(Value *a, Value *b, Value *c) {
+    auto *decl =
+        Intrinsic::getDeclaration(LiftedModule, Intrinsic::fma, a->getType());
+    return CallInst::Create(decl, {a, b, c}, nextName(), LLVMBB);
   }
 
   SelectInst *createSelect(Value *cond, Value *a, Value *b) {
@@ -2778,19 +2832,6 @@ class arm2llvm {
   void assertSame(Value *a, Value *b) {
     auto *c = createICmp(ICmpInst::Predicate::ICMP_EQ, a, b);
     CallInst::Create(assertDecl, {c}, "", LLVMBB);
-  }
-
-  Type *getFPOperandType(unsigned opcode) {
-    auto size = getInstSize(opcode);
-    if (size == 16) {
-      return Type::getHalfTy(Ctx);
-    } else if (size == 32) {
-      return Type::getFloatTy(Ctx);
-    } else if (size == 64) {
-      return Type::getDoubleTy(Ctx);
-    } else {
-      assert(false);
-    }
   }
 
   // From https://github.com/agustingianni/retools
@@ -7055,11 +7096,10 @@ public:
     }
 
     case AArch64::FNEGSr: {
-      auto v = readFromOperand(1);
-      auto fTy = getFPOperandType(opcode);
-      auto f = createBitCast(v, fTy);
+      auto fVal =
+          readFromFPOperand(1, getRegSize(CurInst->getOperand(1).getReg()));
       auto sizeTy = getIntTy(getInstSize(opcode));
-      auto res = createBitCast(createFNeg(f), sizeTy);
+      auto res = createBitCast(createFNeg(fVal), sizeTy);
       updateOutputReg(res);
       break;
     }
@@ -7289,16 +7329,17 @@ public:
 
     case AArch64::FABSSr:
     case AArch64::FABSDr: {
-      auto fTy = getFPOperandType(opcode);
-      auto a = createBitCast(readFromOperand(1), fTy);
-      auto sizeTy = getIntTy(getInstSize(opcode));
-      auto res = createBitCast(createFAbs(a), sizeTy);
+      auto a =
+          readFromFPOperand(1, getRegSize(CurInst->getOperand(1).getReg()));
+      auto res = createFAbs(a);
       updateOutputReg(res);
       break;
     }
 
     case AArch64::FMULSrr:
     case AArch64::FMULDrr:
+    case AArch64::FNMULSrr:
+    case AArch64::FNMULDrr:
     case AArch64::FADDSrr:
     case AArch64::FADDDrr:
     case AArch64::FSUBSrr:
@@ -7306,7 +7347,8 @@ public:
       Instruction::BinaryOps op;
       if (opcode == AArch64::FADDSrr || opcode == AArch64::FADDDrr) {
         op = Instruction::FAdd;
-      } else if (opcode == AArch64::FMULSrr || opcode == AArch64::FMULDrr) {
+      } else if (opcode == AArch64::FMULSrr || opcode == AArch64::FMULDrr ||
+                 opcode == AArch64::FNMULSrr || opcode == AArch64::FNMULDrr) {
         op = Instruction::FMul;
       } else if (opcode == AArch64::FSUBSrr || opcode == AArch64::FSUBDrr) {
         op = Instruction::FSub;
@@ -7314,14 +7356,94 @@ public:
         assert(false && "missed a case");
       }
 
-      auto fTy = getFPOperandType(opcode);
-      auto a = createBitCast(readFromOperand(1), fTy);
-      auto b = createBitCast(readFromOperand(2), fTy);
+      auto a =
+          readFromFPOperand(1, getRegSize(CurInst->getOperand(1).getReg()));
+      auto b =
+          readFromFPOperand(2, getRegSize(CurInst->getOperand(2).getReg()));
 
-      auto sizeTy = getIntTy(getInstSize(opcode));
-      auto res = createBitCast(createBinop(a, b, op), sizeTy);
+      Value *res = createBinop(a, b, op);
+      if (opcode == AArch64::FNMULSrr || opcode == AArch64::FNMULDrr) {
+        res = createFNeg(res);
+      }
       updateOutputReg(res);
       break;
+    }
+
+    case AArch64::FMULv1i32_indexed:
+    case AArch64::FMULv1i64_indexed: {
+      auto &op0 = CurInst->getOperand(0);
+      auto &op1 = CurInst->getOperand(1);
+      auto &op2 = CurInst->getOperand(2);
+      auto &op3 = CurInst->getOperand(3);
+      assert(op0.isReg() && op1.isReg() && op2.isReg() && op3.isImm());
+      Instruction::BinaryOps op;
+      switch (opcode) {
+      case AArch64::FMULv1i32_indexed:
+      case AArch64::FMULv1i64_indexed: {
+        op = Instruction::FMul;
+        break;
+      }
+      default: {
+        assert(false && "missed a case");
+      }
+      }
+
+      auto eltSize = getRegSize(op1.getReg());
+      auto a = readFromFPOperand(1, eltSize);
+      auto b = getIndexedFPElement(op3.getImm(), eltSize, op2.getReg());
+      auto res = createBinop(a, b, op);
+      updateOutputReg(res);
+      break;
+    }
+
+    case AArch64::FMADDSrrr:
+    case AArch64::FMADDDrrr:
+    case AArch64::FMSUBSrrr:
+    case AArch64::FMSUBDrrr:
+    case AArch64::FNMADDSrrr:
+    case AArch64::FNMADDDrrr:
+    case AArch64::FNMSUBSrrr:
+    case AArch64::FNMSUBDrrr: {
+      auto &op0 = CurInst->getOperand(0);
+      auto &op1 = CurInst->getOperand(1);
+      auto &op2 = CurInst->getOperand(2);
+      auto &op3 = CurInst->getOperand(3);
+      assert(op0.isReg() && op1.isReg() && op2.isReg() && op3.isReg());
+
+      bool negateProduct = false, negateAddend = false;
+      switch (opcode) {
+      case AArch64::FMSUBSrrr:
+      case AArch64::FMSUBDrrr: {
+        negateProduct = true;
+        break;
+      }
+      case AArch64::FNMADDSrrr:
+      case AArch64::FNMADDDrrr: {
+        negateAddend = true;
+        negateProduct = true;
+        break;
+      }
+      case AArch64::FNMSUBSrrr:
+      case AArch64::FNMSUBDrrr: {
+        negateAddend = true;
+        break;
+      }
+      }
+
+      auto a = readFromFPOperand(1, getRegSize(op1.getReg()));
+      auto b = readFromFPOperand(2, getRegSize(op2.getReg()));
+      auto c = readFromFPOperand(3, getRegSize(op3.getReg()));
+
+      if (negateProduct) {
+        a = createFNeg(a);
+      }
+      if (negateAddend) {
+        c = createFNeg(c);
+      }
+
+      auto res = createFusedMultiplyAdd(a, b, c);
+
+      updateOutputReg(res);
     }
 
     case AArch64::FCMPSri:
@@ -7332,14 +7454,14 @@ public:
     case AArch64::FCMPDrr:
     case AArch64::FCMPESrr:
     case AArch64::FCMPEDrr: {
-      auto fTy = getFPOperandType(opcode);
-      auto a = createBitCast(readFromOperand(0), fTy);
+      auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+      auto a = readFromFPOperand(0, operandSize);
       Value *b;
       if (opcode == AArch64::FCMPSri || opcode == AArch64::FCMPDri ||
           opcode == AArch64::FCMPESri || opcode == AArch64::FCMPEDri) {
-        b = ConstantFP::get(fTy, 0.0);
+        b = ConstantFP::get(getFPType(operandSize), 0.0);
       } else {
-        b = createBitCast(readFromOperand(1), fTy);
+        b = readFromOperand(1, getRegSize(CurInst->getOperand(1).getReg()));
       }
       setN(createFCmp(FCmpInst::Predicate::FCMP_OLT, a, b));
       setZ(createFCmp(FCmpInst::Predicate::FCMP_OEQ, a, b));
@@ -9480,8 +9602,8 @@ public:
                      opcode == AArch64::SMLSLv8i16_indexed ||
                      opcode == AArch64::SMLSLv2i32_indexed ||
                      opcode == AArch64::SMLSLv4i32_indexed;
-        assert(isSIMDandFPReg(CurInst->getOperand(0)) &&
-               isSIMDandFPReg(CurInst->getOperand(1)) &&
+        assert(isSIMDandFPRegOperand(CurInst->getOperand(0)) &&
+               isSIMDandFPRegOperand(CurInst->getOperand(1)) &&
                CurInst->getOperand(0).getReg() ==
                    CurInst->getOperand(1).getReg());
         assert(CurInst->getOperand(4).isImm());
@@ -9612,8 +9734,8 @@ public:
                    opcode == AArch64::SMLSLv8i16_v4i32 ||
                    opcode == AArch64::SMLSLv2i32_v2i64 ||
                    opcode == AArch64::SMLSLv4i32_v2i64;
-      assert(isSIMDandFPReg(CurInst->getOperand(0)) &&
-             isSIMDandFPReg(CurInst->getOperand(1)) &&
+      assert(isSIMDandFPRegOperand(CurInst->getOperand(0)) &&
+             isSIMDandFPRegOperand(CurInst->getOperand(1)) &&
              CurInst->getOperand(0).getReg() ==
                  CurInst->getOperand(1).getReg());
       auto destReg =
@@ -10062,7 +10184,7 @@ public:
                              ? 1
                              : 2;
       auto &op1 = CurInst->getOperand(srcReg);
-      assert(isSIMDandFPReg(op0) && isSIMDandFPReg(op0));
+      assert(isSIMDandFPRegOperand(op0) && isSIMDandFPRegOperand(op0));
 
       Value *src = readFromReg(op1.getReg());
       assert(getBitWidth(src) == 128 &&
