@@ -750,6 +750,7 @@ class arm2llvm {
       AArch64::FCVTHDr,
       AArch64::FCVTSDr,
       AArch64::FMOVDr,
+      AArch64::FMOVv2f32_ns,
       AArch64::DUPv2i32gpr,
       AArch64::UMULLv2i32_v2i64,
       AArch64::USHLLv8i8_shift,
@@ -1487,6 +1488,8 @@ class arm2llvm {
       AArch64::FMOVDi,
       AArch64::FMOVSi,
       AArch64::FMOVWSr,
+      AArch64::FMOVv4f32_ns,
+      AArch64::FMOVv2f64_ns,
       AArch64::CNTv16i8,
       AArch64::MOVIv2d_ns,
       AArch64::MOVIv4i32,
@@ -2790,6 +2793,7 @@ class arm2llvm {
     }
   }
 
+  // From https://github.com/agustingianni/retools
   inline uint64_t Replicate(uint64_t bit, int N) {
     if (!bit)
       return 0;
@@ -2798,8 +2802,22 @@ class arm2llvm {
     return (1ULL << N) - 1;
   }
 
-  // this and the helper function above are from:
-  // https://github.com/agustingianni/retools
+  // From https://github.com/agustingianni/retools
+  inline uint64_t Replicate32x2(uint64_t bits32) {
+    return (bits32 << 32) | bits32;
+  }
+
+  // From https://github.com/agustingianni/retools
+  inline uint64_t Replicate16x4(uint64_t bits16) {
+    return Replicate32x2((bits16 << 16) | bits16);
+  }
+
+  // From https://github.com/agustingianni/retools
+  inline uint64_t Replicate8x8(uint64_t bits8) {
+    return Replicate16x4((bits8 << 8) | bits8);
+  }
+
+  // From https://github.com/agustingianni/retools
   inline uint64_t VFPExpandImm(uint64_t imm8, unsigned N) {
     unsigned E = ((N == 32) ? 8 : 11) - 2; // E in {6, 9}
     unsigned F = N - E - 1;                // F in {25, 54}
@@ -2811,6 +2829,87 @@ class arm2llvm {
     uint64_t frac = ((imm8 & 0x3f) << (F - 6)) | Replicate(0, F - 6);
     uint64_t res = (sign << (E + F)) | (exp << F) | frac;
     return res;
+  }
+
+  // From https://github.com/agustingianni/retools
+  // Implementation of: bits(64) AdvSIMDExpandImm(bit op, bits(4) cmode, bits(8)
+  // imm8)
+  inline uint64_t AdvSIMDExpandImm(unsigned op, unsigned cmode, unsigned imm8) {
+    uint64_t imm64 = 0;
+
+    switch (cmode >> 1) {
+    case 0:
+      imm64 = Replicate32x2(imm8);
+      break;
+    case 1:
+      imm64 = Replicate32x2(imm8 << 8);
+      break;
+    case 2:
+      imm64 = Replicate32x2(imm8 << 16);
+      break;
+    case 3:
+      imm64 = Replicate32x2(imm8 << 24);
+      break;
+    case 4:
+      imm64 = Replicate16x4(imm8);
+      break;
+    case 5:
+      imm64 = Replicate16x4(imm8 << 8);
+      break;
+    case 6:
+      if ((cmode & 1) == 0)
+        imm64 = Replicate32x2((imm8 << 8) | 0xFF);
+      else
+        imm64 = Replicate32x2((imm8 << 16) | 0xFFFF);
+      break;
+    case 7:
+      if ((cmode & 1) == 0 && op == 0)
+        imm64 = Replicate8x8(imm8);
+
+      if ((cmode & 1) == 0 && op == 1) {
+        imm64 = 0;
+        imm64 |= (imm8 & 0x80) ? 0xFF : 0x00;
+        imm64 <<= 8;
+        imm64 |= (imm8 & 0x40) ? 0xFF : 0x00;
+        imm64 <<= 8;
+        imm64 |= (imm8 & 0x20) ? 0xFF : 0x00;
+        imm64 <<= 8;
+        imm64 |= (imm8 & 0x10) ? 0xFF : 0x00;
+        imm64 <<= 8;
+        imm64 |= (imm8 & 0x08) ? 0xFF : 0x00;
+        imm64 <<= 8;
+        imm64 |= (imm8 & 0x04) ? 0xFF : 0x00;
+        imm64 <<= 8;
+        imm64 |= (imm8 & 0x02) ? 0xFF : 0x00;
+        imm64 <<= 8;
+        imm64 |= (imm8 & 0x01) ? 0xFF : 0x00;
+      }
+
+      if ((cmode & 1) == 1 && op == 0) {
+        uint64_t imm8_7 = (imm8 >> 7) & 1;
+        uint64_t imm8_6 = (imm8 >> 6) & 1;
+        uint64_t imm8_50 = imm8 & 63;
+        uint64_t imm32 = (imm8_7 << (1 + 5 + 6 + 19)) |
+                         ((imm8_6 ^ 1) << (5 + 6 + 19)) |
+                         (Replicate(imm8_6, 5) << (6 + 19)) | (imm8_50 << 19);
+        imm64 = Replicate32x2(imm32);
+      }
+
+      if ((cmode & 1) == 1 && op == 1) {
+        // imm64 =
+        // imm8<7>:NOT(imm8<6>):Replicate(imm8<6>,8):imm8<5:0>:Zeros(48);
+        uint64_t imm8_7 = (imm8 >> 7) & 1;
+        uint64_t imm8_6 = (imm8 >> 6) & 1;
+        uint64_t imm8_50 = imm8 & 63;
+        imm64 = (imm8_7 << 63) | ((imm8_6 ^ 1) << 62) |
+                (Replicate(imm8_6, 8) << 54) | (imm8_50 << 48);
+      }
+      break;
+    default:
+      abort();
+    }
+
+    return imm64;
   }
 
   vector<Value *> marshallArgs(Function *fn) {
@@ -7139,6 +7238,52 @@ public:
       int w = (opcode == AArch64::FMOVSi) ? 32 : 64;
       auto floatVal = getIntConst(VFPExpandImm(imm, w), 64);
       updateOutputReg(floatVal);
+      break;
+    }
+
+    case AArch64::FMOVv2f32_ns:
+    case AArch64::FMOVv4f32_ns:
+    case AArch64::FMOVv2f64_ns: {
+      bool bitWidth128 = false;
+      unsigned numElts, eltSize, op;
+      switch (opcode) {
+      case AArch64::FMOVv2f32_ns: {
+        numElts = 2;
+        eltSize = 32;
+        bitWidth128 = false;
+        op = 0;
+        break;
+      }
+      case AArch64::FMOVv4f32_ns: {
+        numElts = 4;
+        eltSize = 32;
+        bitWidth128 = true;
+        op = 0;
+        break;
+      }
+      case AArch64::FMOVv2f64_ns: {
+        numElts = 2;
+        eltSize = 64;
+        bitWidth128 = true;
+        op = 1;
+        break;
+      }
+      }
+      unsigned cmode = 15;
+      auto imm = getImm(1);
+      assert(imm <= 256);
+      auto expandedImm = AdvSIMDExpandImm(op, cmode, imm);
+      Constant *expandedImmVal = getIntConst(expandedImm, 64);
+      if (bitWidth128) {
+        // Create a 128-bit vector with the expanded immediate
+        expandedImmVal =
+            ConstantVector::getSplat(ElementCount::getFixed(2), expandedImmVal);
+      }
+
+      auto result =
+          createBitCast(expandedImmVal, getVecTy(eltSize, numElts, true));
+      updateOutputReg(result);
+
       break;
     }
 
