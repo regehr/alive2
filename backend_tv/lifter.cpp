@@ -444,8 +444,14 @@ class arm2llvm {
   }
 
   Constant *getZeroVec(unsigned numElts, unsigned eltSize) {
+    return getElemSplat(numElts, eltSize, 0);
+  }
+
+  Constant *getElemSplat(unsigned numElts, unsigned eltSize, uint64_t val,
+                         bool isSigned = false) {
     auto ec = ElementCount::getFixed(numElts);
-    return ConstantVector::getSplat(ec, getIntConst(0, eltSize));
+    return ConstantVector::getSplat(
+        ec, ConstantInt::get(Ctx, APInt(eltSize, val, isSigned)));
   }
 
   Type *getIntTy(unsigned bits) {
@@ -1014,6 +1020,18 @@ class arm2llvm {
       AArch64::DUPv8i8lane,
       AArch64::DUPv4i16lane,
       AArch64::DUPv2i32lane,
+      AArch64::ADDHNv2i64_v2i32,
+      AArch64::ADDHNv2i64_v4i32,
+      AArch64::ADDHNv4i32_v4i16,
+      AArch64::ADDHNv4i32_v8i16,
+      AArch64::ADDHNv8i16_v16i8,
+      AArch64::ADDHNv8i16_v8i8,
+      AArch64::SUBHNv2i64_v2i32,
+      AArch64::SUBHNv2i64_v4i32,
+      AArch64::SUBHNv4i32_v4i16,
+      AArch64::SUBHNv4i32_v8i16,
+      AArch64::SUBHNv8i16_v16i8,
+      AArch64::SUBHNv8i16_v8i8,
       AArch64::UADDLv16i8_v8i16,
       AArch64::UADDLv8i16_v4i32,
       AArch64::UADDLv4i32_v2i64,
@@ -7306,8 +7324,7 @@ public:
       Constant *expandedImmVal = getIntConst(expandedImm, 64);
       if (bitWidth128) {
         // Create a 128-bit vector with the expanded immediate
-        expandedImmVal =
-            ConstantVector::getSplat(ElementCount::getFixed(2), expandedImmVal);
+        expandedImmVal = getElemSplat(2, 64, expandedImm);
       }
 
       auto result =
@@ -8354,6 +8371,106 @@ public:
         auto entry = tblHelper(regs, idx);
         res = createInsertElement(res, entry, i);
       }
+      updateOutputReg(res);
+      break;
+    }
+
+    case AArch64::ADDHNv2i64_v2i32:
+    case AArch64::ADDHNv2i64_v4i32:
+    case AArch64::ADDHNv4i32_v4i16:
+    case AArch64::ADDHNv4i32_v8i16:
+    case AArch64::ADDHNv8i16_v8i8:
+    case AArch64::ADDHNv8i16_v16i8:
+    case AArch64::SUBHNv2i64_v2i32:
+    case AArch64::SUBHNv2i64_v4i32:
+    case AArch64::SUBHNv4i32_v4i16:
+    case AArch64::SUBHNv4i32_v8i16:
+    case AArch64::SUBHNv8i16_v8i8:
+    case AArch64::SUBHNv8i16_v16i8: {
+      unsigned eltSize = -1, numElts = -1;
+      switch (opcode) {
+      case AArch64::ADDHNv2i64_v2i32:
+      case AArch64::ADDHNv2i64_v4i32:
+      case AArch64::SUBHNv2i64_v2i32:
+      case AArch64::SUBHNv2i64_v4i32:
+        eltSize = 32;
+        numElts = 2;
+        break;
+      case AArch64::ADDHNv4i32_v4i16:
+      case AArch64::ADDHNv4i32_v8i16:
+      case AArch64::SUBHNv4i32_v4i16:
+      case AArch64::SUBHNv4i32_v8i16:
+        eltSize = 16;
+        numElts = 4;
+        break;
+      case AArch64::ADDHNv8i16_v8i8:
+      case AArch64::ADDHNv8i16_v16i8:
+      case AArch64::SUBHNv8i16_v8i8:
+      case AArch64::SUBHNv8i16_v16i8:
+        eltSize = 8;
+        numElts = 8;
+        break;
+      default:
+        assert(false);
+        break;
+      }
+
+      Instruction::BinaryOps op;
+      switch (opcode) {
+      case AArch64::ADDHNv2i64_v2i32:
+      case AArch64::ADDHNv4i32_v4i16:
+      case AArch64::ADDHNv8i16_v8i8:
+      case AArch64::ADDHNv2i64_v4i32:
+      case AArch64::ADDHNv4i32_v8i16:
+      case AArch64::ADDHNv8i16_v16i8:
+        op = Instruction::BinaryOps::Add;
+        break;
+      case AArch64::SUBHNv2i64_v2i32:
+      case AArch64::SUBHNv4i32_v4i16:
+      case AArch64::SUBHNv8i16_v8i8:
+      case AArch64::SUBHNv2i64_v4i32:
+      case AArch64::SUBHNv4i32_v8i16:
+      case AArch64::SUBHNv8i16_v16i8:
+        op = Instruction::BinaryOps::Sub;
+        break;
+      default:
+        assert(false);
+        break;
+      }
+
+      bool storeInUpperHalf = false;
+      switch (opcode) {
+      // These are ADDHN2 variants
+      case AArch64::ADDHNv2i64_v4i32:
+      case AArch64::ADDHNv4i32_v8i16:
+      case AArch64::ADDHNv8i16_v16i8:
+      case AArch64::SUBHNv2i64_v4i32:
+      case AArch64::SUBHNv4i32_v8i16:
+      case AArch64::SUBHNv8i16_v16i8:
+        storeInUpperHalf = true;
+        break;
+      default:
+        break;
+      }
+
+      auto a =
+          readFromVecOperand(storeInUpperHalf ? 2 : 1, 2 * eltSize, numElts);
+      auto b =
+          readFromVecOperand(storeInUpperHalf ? 3 : 2, 2 * eltSize, numElts);
+
+      Value *res = createBinop(a, b, op);
+
+      Value *shifted =
+          createRawLShr(res, getElemSplat(numElts, 2 * eltSize, eltSize));
+      res = createTrunc(shifted, getVecTy(eltSize, numElts));
+      if (storeInUpperHalf) {
+        // Preserve the lower 64 bits so, read from destination register
+        // and insert to the upper 64 bits
+        Value *dest = readFromVecOperand(1, 64, 2);
+        Value *element = createBitCast(res, i64);
+        res = createInsertElement(dest, element, 1);
+      }
+
       updateOutputReg(res);
       break;
     }
