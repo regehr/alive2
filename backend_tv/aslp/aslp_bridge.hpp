@@ -27,6 +27,7 @@ enum struct err_t {
 
 struct config_t {
   bool enable;
+  bool debug;
   bool fail_if_missing;
   std::vector<unsigned> mcinst_banned;
 

@@ -32,6 +32,7 @@ public:
 
 private:
   lifter_interface &iface;
+  bool debug;
   llvm::Function &func;  // needed to create basic blocks in here
   llvm::LLVMContext &context;
   std::string block_prefix;
@@ -50,8 +51,9 @@ private:
   // }
 
 public:
-  aslt_visitor(lifter_interface &iface) : 
+  aslt_visitor(lifter_interface &iface, bool debug) : 
     iface{iface},
+    debug{debug},
     func{iface.ll_function()},
     context{func.getContext()},
     block_prefix{"aslp_" + iface.nextName()},
@@ -63,7 +65,11 @@ public:
   }
 protected:
   std::ostream& log() const& {
-    return std::cerr << std::string(depth, '|');
+    static std::ostream nullstream(nullptr);
+    if (debug)
+      return std::cerr << std::string(depth, '|');
+    else
+      return nullstream;
   }
 
   virtual type_t type(aslt::SemanticsParser::TypeContext* ctx) {

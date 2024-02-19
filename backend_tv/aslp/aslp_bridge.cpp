@@ -37,7 +37,11 @@ bool getenv_bool(const std::string& name, bool def = false) {
   std::ranges::transform(str, str.begin(), 
       [](char c){ return std::tolower(c); });
 
-  return (str == "1" || str == "on" || str == "yes" || str == "true");
+  if (str == "1" || str == "on" || str == "yes" || str == "true")
+    return true;
+  if (str == "0" || str == "off" || str == "no" || str == "false")
+    return false;
+  throw std::invalid_argument("could not parse boolean value: " + str);
 }
 
 aslp_connection make_conn() {
@@ -62,11 +66,10 @@ const config_t& bridge::config() {
   if (!inited) {
     const char* var = "(unknown)";
     try {
-      var = "ASLP";
-      config.enable = getenv_bool(var, true);
-
-      var = "ASLP_FAIL_MISSING";
-      config.fail_if_missing = getenv_bool(var, false);
+      // note! inline assignment expressions below
+      config.enable = getenv_bool(var = "ASLP", true);
+      config.debug = getenv_bool(var = "ASLP_DEBUG", false);
+      config.fail_if_missing = getenv_bool(var = "ASLP_FAIL_MISSING", false);
 
       var = "ASLP_BANNED";
       const char* ban_env = std::getenv(var);
@@ -113,7 +116,7 @@ std::variant<err_t, stmt_t> bridge::parse(std::string_view aslt) {
 
   aslt::SemanticsParser parser{&tokens};
 
-  aslt_visitor visitor{iface};
+  aslt_visitor visitor{iface, config().debug};
 
   auto ctx = parser.stmts();
   assert(ctx && "parsing failed! syntax error?");
