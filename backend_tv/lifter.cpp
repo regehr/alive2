@@ -965,9 +965,15 @@ class arm2llvm {
       AArch64::SQSUBv4i16,
       AArch64::SQSUBv2i32,
       AArch64::ADDv1i64,
+      AArch64::UHADDv8i8,
+      AArch64::UHADDv4i16,
+      AArch64::UHADDv2i32,
       AArch64::SHADDv8i8,
       AArch64::SHADDv4i16,
       AArch64::SHADDv2i32,
+      AArch64::UHSUBv8i8,
+      AArch64::UHSUBv4i16,
+      AArch64::UHSUBv2i32,
       AArch64::SHSUBv8i8,
       AArch64::SHSUBv4i16,
       AArch64::SHSUBv2i32,
@@ -1553,9 +1559,15 @@ class arm2llvm {
       AArch64::SSHLv8i16,
       AArch64::SSHLv4i32,
       AArch64::SSHLv2i64,
+      AArch64::UHADDv16i8,
+      AArch64::UHADDv8i16,
+      AArch64::UHADDv4i32,
       AArch64::SHADDv16i8,
       AArch64::SHADDv8i16,
       AArch64::SHADDv4i32,
+      AArch64::UHSUBv16i8,
+      AArch64::UHSUBv8i16,
+      AArch64::UHSUBv4i32,
       AArch64::SHSUBv16i8,
       AArch64::SHSUBv8i16,
       AArch64::SHSUBv4i32,
@@ -10090,77 +10102,110 @@ public:
       updateOutputReg(res);
       break;
     }
+
+    case AArch64::UHADDv8i8:
+    case AArch64::UHADDv16i8:
+    case AArch64::UHADDv4i16:
+    case AArch64::UHADDv8i16:
+    case AArch64::UHADDv2i32:
+    case AArch64::UHADDv4i32:
     case AArch64::SHADDv8i8:
     case AArch64::SHADDv16i8:
     case AArch64::SHADDv4i16:
     case AArch64::SHADDv8i16:
     case AArch64::SHADDv2i32:
     case AArch64::SHADDv4i32:
-      //    case AArch64::SHSUBv8i8:
-      //    case AArch64::SHSUBv16i8:
-      //    case AArch64::SHSUBv4i16:
-      //    case AArch64::SHSUBv8i16:
-      //    case AArch64::SHSUBv2i32:
-      //    case AArch64::SHSUBv4i32:
-      {
-        unsigned numElts, eltSize;
-        switch (opcode) {
-        case AArch64::SHADDv8i8:
-        case AArch64::SHSUBv8i8:
-          numElts = 8;
-          eltSize = 8;
-          break;
-        case AArch64::SHADDv16i8:
-        case AArch64::SHSUBv16i8:
-          numElts = 16;
-          eltSize = 8;
-          break;
-        case AArch64::SHADDv4i16:
-        case AArch64::SHSUBv4i16:
-          numElts = 4;
-          eltSize = 16;
-          break;
-        case AArch64::SHADDv8i16:
-        case AArch64::SHSUBv8i16:
-          numElts = 8;
-          eltSize = 16;
-          break;
-        case AArch64::SHADDv2i32:
-        case AArch64::SHSUBv2i32:
-          numElts = 2;
-          eltSize = 32;
-          break;
-        case AArch64::SHADDv4i32:
-        case AArch64::SHSUBv4i32:
-          numElts = 4;
-          eltSize = 32;
-          break;
-        default:
-          assert(false);
-          break;
-        }
+    case AArch64::UHSUBv8i8:
+    case AArch64::UHSUBv16i8:
+    case AArch64::UHSUBv4i16:
+    case AArch64::UHSUBv8i16:
+    case AArch64::UHSUBv2i32:
+    case AArch64::UHSUBv4i32:
+    case AArch64::SHSUBv8i8:
+    case AArch64::SHSUBv16i8:
+    case AArch64::SHSUBv4i16:
+    case AArch64::SHSUBv8i16:
+    case AArch64::SHSUBv2i32:
+    case AArch64::SHSUBv4i32: {
+      unsigned numElts, eltSize;
+      GET_SIZES6(UHADD, );
+      GET_SIZES6(SHADD, );
+      GET_SIZES6(UHSUB, );
+      GET_SIZES6(SHSUB, );
 
-        auto a = createSExt(readFromVecOperand(1, eltSize, numElts),
-                            getVecTy(2 * eltSize, numElts));
-        auto b = createSExt(readFromVecOperand(2, eltSize, numElts),
-                            getVecTy(2 * eltSize, numElts));
-
-        auto res = opcode == AArch64::SHADDv8i8 ||
-                           opcode == AArch64::SHADDv16i8 ||
-                           opcode == AArch64::SHADDv4i16 ||
-                           opcode == AArch64::SHADDv8i16 ||
-                           opcode == AArch64::SHADDv2i32 ||
-                           opcode == AArch64::SHADDv4i32
-                       ? createAdd(a, b)
-                       : createSub(a, b);
-
-        std::vector<Constant *> vectorOfOnes(numElts,
-                                             getIntConst(1, 2 * eltSize));
-        auto shifted = createRawAShr(res, getVectorConst(vectorOfOnes));
-
-        updateOutputReg(createTrunc(shifted, getVecTy(eltSize, numElts)));
+      bool isSigned = false;
+      switch (opcode) {
+      case AArch64::SHADDv8i8:
+      case AArch64::SHADDv16i8:
+      case AArch64::SHADDv4i16:
+      case AArch64::SHADDv8i16:
+      case AArch64::SHADDv2i32:
+      case AArch64::SHADDv4i32:
+      case AArch64::SHSUBv8i8:
+      case AArch64::SHSUBv16i8:
+      case AArch64::SHSUBv4i16:
+      case AArch64::SHSUBv8i16:
+      case AArch64::SHSUBv2i32:
+      case AArch64::SHSUBv4i32:
+        isSigned = true;
         break;
       }
+
+      Instruction::BinaryOps op;
+      switch (opcode) {
+      case AArch64::UHADDv8i8:
+      case AArch64::UHADDv16i8:
+      case AArch64::UHADDv4i16:
+      case AArch64::UHADDv8i16:
+      case AArch64::UHADDv2i32:
+      case AArch64::UHADDv4i32:
+      case AArch64::SHADDv8i8:
+      case AArch64::SHADDv16i8:
+      case AArch64::SHADDv4i16:
+      case AArch64::SHADDv8i16:
+      case AArch64::SHADDv2i32:
+      case AArch64::SHADDv4i32:
+        op = Instruction::Add;
+        break;
+      case AArch64::UHSUBv8i8:
+      case AArch64::UHSUBv16i8:
+      case AArch64::UHSUBv4i16:
+      case AArch64::UHSUBv8i16:
+      case AArch64::UHSUBv2i32:
+      case AArch64::UHSUBv4i32:
+      case AArch64::SHSUBv8i8:
+      case AArch64::SHSUBv16i8:
+      case AArch64::SHSUBv4i16:
+      case AArch64::SHSUBv8i16:
+      case AArch64::SHSUBv2i32:
+      case AArch64::SHSUBv4i32:
+        op = Instruction::Sub;
+        break;
+      default:
+        assert(false);
+      }
+
+      Type *vecTy = getVecTy(eltSize, numElts);
+      Type *vecTyDoubledEltSize = getVecTy(2 * eltSize, numElts);
+
+      auto a = isSigned ? createSExt(readFromVecOperand(1, eltSize, numElts),
+                                     vecTyDoubledEltSize)
+                        : createZExt(readFromVecOperand(1, eltSize, numElts),
+                                     vecTyDoubledEltSize);
+      auto b = isSigned ? createSExt(readFromVecOperand(2, eltSize, numElts),
+                                     vecTyDoubledEltSize)
+                        : createZExt(readFromVecOperand(2, eltSize, numElts),
+                                     vecTyDoubledEltSize);
+
+      auto res = createBinop(a, b, op);
+
+      std::vector<Constant *> vectorOfOnes(numElts,
+                                           getIntConst(1, 2 * eltSize));
+      auto shifted = createRawAShr(res, getVectorConst(vectorOfOnes));
+
+      updateOutputReg(createTrunc(shifted, vecTy));
+      break;
+    }
 
     case AArch64::XTNv2i32:
     case AArch64::XTNv4i32:
