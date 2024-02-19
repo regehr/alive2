@@ -7479,6 +7479,7 @@ public:
       auto res = createFusedMultiplyAdd(a, b, c);
 
       updateOutputReg(res);
+      break;
     }
 
     case AArch64::FSQRTSr:
