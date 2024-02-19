@@ -14,7 +14,7 @@ assignment_stmt:
 	| 'Stmt_VarDecl' OPEN_PAREN type COMMA METHOD COMMA expr CLOSE_PAREN    # VarDecl
 	| 'Stmt_VarDeclsNoInit' OPEN_PAREN type COMMA OPEN_BRACKET OPEN_PAREN METHOD (COMMA METHOD)* CLOSE_PAREN CLOSE_BRACKET CLOSE_PAREN  # VarDeclsNoInit
 	| 'Stmt_Assert' OPEN_PAREN expr CLOSE_PAREN # Assert
-	| 'Stmt_Throw' OPEN_PAREN (SSYMBOL | METHOD) CLOSE_PAREN # Throw;
+	| 'Stmt_Throw' OPEN_PAREN message=(SSYMBOL | METHOD)+ CLOSE_PAREN # Throw;
 
 call_stmt:
 	'Stmt_TCall' OPEN_PAREN

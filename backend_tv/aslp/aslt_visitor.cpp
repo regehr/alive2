@@ -30,6 +30,10 @@ namespace {
      val->print(os, true);
      std::cerr << '\n' << s << '\n' << std::endl;
    }
+   std::cerr << std::flush;
+   std::cout << std::flush;
+   llvm::outs().flush();
+   llvm::errs().flush();
    throw std::runtime_error(msg);
   }
 
@@ -42,9 +46,12 @@ namespace {
 namespace aslp {
 
 
-std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x) {
+std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instruction* before) {
   lexpr_t base = nullptr;
-  expr_t offset = nullptr;
+  expr_t offset = iface.getIntConst(0, x->getType()->getIntegerBitWidth());
+
+  if (llvm::isa<llvm::IntToPtrInst>(x))
+    return {x, offset};
 
   auto Add = llvm::BinaryOperator::BinaryOps::Add;
   if (auto add = llvm::dyn_cast<llvm::BinaryOperator>(x); add && add->getOpcode() == Add) {
@@ -52,13 +59,28 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x) {
     auto _base = add->getOperand(0);
     offset = add->getOperand(1);
 
-    add->eraseFromParent();
+    // add->eraseFromParent();
     base = ref_expr(_base);
 
   } else if (auto load = llvm::dyn_cast<llvm::LoadInst>(x); load) {
+    // HACK! if we stored a pointer in a local variable, we need to backtrack and ptr_expr
+    // writes to that local.
+    // XXX of course, we still have problems if the alloc's pointer was stored somewhere else...
     auto wd = load->getType()->getIntegerBitWidth();
+    auto ptr = load->getPointerOperand();
     base = ref_expr(load);
     offset = iface.getIntConst(0, wd);
+    if (auto alloc = llvm::dyn_cast<llvm::AllocaInst>(ptr); alloc) {
+      for (auto* user : alloc->users()) {
+        if (auto store = llvm::dyn_cast<llvm::StoreInst>(user); store) {
+
+          auto val = store->getValueOperand();
+          auto [ptr, offset] = ptr_expr(val);
+auto x = llvm::GetElementPtrInst::Create(iface.getIntTy(8), ptr, {offset}, "", store);
+          store->setOperand(0, x);
+        }
+      }
+    }
   }
 
   assert(base && offset && "unable to coerce to pointer");
@@ -486,6 +508,21 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto [ptr, offset] = ptr_expr(x);
       auto load = iface.makeLoadWithOffset(ptr, offset, size->getSExtValue());
       return static_cast<expr_t>(load);
+
+    } else if ((name == "FPAdd.0" || name == "FPSub.0" || name == "FPMul.0") && args.size() == 3) {
+      // bits(N) FPAdd(bits(N) op1, bits(N) op2, FPCRType fpcr)
+      x = iface.createBitCast(x, iface.getFPType(x->getType()->getIntegerBitWidth()));
+      y = iface.createBitCast(y, iface.getFPType(y->getType()->getIntegerBitWidth()));
+
+      auto op = llvm::BinaryOperator::BinaryOps::BinaryOpsEnd;
+      if (name == "FPAdd.0")
+        op = llvm::BinaryOperator::BinaryOps::FAdd;
+      else if (name == "FPSub.0")
+        op = llvm::BinaryOperator::BinaryOps::FSub;
+      else if (name == "FPMul.0")
+        op = llvm::BinaryOperator::BinaryOps::FMul;
+      return static_cast<expr_t>(iface.createBinop(x, y, op));
+
     }
 
   } else if (args.size() == 4) {
@@ -525,18 +562,34 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 
   } else if (args.size() == 5) {
     if (name == "FixedToFP.0" && targs.size() == 2) {
+      // bits(N) FixedToFP(bits(M) op, integer fbits, boolean unsigned, FPCRType fpcr, FPRounding rounding)
       auto wd1 = targs[0], wd2 = targs[1];
-      auto op = args[0], fbits = args[1], unsign = args[2], fpcr = args[3], rounding = args[4];
+      auto val = args[0], fbits = args[1], unsign = args[2], fpcr = args[3], rounding = args[4];
       // XXX with zero fractional bits, this is a simple cast. otherwise, we would need to consider rounding.
       iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, fbits, llvm::ConstantInt::get(fbits->getType(), 0)));
       // XXX unsure which of wd1/wd2 is src vs destination.
       require(wd1 == wd2, "fixed to fp targ mismatch");
-      expr_t ret;
-      if (unsign)
-        ret = iface.createUIToFP(op, iface.getFPType(wd1));
-      else
-        ret = iface.createSIToFP(op, iface.getFPType(wd1));
-      return ret;
+
+      // XXX do we need to bitcast back to int?
+      return static_cast<expr_t>(
+          iface.createSelect(
+            unsign,
+            iface.createUIToFP(val, iface.getFPType(wd1)),
+            iface.createSIToFP(val, iface.getFPType(wd1))));
+
+    } if (name == "FPToFixed.0" && targs.size() == 2) {
+      // bits(M) FPToFixed(bits(N) op, integer fbits, boolean unsigned, FPCRType fpcr, FPRounding rounding)
+      auto wdout = targs[0], wdin = targs[1];
+      auto val = args[0], fbits = args[1], unsign = args[2], fpcr = args[3], rounding = args[4];
+      // XXX same problems as FixedToFP.
+      iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, fbits, llvm::ConstantInt::get(fbits->getType(), 0)));
+
+      val = iface.createBitCast(val, iface.getFPType(wdin));
+      return static_cast<expr_t>(
+          iface.createSelect(
+            unsign,
+            iface.createConvertFPToUI(val, iface.getIntTy(wdout)),
+            iface.createConvertFPToSI(val, iface.getIntTy(wdout))));
     }
   }
 

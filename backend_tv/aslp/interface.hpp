@@ -101,6 +101,8 @@ public:
 
   virtual llvm::CastInst *createConvertFPToSI(llvm::Value *v, llvm::Type *ty) = 0;
 
+  virtual llvm::CastInst *createConvertFPToUI(llvm::Value *v, llvm::Type *ty) = 0;
+
   virtual llvm::CastInst *createPtrToInt(llvm::Value *v, llvm::Type *ty) = 0;
 
   virtual llvm::InsertElementInst *createInsertElement(llvm::Value *vec, llvm::Value *val, int idx) = 0;

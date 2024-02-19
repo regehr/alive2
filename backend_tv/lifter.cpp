@@ -1761,6 +1761,10 @@ class arm2llvm : public aslp::lifter_interface {
     return new FPToSIInst(v, ty, nextName(), LLVMBB);
   }
 
+  CastInst *createConvertFPToUI(Value *v, Type *ty) override {
+    return new FPToUIInst(v, ty, nextName(), LLVMBB);
+  }
+
   CastInst *createPtrToInt(Value *v, Type *ty) override {
     return new PtrToIntInst(v, ty, nextName(), LLVMBB);
   }
@@ -10514,6 +10518,7 @@ pair<Function *, Function *> liftFunc(Module *OrigModule, Module *LiftedModule,
   assert(MCE && "createMCCodeEmitter failed.");
 
   auto liftedFn = arm2llvm{LiftedModule, Str.MF, *srcFn, IP.get(), *MCE, *STI, *Ana}.run();
+  liftedFn->dump();
 
   std::string sss;
   llvm::raw_string_ostream ss(sss);

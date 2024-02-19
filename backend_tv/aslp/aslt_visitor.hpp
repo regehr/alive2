@@ -108,7 +108,7 @@ protected:
   }
 
 
-  virtual std::pair<expr_t, expr_t> ptr_expr(llvm::Value* x);
+  virtual std::pair<expr_t, expr_t> ptr_expr(llvm::Value* x, llvm::Instruction* before = nullptr);
   virtual std::pair<llvm::Value*, llvm::Value*> unify_sizes(llvm::Value* x, llvm::Value* y, bool sign = true);
 
   virtual lexpr_t ref_expr(expr_t expr) {
@@ -119,8 +119,8 @@ protected:
     auto base = llvm::dyn_cast<llvm::AllocaInst>(load->getPointerOperand());
 
     assert(base && "expr_var: attempt to reference non-allocainst in a lexpr context");
-    assert(load->isSafeToRemove() && "surely not");
-    load->eraseFromParent();
+    // assert(load->isSafeToRemove() && "surely not");
+    // load->eraseFromParent();
 
     // assert(base == xreg_sentinel || base == pstate_sentinel);
 
