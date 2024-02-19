@@ -48,8 +48,74 @@ finished! backend-tv './tests/arm-tv/vectors/ucvtf/UCVTFUWSri.aarch64.ll'
   diff: /home/rina/progs/alive2-regehr/out/UCVTFUWSri.aarch64.ll.diff
 ```
 
+## structure
 
-fish shell:
-```fish
-cmake -GNinja -B build -DBUILD_TV=1 -DCMAKE_PREFIX_PATH=./antlr-dev/. -DLLVM_DIR=~/progs/llvm-regehr/llvm/build/lib/cmake/llvm -DANTLR4_JAR_LOCATION=(cat antlr-jar) -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp && cmake --build build -j10 -t backend-tv
+The Aslp-specific files are placed in this folder. In a roughly bottom-up order,
+- The ANTLR grammar in Semantics.g4 describes the Aslt textual semantics format. This is processed by ANTLR into a lexer and parser, as well as stubs for visitors.
+- We define an aslt\_visitor which traverses this syntax tree and generates LLVM.
+  This visits in a top-down order. Methods such as expr(), stmt(), lexpr() are used to recurse into subexpressions of particular types.
+  The header defines \*\_t type aliases which are the conventional LLVM translations of each syntactic structure.
+  To start the visitor, the aslt\_visitor::visitStmts method is called with a parser producing a list of statements.
+- The aslp\_bridge files are the entry point to the Aslp side from lifter.cpp.
+  This reads environment variables and determines whether MCInsts are suitable for Aslp.
+  It constructs the parser and lexer, calls the aslt\_visitor, then returns the status of the translation.
+- In lifter.cpp, code is added to the beginning of arm2llvm::liftInst.
+  If appropriate, this calls the aslp\_bridge.
+  This code also has the task of using LLVM's assembler to encode an MCInst into opcode bytes.
+- The arm2llvm class is used from within the aslt\_visitor to manage the basic blocks and create LLVM instructions.
+  This is done by implementing an abstract interface, declared in interface.hpp.
+
+## state
+Currently (2024-02-19), the Aslp-based lifter has fairly good outcomes with the arm-tv test suite (on i5-13600H).
+>  Expected Passes    : 6661
+>  Unsupported Tests  : 9
+>  Unexpected Failures: 8
+>  Individual Timeouts: 268
+For the classic lifter (done by setting ASLP=0 before running lit.py),
+>  Expected Passes    : 6735
+>  Unsupported Tests  : 9
+>  Unexpected Failures: 3
+>  Individual Timeouts: 199
+
+The Aslp-failing tests (with the first 3 also failing in classic) are:
 ```
+Alive2 :: arm-tv/bugs/load_i1.aarch64.ll
+Alive2 :: arm-tv/vectors/bugs/srem.aarch64.ll
+Alive2 :: arm-tv/stack/STRXui_1.aarch64.ll
+
+Alive2 :: arm-tv/calls/vec.aarch64.ll
+Alive2 :: arm-tv/fp/fneg/fneg-2.aarch64.ll
+Alive2 :: arm-tv/instructions/MRS-2.aarch64.ll
+Alive2 :: arm-tv/instructions/MSR-1.aarch64.ll
+Alive2 :: arm-tv/intrinsics/trap.aarch64.ll
+```
+Of these, vec fails due to different vector poison behaviour, fneg fails due to storing pointers,
+and MRS/MSR/trap are not yet implemented in the aslt\_visitor.
+
+## details
+
+The Aslp approach, while promising, is complicated to implement due to the differences in abstraction between LLVM MCInst and the ARM opcode
+which Aslp uses.
+MCInst is a fairly high level and convenient representation, with symbolic references to blocks and symbols.
+This information is lost during the lowering to ARM opcodes.
+
+The MCInst representation also enables better handling of pointers, since the semantics for a pointer-using instruction
+can be written with this in mind.
+LLVM's pointer semantics are highly sensitive and accidental integer/pointer mixing can cause undefined behaviour.
+In Aslp, the visitor does not have this context ahead-of-time.
+For example, when a value is used as a pointer with an offset, we must backtrack and undo its integer addition,
+replacing these with getelementptr instructions.
+This works in the simple cases but has limitations.
+One fix (hypothetically) is storing two versions of every variable (i.e. local variable or register),
+one as a regular bitvector and another as a pointer, and accessing the correct one depending on the use.
+
+Vector operations are another difference between the two lifters.
+The classic lifter, operating in LLVM, takes advantage of LLVM's vector functionality where possible.
+This makes the semantics cleaner and easier to reason about.
+Aslp, however, treats vector registers no different from ordinary scalar registers and performs vector operations by
+bitwise operations on the full 128-bit width.
+This is obviously much worse for Alive to reason with and, as in the calls/vec test, affects how poison values spread across vector elements. 
+It is conceivable that an LLVM optimisation pass could detect and replace these operations with their vector counterparts,
+but it does not do so right now.
+
+Floating-point operations are also limited, specifically by ignoring the FPSR and FPCR (status and control, resp.) registers.
