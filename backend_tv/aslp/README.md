@@ -1,5 +1,7 @@
 # aslp-bridge
 
+([compare ahead](https://github.com/regehr/alive2/compare/arm-tv...katrinafyi:alive2:aslp))
+
 This is the [Aslp](https://github.com/UQ-PAC/aslp) semantics provider for the arm-tv tool.
 This has some dependencies in addition to those from Alive2 and arm-tv (e.g. LLVM at head with RTTI+EH).
 
