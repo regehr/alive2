@@ -10515,8 +10515,6 @@ pair<Function *, Function *> liftFunc(Module *OrigModule, Module *LiftedModule,
 
   auto liftedFn = arm2llvm{LiftedModule, Str.MF, *srcFn, IP.get(), *MCE, *STI, *Ana}.run();
 
-  liftedFn->dump();
-
   std::string sss;
   llvm::raw_string_ostream ss(sss);
   if (llvm::verifyModule(*LiftedModule, &ss)) {
