@@ -18,15 +18,24 @@ namespace {
     return x ? x : y;
   }
 
+  void require(bool cond, const std::string_view& str, llvm::Value* val = nullptr) {
+   if (cond)
+     return;
 
- [[noreturn]] void die(llvm::Value* val, const std::string_view& str) {
-   std::cerr << "Assertion failure! " << str << std::endl;
-   std::string s;
-   llvm::raw_string_ostream os{s};
-   val->print(os, true);
-   std::cerr << s << std::endl;
-   *(volatile int*)0 = 0xded;
-   throw std::runtime_error("unreachable");
+   std::string msg{"Assertion failure! "};
+   msg += str;
+   if (val) {
+     std::string s;
+     llvm::raw_string_ostream os{s};
+     val->print(os, true);
+     std::cerr << '\n' << s << '\n' << std::endl;
+   }
+   throw std::runtime_error(msg);
+  }
+
+  [[noreturn]] void die(const std::string_view& str, llvm::Value* val = nullptr) {
+    require(false, str, val);
+    assert(false && "unreachable");
   }
 }
 
@@ -58,14 +67,18 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x) {
   return {ptr, offset};
 }
 
-std::pair<llvm::Value*, llvm::Value*> aslt_visitor::unify_sizes(llvm::Value* x, llvm::Value* y) {
+std::pair<llvm::Value*, llvm::Value*> aslt_visitor::unify_sizes(llvm::Value* x, llvm::Value* y, bool sign) {
   auto ty1 = x->getType(), ty2 = y->getType();
   auto wd1 = ty1->getIntegerBitWidth(), wd2 = ty2->getIntegerBitWidth();
 
+  auto sext = &lifter_interface::createSExt;
+  auto zext = &lifter_interface::createZExt;
+  const decltype(sext) extend = sign ? sext : zext;
+
   if (wd1 < wd2) {
-    x = iface.createSExt(x, ty2);
+    x = (iface.*extend)(x, ty2);
   } else if (wd2 < wd1) {
-    y = iface.createSExt(y, ty1);
+    y = (iface.*extend)(y, ty1);
   }
   return std::make_pair(x, y);
 }
@@ -236,6 +249,13 @@ std::any aslt_visitor::visitTypeRegister(aslt::SemanticsParser::TypeRegisterCont
   return (type_t)iface.getIntTy(bits);
 }
 
+std::any aslt_visitor::visitTypeConstructor(aslt::SemanticsParser::TypeConstructorContext *context) {
+  auto name = context->name->getText();
+  if (name == "FPRounding")
+    return (type_t)iface.getIntTy(2);
+  assert(false && "type constructor");
+}
+
 std::any aslt_visitor::visitTypeBoolean(SemanticsParser::TypeBooleanContext *ctx) {
   log() << "visitTypeBoolean" << ' ' << ctx->getText() << '\n';
   return (type_t)iface.getIntTy(1);
@@ -313,6 +333,9 @@ std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
   else if (name == "FPSR")
     // XXX following classic lifter's ignoring of FPSR
     return static_cast<expr_t>(iface.getIntConst(0, 64));
+  else if (name == "FPCR")
+    // XXX do not support FPCR-dependent behaviour
+    return static_cast<expr_t>(llvm::UndefValue::get(iface.getIntTy(32)));
   else 
     assert(false && "unsupported or undefined variable!");
 
@@ -464,8 +487,60 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto load = iface.makeLoadWithOffset(ptr, offset, size->getSExtValue());
       return static_cast<expr_t>(load);
     }
+
+  } else if (args.size() == 4) {
+    if (name == "FPCompare.0") {
+      // bits(4) FPCompare(bits(N) op1, bits(N) op2, boolean signal_nans, FPCRType fpcr)
+      
+      // return value:
+      // PSTATE . V = result [ 0 +: 1 ] ;
+      // PSTATE . C = result [ 1 +: 1 ] ;
+      // PSTATE . Z = result [ 2 +: 1 ] ;
+      // PSTATE . N = result [ 3 +: 1 ] ;
+
+      auto a = args[0], b = args[1], signalnan = args[2], fpcr = args[3];
+
+      // XXX we do not support signalling nans
+      iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, signalnan, llvm::ConstantInt::get(signalnan->getType(), 0)));
+
+      a = iface.createBitCast(a, iface.getFPType(a->getType()->getIntegerBitWidth()));
+      b = iface.createBitCast(b, iface.getFPType(b->getType()->getIntegerBitWidth()));
+
+      expr_t ret = iface.getIntConst(0, 4);
+      auto set = [&](unsigned shift, llvm::Value* cond) {
+
+        require(shift < 4, "");
+        auto flag = iface.createSelect(
+            cond, iface.getIntConst(1U << shift, 4), iface.getIntConst(0, 4));
+        ret = iface.createOr(ret, flag);
+
+      };
+
+      set(3, iface.createFCmp(llvm::FCmpInst::Predicate::FCMP_OLT, a, b));
+      set(2, iface.createFCmp(llvm::FCmpInst::Predicate::FCMP_OEQ, a, b));
+      set(1, iface.createFCmp(llvm::FCmpInst::Predicate::FCMP_UGT, a, b));
+      set(0, iface.createFCmp(llvm::FCmpInst::Predicate::FCMP_UNO, a, b));
+      return ret;
+    }
+
+  } else if (args.size() == 5) {
+    if (name == "FixedToFP.0" && targs.size() == 2) {
+      auto wd1 = targs[0], wd2 = targs[1];
+      auto op = args[0], fbits = args[1], unsign = args[2], fpcr = args[3], rounding = args[4];
+      // XXX with zero fractional bits, this is a simple cast. otherwise, we would need to consider rounding.
+      iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, fbits, llvm::ConstantInt::get(fbits->getType(), 0)));
+      // XXX unsure which of wd1/wd2 is src vs destination.
+      require(wd1 == wd2, "fixed to fp targ mismatch");
+      expr_t ret;
+      if (unsign)
+        ret = iface.createUIToFP(op, iface.getFPType(wd1));
+      else
+        ret = iface.createSIToFP(op, iface.getFPType(wd1));
+      return ret;
+    }
   }
-  assert(false && "unsupported TAPPLY");
+
+  die("unsupported TAPPLY: " + name);
 }
 
 std::any aslt_visitor::visitExprSlices(SemanticsParser::ExprSlicesContext *ctx) {
@@ -499,7 +574,7 @@ std::any aslt_visitor::visitExprField(SemanticsParser::ExprFieldContext *ctx) {
     return static_cast<expr_t>(load);
   }
 
-  die(base, "expr field unsup");
+  die("expr field unsup", base);
 }
 
 std::any aslt_visitor::visitExprArray(SemanticsParser::ExprArrayContext *ctx) {

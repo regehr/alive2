@@ -44,6 +44,7 @@ public:
 
   virtual llvm::Constant *getIntConst(uint64_t val, u_int64_t bits) = 0;
   virtual llvm::Type *getIntTy(unsigned bits) = 0; 
+  virtual llvm::Type *getFPType(unsigned bits) = 0; 
 
   virtual void assertTrue(llvm::Value *cond) = 0;
 
@@ -179,6 +180,9 @@ public:
   virtual llvm::CastInst *createSExt(llvm::Value *v, llvm::Type *t) = 0;
 
   virtual llvm::CastInst *createZExt(llvm::Value *v, llvm::Type *t) = 0;
+
+  virtual llvm::CastInst *createUIToFP(llvm::Value *v, llvm::Type *t) = 0;
+  virtual llvm::CastInst *createSIToFP(llvm::Value *v, llvm::Type *t) = 0;
 
   virtual llvm::CastInst *createBitCast(llvm::Value *v, llvm::Type *t) = 0;
 

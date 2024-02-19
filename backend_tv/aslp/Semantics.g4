@@ -43,6 +43,7 @@ type : type_;
 type_ :
 	'Type_Bits' OPEN_PAREN expr CLOSE_PAREN  # TypeBits
 	| 'Type_Constructor(boolean)'            # TypeBoolean
+	| 'Type_Constructor('  name=(SSYMBOL|METHOD) ')'            # TypeConstructor
 	| 'Type_Register' OPEN_PAREN QUOTE width=(DEC|BINARY) QUOTE type_register_slices CLOSE_PAREN # TypeRegister;
 
 lexpr: lexpr_;

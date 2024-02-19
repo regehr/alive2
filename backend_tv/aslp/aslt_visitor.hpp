@@ -103,7 +103,7 @@ protected:
 
 
   virtual std::pair<expr_t, expr_t> ptr_expr(llvm::Value* x);
-  virtual std::pair<llvm::Value*, llvm::Value*> unify_sizes(llvm::Value* x, llvm::Value* y);
+  virtual std::pair<llvm::Value*, llvm::Value*> unify_sizes(llvm::Value* x, llvm::Value* y, bool sign = true);
 
   virtual lexpr_t ref_expr(expr_t expr) {
     // XXX: HACK! since ExprVar are realised as LoadInst, this is incorrect in an array.
@@ -192,6 +192,7 @@ public:
   virtual std::any visitTypeBits(aslt::SemanticsParser::TypeBitsContext *context) override;
   virtual std::any visitTypeBoolean(aslt::SemanticsParser::TypeBooleanContext *context) override;
   virtual std::any visitTypeRegister(aslt::SemanticsParser::TypeRegisterContext *context) override;
+  virtual std::any visitTypeConstructor(aslt::SemanticsParser::TypeConstructorContext *context) override;
   virtual std::any visitLExprVar(aslt::SemanticsParser::LExprVarContext *ctx) override;
   virtual std::any visitLExprField(aslt::SemanticsParser::LExprFieldContext *ctx) override;
   virtual std::any visitLExprArray(aslt::SemanticsParser::LExprArrayContext *ctx) override;

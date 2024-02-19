@@ -462,7 +462,7 @@ class arm2llvm : public aslp::lifter_interface {
     return Type::getIntNTy(Ctx, bits);
   }
 
-  Type *getFPType(unsigned bits) {
+  Type *getFPType(unsigned bits) override {
     if (bits == 16)
       return Type::getHalfTy(Ctx);
     else if (bits == 32)
@@ -1984,11 +1984,11 @@ class arm2llvm : public aslp::lifter_interface {
     return CastInst::Create(Instruction::ZExt, v, t, nextName(), LLVMBB);
   }
 
-  CastInst *createUIToFP(Value *v, Type *t) {
+  CastInst *createUIToFP(Value *v, Type *t) override {
     return CastInst::Create(Instruction::UIToFP, v, t, nextName(), LLVMBB);
   }
 
-  CastInst *createSIToFP(Value *v, Type *t) {
+  CastInst *createSIToFP(Value *v, Type *t) override {
     return CastInst::Create(Instruction::SIToFP, v, t, nextName(), LLVMBB);
   }
 
