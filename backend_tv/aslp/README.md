@@ -3,11 +3,14 @@
 ([compare ahead](https://github.com/regehr/alive2/compare/arm-tv...katrinafyi:alive2:aslp))
 
 This is the [Aslp](https://github.com/UQ-PAC/aslp) semantics provider for the arm-tv tool.
-This has some dependencies in addition to those from Alive2 and arm-tv (e.g. LLVM at head with RTTI+EH).
+Given an LLVM MCInst, it consults Aslp for partially-evaluated semantics then translates
+its Aslt format into LLVM IR compatible with the existing lifter.
 
 Requirements:
+- very recent LLVM (tested with 19.0.0git or 18.1.0-rc2), built with RTTI+EH.
 - ANTLR4 parser framework, installed by your system package manager.
 - [aslp-cpp](https://github.com/UQ-PAC/aslp/tree/partial_eval/aslp-cpp), which should be fetched automatically.
+
 If needed, these can be given explicitly as cmake arguments. Here is an example:
 ```bash
 cmake -B build -DBUILD_TV=1 \
@@ -17,11 +20,11 @@ cmake -B build -DBUILD_TV=1 \
 ```
 
 You will also need the aslp-server which provides the Aslp semantics over HTTP.
-The suggested way to get this is using the Nix package manager. Once this is installed, use
+The suggested way to get this is using the Nix package manager. Once Nix is installed, use
 ```bash
 nix --extra-experimental-features nix-command --extra-experimental-features flakes shell github:katrinafyi/pac-nix#aslp --command aslp-server 
 ```
-This should build and launch aslp-server.
+This should build and launch aslp-server from the [pac-nix](https://github.com/katrinafyi/pac-nix) packages.
 Otherwise, you can compile with Dune from the [aslp](https://github.com/UQ-PAC/aslp) repository then run `dune exec aslp-server`.
 
 ## usage
@@ -29,7 +32,8 @@ Otherwise, you can compile with Dune from the [aslp](https://github.com/UQ-PAC/a
 In this fork, the Aslp integration is enabled by default in the backend-tv executable.
 When running, you should see some additional output when preparing the instructions and
 in the main lifted function, blocks will be named with aslp\_.
-*Important!* Make sure aslp-server is running, otherwise backend-tv will hang at "Waiting for server to start".
+
+**Important!** Make sure aslp-server is running, otherwise backend-tv will hang at "Waiting for server to start".
 
 The behaviour of the Aslp bridge can be configured by environment variables:
 - ASLP (default: true) enables or disables the entire Aslp functionality,
@@ -53,31 +57,32 @@ finished! backend-tv './tests/arm-tv/vectors/ucvtf/UCVTFUWSri.aarch64.ll'
 ## structure
 
 The Aslp-specific files are placed in this folder. In a roughly bottom-up order,
-- The ANTLR grammar in Semantics.g4 describes the Aslt textual semantics format. This is processed by ANTLR into a lexer and parser, as well as stubs for visitors.
-- We define an aslt\_visitor which traverses this syntax tree and generates LLVM.
+- The ANTLR grammar in *Semantics.g4* describes the Aslt textual semantics format. This is processed by ANTLR into a lexer, parser, and stubs for visitors.
+- We define an *aslt\_visitor* which traverses this syntax tree and generates LLVM.
   This visits in a top-down order. Methods such as expr(), stmt(), lexpr() are used to recurse into subexpressions of particular types.
-  The header defines \*\_t type aliases which are the conventional LLVM translations of each syntactic structure.
+  The header defines type aliases (suffixed by "_t") which are the conventional LLVM translations of each syntactic structure.
   To start the visitor, the aslt\_visitor::visitStmts method is called with a parser producing a list of statements.
-- The aslp\_bridge files are the entry point to the Aslp side from lifter.cpp.
+- The *aslp\_bridge* files are the entry point to the Aslp side from lifter.cpp.
   This reads environment variables and determines whether MCInsts are suitable for Aslp.
   It constructs the parser and lexer, calls the aslt\_visitor, then returns the status of the translation.
-- In lifter.cpp, code is added to the beginning of arm2llvm::liftInst.
+- In *lifter.cpp*, code is added to the beginning of arm2llvm::liftInst.
   If appropriate, this calls the aslp\_bridge.
   This code also has the task of using LLVM's assembler to encode an MCInst into opcode bytes.
-- The arm2llvm class is used from within the aslt\_visitor to manage the basic blocks and create LLVM instructions.
+- The *arm2llvm* class is used from within the aslt\_visitor to manage the basic blocks and create LLVM instructions.
   This is done by implementing an abstract interface, declared in interface.hpp.
 
 ## state
 Currently (2024-02-19), the Aslp-based lifter has fairly good outcomes with the arm-tv test suite (on i5-13600H).
->  Expected Passes    : 6661
->  Unsupported Tests  : 9
->  Unexpected Failures: 8
->  Individual Timeouts: 268
+>  Expected Passes    : 6661 <br/>
+>  Unsupported Tests  : 9<br/>
+>  Unexpected Failures: 8<br/>
+>  Individual Timeouts: 268<br/>
+
 For the classic lifter (done by setting ASLP=0 before running lit.py),
->  Expected Passes    : 6735
->  Unsupported Tests  : 9
->  Unexpected Failures: 3
->  Individual Timeouts: 199
+>  Expected Passes    : 6735<br/>
+>  Unsupported Tests  : 9<br/>
+>  Unexpected Failures: 3<br/>
+>  Individual Timeouts: 199<br/>
 
 The Aslp-failing tests (with the first 3 also failing in classic) are:
 ```
