@@ -51,9 +51,13 @@ target_include_directories(bridge PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_include_directories(bridge PRIVATE "${LLVM_SOURCE_DIR}/lib")
 
 target_compile_definitions(bridge PRIVATE ASLT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/aslt")
-target_compile_options(bridge PRIVATE -g -O0 -fsanitize=address
-  -Wno-error=unused-variable -Wno-error=unused-function -Wno-error=unused-but-set-variable)
-target_link_options(bridge PRIVATE -g -O0 -fsanitize=address)
+target_compile_options(bridge PRIVATE -Wno-error=unused-variable -Wno-error=unused-function -Wno-error=unused-but-set-variable)
+IF(CMAKE_BUILD_TYPE MATCHES DEBUG)
+  target_compile_options(bridge PRIVATE -g -O0 -fsanitize=address)
+  target_link_options(bridge PRIVATE -g -O0 -fsanitize=address)    
+ENDIF()
+
+
 
 execute_process(COMMAND "${LLVM_CONFIG}" --libs support core irreader bitwriter
                 COMMAND_ERROR_IS_FATAL ANY
