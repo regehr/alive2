@@ -43,6 +43,7 @@ private:
   uint64_t depth = 0;
 
   std::map<std::string, lexpr_t> locals{};
+  std::map<lexpr_t, lexpr_t> ptrs{};
   std::map<unsigned, unsigned> stmt_counts{};
 
   // stmt_t statements_init(llvm::Function &func) {
@@ -106,7 +107,6 @@ protected:
     auto i = llvm::cast<llvm::ConstantInt>(x);
     return i->getSExtValue();
   }
-
 
   virtual std::pair<expr_t, expr_t> ptr_expr(llvm::Value* x, llvm::Instruction* before = nullptr);
   virtual std::pair<llvm::Value*, llvm::Value*> unify_sizes(llvm::Value* x, llvm::Value* y, bool sign = true);

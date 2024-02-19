@@ -50,9 +50,6 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instructi
   lexpr_t base = nullptr;
   expr_t offset = iface.getIntConst(0, x->getType()->getIntegerBitWidth());
 
-  if (llvm::isa<llvm::IntToPtrInst>(x))
-    return {x, offset};
-
   auto Add = llvm::BinaryOperator::BinaryOps::Add;
   if (auto add = llvm::dyn_cast<llvm::BinaryOperator>(x); add && add->getOpcode() == Add) {
     // undo the add instruction into a GEP operation
@@ -63,24 +60,9 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instructi
     base = ref_expr(_base);
 
   } else if (auto load = llvm::dyn_cast<llvm::LoadInst>(x); load) {
-    // HACK! if we stored a pointer in a local variable, we need to backtrack and ptr_expr
-    // writes to that local.
-    // XXX of course, we still have problems if the alloc's pointer was stored somewhere else...
     auto wd = load->getType()->getIntegerBitWidth();
-    auto ptr = load->getPointerOperand();
     base = ref_expr(load);
     offset = iface.getIntConst(0, wd);
-    if (auto alloc = llvm::dyn_cast<llvm::AllocaInst>(ptr); alloc) {
-      for (auto* user : alloc->users()) {
-        if (auto store = llvm::dyn_cast<llvm::StoreInst>(user); store) {
-
-          auto val = store->getValueOperand();
-          auto [ptr, offset] = ptr_expr(val);
-auto x = llvm::GetElementPtrInst::Create(iface.getIntTy(8), ptr, {offset}, "", store);
-          store->setOperand(0, x);
-        }
-      }
-    }
   }
 
   assert(base && offset && "unable to coerce to pointer");
