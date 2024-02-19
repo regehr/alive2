@@ -545,19 +545,17 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
   } else if (args.size() == 5) {
     if (name == "FixedToFP.0" && targs.size() == 2) {
       // bits(N) FixedToFP(bits(M) op, integer fbits, boolean unsigned, FPCRType fpcr, FPRounding rounding)
-      auto wd1 = targs[0], wd2 = targs[1];
+      auto wdin = targs[0], wdout = targs[1];
       auto val = args[0], fbits = args[1], unsign = args[2], fpcr = args[3], rounding = args[4];
       // XXX with zero fractional bits, this is a simple cast. otherwise, we would need to consider rounding.
       iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, fbits, llvm::ConstantInt::get(fbits->getType(), 0)));
-      // XXX unsure which of wd1/wd2 is src vs destination.
-      require(wd1 == wd2, "fixed to fp targ mismatch");
 
-      // XXX do we need to bitcast back to int?
+      // XXX do we need to bitcast back to int? that will be done most of the time when storing in a local.
       return static_cast<expr_t>(
           iface.createSelect(
             unsign,
-            iface.createUIToFP(val, iface.getFPType(wd1)),
-            iface.createSIToFP(val, iface.getFPType(wd1))));
+            iface.createUIToFP(val, iface.getFPType(wdout)),
+            iface.createSIToFP(val, iface.getFPType(wdout))));
 
     } if (name == "FPToFixed.0" && targs.size() == 2) {
       // bits(M) FPToFixed(bits(N) op, integer fbits, boolean unsigned, FPCRType fpcr, FPRounding rounding)
