@@ -519,107 +519,74 @@ class arm2llvm {
   };
 
   const set<int> instrs_32 = {
-      AArch64::TBNZW,       AArch64::TBZW,
-      AArch64::CBZW,        AArch64::CBNZW,
-      AArch64::ADDWrx,      AArch64::ADDSWrs,
-      AArch64::ADDSWri,     AArch64::ADDWrs,
-      AArch64::ADDWri,      AArch64::ADDSWrx,
-      AArch64::ADCWr,       AArch64::ADCSWr,
-      AArch64::ASRVWr,      AArch64::SUBWri,
-      AArch64::SUBWrs,      AArch64::SUBWrx,
-      AArch64::SUBSWrs,     AArch64::SUBSWri,
-      AArch64::SUBSWrx,     AArch64::SBFMWri,
-      AArch64::CSELWr,      AArch64::ANDWri,
-      AArch64::ANDWrr,      AArch64::ANDWrs,
-      AArch64::ANDSWri,     AArch64::ANDSWrr,
-      AArch64::ANDSWrs,     AArch64::MADDWrrr,
-      AArch64::MSUBWrrr,    AArch64::EORWri,
-      AArch64::CSINVWr,     AArch64::CSINCWr,
-      AArch64::MOVZWi,      AArch64::MOVNWi,
-      AArch64::MOVKWi,      AArch64::LSLVWr,
-      AArch64::LSRVWr,      AArch64::ORNWrs,
-      AArch64::UBFMWri,     AArch64::BFMWri,
-      AArch64::ORRWrs,      AArch64::ORRWri,
-      AArch64::SDIVWr,      AArch64::UDIVWr,
-      AArch64::EXTRWrri,    AArch64::EORWrs,
-      AArch64::RORVWr,      AArch64::RBITWr,
-      AArch64::CLZWr,       AArch64::REVWr,
-      AArch64::CSNEGWr,     AArch64::BICWrs,
-      AArch64::BICSWrs,     AArch64::EONWrs,
-      AArch64::REV16Wr,     AArch64::Bcc,
-      AArch64::CCMPWr,      AArch64::CCMPWi,
-      AArch64::LDRWui,      AArch64::LDRBBroW,
-      AArch64::LDRBBroX,    AArch64::LDRBroW,
-      AArch64::LDRBroX,     AArch64::LDRHHroW,
-      AArch64::LDRHHroX,    AArch64::LDRHroW,
-      AArch64::LDRHroX,     AArch64::LDRWroW,
-      AArch64::LDRWroX,     AArch64::LDRSBWroW,
-      AArch64::LDRSBWroX,   AArch64::LDRSBXroW,
-      AArch64::LDRSBXroX,   AArch64::LDRSHWroW,
-      AArch64::LDRSHWroX,   AArch64::LDRSHXroW,
-      AArch64::LDRSHXroX,   AArch64::LDRSWroW,
-      AArch64::LDRSWroX,    AArch64::LDRSui,
-      AArch64::LDRBBui,     AArch64::LDRBui,
-      AArch64::LDRSBWui,    AArch64::LDRSHWui,
-      AArch64::LDRSBWpre,   AArch64::LDRSHWpre,
-      AArch64::LDRSBWpost,  AArch64::LDRSHWpost,
-      AArch64::LDRHHui,     AArch64::LDRHui,
-      AArch64::LDURBi,      AArch64::LDURBBi,
-      AArch64::LDURHi,      AArch64::LDURHHi,
-      AArch64::LDURSi,      AArch64::LDURWi,
-      AArch64::LDURSBWi,    AArch64::LDURSHWi,
-      AArch64::LDRBBpre,    AArch64::LDRBpre,
-      AArch64::LDRHHpre,    AArch64::LDRHpre,
-      AArch64::LDRWpre,     AArch64::LDRSpre,
-      AArch64::LDRBBpost,   AArch64::LDRBpost,
-      AArch64::LDRHHpost,   AArch64::LDRHpost,
-      AArch64::LDRWpost,    AArch64::LDRSpost,
-      AArch64::STRBBpost,   AArch64::STRBpost,
-      AArch64::STRHHpost,   AArch64::STRHpost,
-      AArch64::STRWpost,    AArch64::STRSpost,
-      AArch64::STRWui,      AArch64::STRBBroW,
-      AArch64::STRBBroX,    AArch64::STRBroW,
-      AArch64::STRBroX,     AArch64::STRHHroW,
-      AArch64::STRHHroX,    AArch64::STRHroW,
-      AArch64::STRHroX,     AArch64::STRWroW,
-      AArch64::STRWroX,     AArch64::CCMNWi,
-      AArch64::CCMNWr,      AArch64::STRBBui,
-      AArch64::STRBui,      AArch64::STPWi,
-      AArch64::STPSi,       AArch64::STPWpre,
-      AArch64::STPSpre,     AArch64::STPWpost,
-      AArch64::STPSpost,    AArch64::STRHHui,
-      AArch64::STRHui,      AArch64::STURBBi,
-      AArch64::STURBi,      AArch64::STURHHi,
-      AArch64::STURHi,      AArch64::STURWi,
-      AArch64::STURSi,      AArch64::STRSui,
-      AArch64::LDPWi,       AArch64::LDPSi,
-      AArch64::LDPWpre,     AArch64::LDPSpre,
-      AArch64::LDPWpost,    AArch64::LDPSpost,
-      AArch64::STRBBpre,    AArch64::STRBpre,
-      AArch64::STRHHpre,    AArch64::STRHpre,
-      AArch64::STRWpre,     AArch64::STRSpre,
-      AArch64::FADDSrr,     AArch64::FSUBSrr,
-      AArch64::FCMPSrr,     AArch64::FCMPESrr,
-      AArch64::FCMPSri,     AArch64::FCMPESri,
-      AArch64::FMOVSWr,     AArch64::INSvi32gpr,
-      AArch64::INSvi16gpr,  AArch64::INSvi8gpr,
-      AArch64::FCVTZUUWHr,  AArch64::FCVTZUUWSr,
-      AArch64::FCVTZUUXHr,  AArch64::FCVTZUUXSr,
-      AArch64::FCVTZSUWHr,  AArch64::FCVTZSUWSr,
-      AArch64::FCVTZSUXHr,  AArch64::FCVTZSUXSr,
-      AArch64::FCVTZSv1i32, AArch64::FCVTSHr,
-      AArch64::FCVTDHr,     AArch64::FCVTHSr,
-      AArch64::FCVTDSr,     AArch64::FCVTZSUWSr,
-      AArch64::FCSELSrrr,   AArch64::FMULSrr,
-      AArch64::FMADDSrrr,   AArch64::FMSUBSrrr,
-      AArch64::FNMADDSrrr,  AArch64::FNMSUBSrrr,
-      AArch64::FNMULSrr,    AArch64::FMULv1i32_indexed,
-      AArch64::FABSSr,      AArch64::UQADDv1i32,
-      AArch64::SQSUBv1i32,  AArch64::SQADDv1i32,
-      AArch64::FMOVSr,      AArch64::FNEGSr,
-      AArch64::BRK,         AArch64::UCVTFUWSri,
-      AArch64::UCVTFUWDri,  AArch64::SCVTFUWSri,
-      AArch64::SCVTFUWDri,  AArch64::SCVTFv1i32,
+      AArch64::TBNZW,      AArch64::TBZW,       AArch64::CBZW,
+      AArch64::CBNZW,      AArch64::ADDWrx,     AArch64::ADDSWrs,
+      AArch64::ADDSWri,    AArch64::ADDWrs,     AArch64::ADDWri,
+      AArch64::ADDSWrx,    AArch64::ADCWr,      AArch64::ADCSWr,
+      AArch64::ASRVWr,     AArch64::SUBWri,     AArch64::SUBWrs,
+      AArch64::SUBWrx,     AArch64::SUBSWrs,    AArch64::SUBSWri,
+      AArch64::SUBSWrx,    AArch64::SBFMWri,    AArch64::CSELWr,
+      AArch64::ANDWri,     AArch64::ANDWrr,     AArch64::ANDWrs,
+      AArch64::ANDSWri,    AArch64::ANDSWrr,    AArch64::ANDSWrs,
+      AArch64::MADDWrrr,   AArch64::MSUBWrrr,   AArch64::EORWri,
+      AArch64::CSINVWr,    AArch64::CSINCWr,    AArch64::MOVZWi,
+      AArch64::MOVNWi,     AArch64::MOVKWi,     AArch64::LSLVWr,
+      AArch64::LSRVWr,     AArch64::ORNWrs,     AArch64::UBFMWri,
+      AArch64::BFMWri,     AArch64::ORRWrs,     AArch64::ORRWri,
+      AArch64::SDIVWr,     AArch64::UDIVWr,     AArch64::EXTRWrri,
+      AArch64::EORWrs,     AArch64::RORVWr,     AArch64::RBITWr,
+      AArch64::CLZWr,      AArch64::REVWr,      AArch64::CSNEGWr,
+      AArch64::BICWrs,     AArch64::BICSWrs,    AArch64::EONWrs,
+      AArch64::REV16Wr,    AArch64::Bcc,        AArch64::CCMPWr,
+      AArch64::CCMPWi,     AArch64::LDRWui,     AArch64::LDRBBroW,
+      AArch64::LDRBBroX,   AArch64::LDRBroW,    AArch64::LDRBroX,
+      AArch64::LDRHHroW,   AArch64::LDRHHroX,   AArch64::LDRHroW,
+      AArch64::LDRHroX,    AArch64::LDRWroW,    AArch64::LDRWroX,
+      AArch64::LDRSBWroW,  AArch64::LDRSBWroX,  AArch64::LDRSBXroW,
+      AArch64::LDRSBXroX,  AArch64::LDRSHWroW,  AArch64::LDRSHWroX,
+      AArch64::LDRSHXroW,  AArch64::LDRSHXroX,  AArch64::LDRSWroW,
+      AArch64::LDRSWroX,   AArch64::LDRSui,     AArch64::LDRBBui,
+      AArch64::LDRBui,     AArch64::LDRSBWui,   AArch64::LDRSHWui,
+      AArch64::LDRSBWpre,  AArch64::LDRSHWpre,  AArch64::LDRSBWpost,
+      AArch64::LDRSHWpost, AArch64::LDRHHui,    AArch64::LDRHui,
+      AArch64::LDURBi,     AArch64::LDURBBi,    AArch64::LDURHi,
+      AArch64::LDURHHi,    AArch64::LDURSi,     AArch64::LDURWi,
+      AArch64::LDURSBWi,   AArch64::LDURSHWi,   AArch64::LDRBBpre,
+      AArch64::LDRBpre,    AArch64::LDRHHpre,   AArch64::LDRHpre,
+      AArch64::LDRWpre,    AArch64::LDRSpre,    AArch64::LDRBBpost,
+      AArch64::LDRBpost,   AArch64::LDRHHpost,  AArch64::LDRHpost,
+      AArch64::LDRWpost,   AArch64::LDRSpost,   AArch64::STRBBpost,
+      AArch64::STRBpost,   AArch64::STRHHpost,  AArch64::STRHpost,
+      AArch64::STRWpost,   AArch64::STRSpost,   AArch64::STRWui,
+      AArch64::STRBBroW,   AArch64::STRBBroX,   AArch64::STRBroW,
+      AArch64::STRBroX,    AArch64::STRHHroW,   AArch64::STRHHroX,
+      AArch64::STRHroW,    AArch64::STRHroX,    AArch64::STRWroW,
+      AArch64::STRWroX,    AArch64::CCMNWi,     AArch64::CCMNWr,
+      AArch64::STRBBui,    AArch64::STRBui,     AArch64::STPWi,
+      AArch64::STPSi,      AArch64::STPWpre,    AArch64::STPSpre,
+      AArch64::STPWpost,   AArch64::STPSpost,   AArch64::STRHHui,
+      AArch64::STRHui,     AArch64::STURBBi,    AArch64::STURBi,
+      AArch64::STURHHi,    AArch64::STURHi,     AArch64::STURWi,
+      AArch64::STURSi,     AArch64::STRSui,     AArch64::LDPWi,
+      AArch64::LDPSi,      AArch64::LDPWpre,    AArch64::LDPSpre,
+      AArch64::LDPWpost,   AArch64::LDPSpost,   AArch64::STRBBpre,
+      AArch64::STRBpre,    AArch64::STRHHpre,   AArch64::STRHpre,
+      AArch64::STRWpre,    AArch64::STRSpre,    AArch64::FADDSrr,
+      AArch64::FSUBSrr,    AArch64::FCMPSrr,    AArch64::FCMPESrr,
+      AArch64::FCMPSri,    AArch64::FCMPESri,   AArch64::FMOVSWr,
+      AArch64::INSvi32gpr, AArch64::INSvi16gpr, AArch64::INSvi8gpr,
+      AArch64::FCVTZUUWHr, AArch64::FCVTZUUWSr, AArch64::FCVTZUUXHr,
+      AArch64::FCVTZUUXSr, AArch64::FCVTZSUWHr, AArch64::FCVTZSUWSr,
+      AArch64::FCVTZSUXHr, AArch64::FCVTZSUXSr, AArch64::FCVTZSv1i32,
+      AArch64::FCVTSHr,    AArch64::FCVTDHr,    AArch64::FCVTHSr,
+      AArch64::FCVTDSr,    AArch64::FCVTZSUWSr, AArch64::FCSELSrrr,
+      AArch64::FMULSrr,    AArch64::FDIVSrr,    AArch64::FMADDSrrr,
+      AArch64::FMSUBSrrr,  AArch64::FNMADDSrrr, AArch64::FNMSUBSrrr,
+      AArch64::FNMULSrr,   AArch64::FSQRTSr,    AArch64::FMULv1i32_indexed,
+      AArch64::FABSSr,     AArch64::UQADDv1i32, AArch64::SQSUBv1i32,
+      AArch64::SQADDv1i32, AArch64::FMOVSr,     AArch64::FNEGSr,
+      AArch64::BRK,        AArch64::UCVTFUWSri, AArch64::UCVTFUWDri,
+      AArch64::SCVTFUWSri, AArch64::SCVTFUWDri, AArch64::SCVTFv1i32,
   };
 
   const set<int> instrs_64 = {
@@ -764,6 +731,8 @@ class arm2llvm {
       AArch64::STRDpre,
       AArch64::FADDDrr,
       AArch64::FMULDrr,
+      AArch64::FDIVDrr,
+      AArch64::FSQRTDr,
       AArch64::FNMULDrr,
       AArch64::FMADDDrrr,
       AArch64::FMSUBDrrr,
@@ -1027,6 +996,7 @@ class arm2llvm {
       AArch64::SSUBWv4i16_v4i32,
       AArch64::SSUBWv2i32_v2i64,
       AArch64::FNEGv2f32,
+      AArch64::FNEGDr,
       AArch64::UCVTFUXSri,
       AArch64::UCVTFUXDri,
       AArch64::SCVTFUXSri,
@@ -1966,6 +1936,12 @@ class arm2llvm {
     auto *decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::fma, a->getType());
     return CallInst::Create(decl, {a, b, c}, nextName(), LLVMBB);
+  }
+
+  CallInst *createSQRT(Value *v) {
+    auto *decl =
+        Intrinsic::getDeclaration(LiftedModule, Intrinsic::sqrt, v->getType());
+    return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
   SelectInst *createSelect(Value *cond, Value *a, Value *b) {
@@ -7095,11 +7071,11 @@ public:
       break;
     }
 
-    case AArch64::FNEGSr: {
-      auto fVal =
-          readFromFPOperand(1, getRegSize(CurInst->getOperand(1).getReg()));
-      auto sizeTy = getIntTy(getInstSize(opcode));
-      auto res = createBitCast(createFNeg(fVal), sizeTy);
+    case AArch64::FNEGSr:
+    case AArch64::FNEGDr: {
+      auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
+      auto fVal = readFromFPOperand(1, operandSize);
+      auto res = createFNeg(fVal);
       updateOutputReg(res);
       break;
     }
@@ -7342,6 +7318,8 @@ public:
     case AArch64::FMULDrr:
     case AArch64::FNMULSrr:
     case AArch64::FNMULDrr:
+    case AArch64::FDIVSrr:
+    case AArch64::FDIVDrr:
     case AArch64::FADDSrr:
     case AArch64::FADDDrr:
     case AArch64::FSUBSrr:
@@ -7352,6 +7330,8 @@ public:
       } else if (opcode == AArch64::FMULSrr || opcode == AArch64::FMULDrr ||
                  opcode == AArch64::FNMULSrr || opcode == AArch64::FNMULDrr) {
         op = Instruction::FMul;
+      } else if (opcode == AArch64::FDIVSrr || opcode == AArch64::FDIVDrr) {
+        op = Instruction::FDiv;
       } else if (opcode == AArch64::FSUBSrr || opcode == AArch64::FSUBDrr) {
         op = Instruction::FSub;
       } else {
@@ -7446,6 +7426,15 @@ public:
       auto res = createFusedMultiplyAdd(a, b, c);
 
       updateOutputReg(res);
+    }
+
+    case AArch64::FSQRTSr:
+    case AArch64::FSQRTDr: {
+      auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
+      auto a = readFromFPOperand(1, operandSize);
+      auto res = createSQRT(a);
+      updateOutputReg(res);
+      break;
     }
 
     case AArch64::FCMPSri:
