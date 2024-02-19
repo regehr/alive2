@@ -10,6 +10,7 @@ Requirements:
 - very recent LLVM (tested with 19.0.0git or 18.1.0-rc2), built with RTTI+EH.
 - ANTLR4 parser framework, installed by your system package manager.
 - [aslp-cpp](https://github.com/UQ-PAC/aslp/tree/partial_eval/aslp-cpp), which should be fetched automatically.
+- aslp-server, running alongside the backend-tv tool, see below.
 
 If needed, these can be given explicitly as cmake arguments. Here is an example:
 ```bash
@@ -19,7 +20,7 @@ cmake -B build -DBUILD_TV=1 \
   -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp 
 ```
 
-You will also need the aslp-server which provides the Aslp semantics over HTTP.
+You will also need the *aslp-server* which provides the Aslp semantics over HTTP.
 The suggested way to get this is using the Nix package manager. Once Nix is installed, use
 ```bash
 nix --extra-experimental-features nix-command --extra-experimental-features flakes shell github:katrinafyi/pac-nix#aslp --command aslp-server 
