@@ -9715,8 +9715,7 @@ public:
       }
 
       auto shiftedVec = createMaskedLShr(a, b);
-      Value *res = createTrunc(
-          shiftedVec, getVecTy(eltSize, isUpper ? numElts / 2 : numElts));
+      Value *res = createTrunc(shiftedVec, getVecTy(eltSize, numElts));
       if (isUpper) {
         Value *dest = readFromVecOperand(1, 64, 2);
         Value *element = createBitCast(res, i64);
