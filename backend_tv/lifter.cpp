@@ -612,6 +612,9 @@ class arm2llvm {
       AArch64::USHLv1i64,
       AArch64::USHLv4i16,
       AArch64::USHLv2i32,
+      AArch64::SHLLv8i8,
+      AArch64::SHLLv4i16,
+      AArch64::SHLLv2i32,
       AArch64::SSHLv8i8,
       AArch64::SSHLv1i64,
       AArch64::SSHLv4i16,
@@ -1151,12 +1154,18 @@ class arm2llvm {
       AArch64::MLAv16i8,
       AArch64::MLAv8i16,
       AArch64::MLAv4i32,
-      AArch64::SHRNv2i32_shift,
-      AArch64::SHRNv4i16_shift,
       AArch64::SHRNv8i8_shift,
-      AArch64::SHRNv4i32_shift,
-      AArch64::SHRNv8i16_shift,
       AArch64::SHRNv16i8_shift,
+      AArch64::SHRNv4i16_shift,
+      AArch64::SHRNv8i16_shift,
+      AArch64::SHRNv2i32_shift,
+      AArch64::SHRNv4i32_shift,
+      AArch64::RSHRNv8i8_shift,
+      AArch64::RSHRNv16i8_shift,
+      AArch64::RSHRNv4i16_shift,
+      AArch64::RSHRNv8i16_shift,
+      AArch64::RSHRNv2i32_shift,
+      AArch64::RSHRNv4i32_shift,
       AArch64::MOVIv4s_msl,
       AArch64::TBLv16i8One,
       AArch64::TBLv16i8Two,
@@ -1591,6 +1600,9 @@ class arm2llvm {
       AArch64::USHLv8i16,
       AArch64::USHLv4i32,
       AArch64::USHLv2i64,
+      AArch64::SHLLv16i8,
+      AArch64::SHLLv8i16,
+      AArch64::SHLLv4i32,
       AArch64::SSHLv16i8,
       AArch64::SSHLv8i16,
       AArch64::SSHLv4i32,
@@ -8502,7 +8514,7 @@ public:
         break;
       }
 
-      bool storeInUpperHalf = false;
+      bool isUpper = false;
       switch (opcode) {
       // RADDHN2 variants
       case AArch64::RADDHNv2i64_v4i32:
@@ -8520,16 +8532,14 @@ public:
       case AArch64::SUBHNv2i64_v4i32:
       case AArch64::SUBHNv4i32_v8i16:
       case AArch64::SUBHNv8i16_v16i8:
-        storeInUpperHalf = true;
+        isUpper = true;
         break;
       default:
         break;
       }
 
-      auto a =
-          readFromVecOperand(storeInUpperHalf ? 2 : 1, 2 * eltSize, numElts);
-      auto b =
-          readFromVecOperand(storeInUpperHalf ? 3 : 2, 2 * eltSize, numElts);
+      auto a = readFromVecOperand(isUpper ? 2 : 1, 2 * eltSize, numElts);
+      auto b = readFromVecOperand(isUpper ? 3 : 2, 2 * eltSize, numElts);
 
       Value *res = createBinop(a, b, op);
 
@@ -8542,7 +8552,7 @@ public:
       Value *shifted =
           createRawLShr(res, getElemSplat(numElts, 2 * eltSize, eltSize));
       res = createTrunc(shifted, getVecTy(eltSize, numElts));
-      if (storeInUpperHalf) {
+      if (isUpper) {
         // Preserve the lower 64 bits so, read from destination register
         // and insert to the upper 64 bits
         Value *dest = readFromVecOperand(1, 64, 2);
@@ -9588,6 +9598,111 @@ public:
     eltSize = 16;                                                              \
   }
 
+    case AArch64::SHLLv8i8:
+    case AArch64::SHLLv16i8:
+    case AArch64::SHLLv4i16:
+    case AArch64::SHLLv8i16:
+    case AArch64::SHLLv2i32:
+    case AArch64::SHLLv4i32: {
+      unsigned eltSize = -1, numElts = -1;
+      GET_SIZES6(SHLL, )
+
+      bool isUpper = false;
+      switch (opcode) {
+      case AArch64::SHLLv16i8:
+      case AArch64::SHLLv8i16:
+      case AArch64::SHLLv4i32:
+        isUpper = true;
+        break;
+      }
+
+      auto a = readFromVecOperand(1, eltSize, numElts, isUpper);
+      Value *extended_a, *b;
+      if (isUpper) {
+        numElts /= 2;
+        extended_a = createZExt(a, getVecTy(eltSize * 2, numElts));
+        b = getElemSplat(numElts, 2 * eltSize, eltSize);
+      } else {
+        extended_a = createZExt(a, getVecTy(eltSize * 2, numElts));
+        b = getElemSplat(numElts, 2 * eltSize, eltSize);
+      }
+
+      auto res = createMaskedShl(extended_a, b);
+      updateOutputReg(res);
+      break;
+    }
+
+    case AArch64::SHRNv8i8_shift:
+    case AArch64::SHRNv16i8_shift:
+    case AArch64::SHRNv4i16_shift:
+    case AArch64::SHRNv8i16_shift:
+    case AArch64::SHRNv2i32_shift:
+    case AArch64::SHRNv4i32_shift:
+    case AArch64::RSHRNv8i8_shift:
+    case AArch64::RSHRNv16i8_shift:
+    case AArch64::RSHRNv4i16_shift:
+    case AArch64::RSHRNv8i16_shift:
+    case AArch64::RSHRNv2i32_shift:
+    case AArch64::RSHRNv4i32_shift: {
+      unsigned numElts = -1, eltSize = -1;
+      GET_SIZES6(SHRN, _shift)
+      GET_SIZES6(RSHRN, _shift)
+
+      bool isUpper = false;
+      switch (opcode) {
+      case AArch64::SHRNv16i8_shift:
+      case AArch64::SHRNv8i16_shift:
+      case AArch64::SHRNv4i32_shift:
+      case AArch64::RSHRNv16i8_shift:
+      case AArch64::RSHRNv8i16_shift:
+      case AArch64::RSHRNv4i32_shift:
+        isUpper = true;
+        break;
+      }
+
+      bool addRoundingConst = false;
+      switch (opcode) {
+      case AArch64::RSHRNv8i8_shift:
+      case AArch64::RSHRNv16i8_shift:
+      case AArch64::RSHRNv4i16_shift:
+      case AArch64::RSHRNv8i16_shift:
+      case AArch64::RSHRNv2i32_shift:
+      case AArch64::RSHRNv4i32_shift:
+        addRoundingConst = true;
+        break;
+      }
+
+      Value *a, *b, *roundingConst;
+      if (isUpper) {
+        numElts /= 2;
+        a = readFromVecOperand(2, eltSize * 2, numElts);
+        roundingConst =
+            getElemSplat(numElts, eltSize * 2, 1 << (getImm(3) - 1));
+        b = getElemSplat(numElts, eltSize * 2, getImm(3));
+      } else {
+        a = readFromVecOperand(1, eltSize * 2, numElts);
+        roundingConst =
+            getElemSplat(numElts, eltSize * 2, 1 << (getImm(2) - 1));
+        b = getElemSplat(numElts, eltSize * 2, getImm(2));
+      }
+
+      if (addRoundingConst) {
+        a = createAdd(a, roundingConst);
+      }
+
+      auto shiftedVec = createMaskedLShr(a, b);
+      Value *res = createTrunc(
+          shiftedVec, getVecTy(eltSize, isUpper ? numElts / 2 : numElts));
+      if (isUpper) {
+        Value *dest = readFromVecOperand(1, 64, 2);
+        Value *element = createBitCast(res, i64);
+        res = createInsertElement(dest, element, 1);
+      }
+
+      updateOutputReg(res);
+      break;
+    }
+
     case AArch64::MLSv8i8:
     case AArch64::MLSv2i32:
     case AArch64::MLSv4i16:
@@ -9619,54 +9734,6 @@ public:
       auto mul = createMul(b, c);
       auto sum = createAdd(mul, a);
       updateOutputReg(sum);
-      break;
-    }
-
-    case AArch64::SHRNv2i32_shift:
-    case AArch64::SHRNv4i16_shift:
-    case AArch64::SHRNv8i8_shift:
-    case AArch64::SHRNv4i32_shift:
-    case AArch64::SHRNv8i16_shift:
-    case AArch64::SHRNv16i8_shift: {
-      unsigned numElts, eltSize;
-      GET_SIZES6(SHRN, _shift)
-      bool topHalf;
-      switch (opcode) {
-      case AArch64::SHRNv2i32_shift:
-      case AArch64::SHRNv4i16_shift:
-      case AArch64::SHRNv8i8_shift:
-        topHalf = false;
-        break;
-      case AArch64::SHRNv4i32_shift:
-      case AArch64::SHRNv8i16_shift:
-      case AArch64::SHRNv16i8_shift:
-        topHalf = true;
-        break;
-      default:
-        assert(false);
-      }
-      Value *op, *res;
-      int exp;
-      if (topHalf) {
-        res = readFromVecOperand(1, eltSize, numElts);
-        op = readFromOperand(2);
-        exp = getImm(3);
-        numElts /= 2;
-      } else {
-        op = readFromOperand(1);
-        exp = getImm(2);
-        res = getZeroVec(numElts, eltSize);
-      }
-      auto vTy = getVecTy(2 * eltSize, numElts);
-      auto a = createBitCast(op, vTy);
-      for (unsigned i = 0; i < numElts; ++i) {
-        auto e = createExtractElement(a, i);
-        auto shift = createMaskedLShr(e, getIntConst(exp, 2 * eltSize));
-        auto trunc = createTrunc(shift, getIntTy(eltSize));
-        int pos = topHalf ? (i + numElts) : i;
-        res = createInsertElement(res, trunc, pos);
-      }
-      updateOutputReg(res);
       break;
     }
 
