@@ -622,9 +622,15 @@ class arm2llvm {
       AArch64::SUBv2i32,
       AArch64::SUBv4i16,
       AArch64::SUBv8i8,
+      AArch64::UABAv8i8,
+      AArch64::UABAv4i16,
+      AArch64::UABAv2i32,
       AArch64::UABDv8i8,
       AArch64::UABDv4i16,
       AArch64::UABDv2i32,
+      AArch64::SABAv8i8,
+      AArch64::SABAv4i16,
+      AArch64::SABAv2i32,
       AArch64::SABDv8i8,
       AArch64::SABDv4i16,
       AArch64::SABDv2i32,
@@ -796,9 +802,15 @@ class arm2llvm {
       AArch64::SADDLPv8i8_v4i16,
       AArch64::SADDLPv4i16_v2i32,
       AArch64::SADDLPv2i32_v1i64,
+      AArch64::UABALv8i8_v8i16,
+      AArch64::UABALv4i16_v4i32,
+      AArch64::UABALv2i32_v2i64,
       AArch64::UABDLv8i8_v8i16,
       AArch64::UABDLv4i16_v4i32,
       AArch64::UABDLv2i32_v2i64,
+      AArch64::SABALv8i8_v8i16,
+      AArch64::SABALv4i16_v4i32,
+      AArch64::SABALv2i32_v2i64,
       AArch64::SABDLv8i8_v8i16,
       AArch64::SABDLv4i16_v4i32,
       AArch64::SABDLv2i32_v2i64,
@@ -1534,9 +1546,15 @@ class arm2llvm {
       AArch64::SUBv2i64,
       AArch64::SUBv4i32,
       AArch64::SUBv16i8,
+      AArch64::UABAv16i8,
+      AArch64::UABAv8i16,
+      AArch64::UABAv4i32,
       AArch64::UABDv16i8,
       AArch64::UABDv8i16,
       AArch64::UABDv4i32,
+      AArch64::SABAv16i8,
+      AArch64::SABAv8i16,
+      AArch64::SABAv4i32,
       AArch64::SABDv16i8,
       AArch64::SABDv8i16,
       AArch64::SABDv4i32,
@@ -1637,9 +1655,15 @@ class arm2llvm {
       AArch64::SADDLPv8i16_v4i32,
       AArch64::SADDLPv4i32_v2i64,
       AArch64::SADDLPv16i8_v8i16,
+      AArch64::UABALv16i8_v8i16,
+      AArch64::UABALv8i16_v4i32,
+      AArch64::UABALv4i32_v2i64,
       AArch64::UABDLv16i8_v8i16,
       AArch64::UABDLv8i16_v4i32,
       AArch64::UABDLv4i32_v2i64,
+      AArch64::SABALv16i8_v8i16,
+      AArch64::SABALv8i16_v4i32,
+      AArch64::SABALv4i32_v2i64,
       AArch64::SABDLv16i8_v8i16,
       AArch64::SABDLv8i16_v4i32,
       AArch64::SABDLv4i32_v2i64,
@@ -9737,12 +9761,24 @@ public:
       break;
     }
 
+    case AArch64::UABALv8i8_v8i16:
+    case AArch64::UABALv16i8_v8i16:
+    case AArch64::UABALv4i16_v4i32:
+    case AArch64::UABALv8i16_v4i32:
+    case AArch64::UABALv2i32_v2i64:
+    case AArch64::UABALv4i32_v2i64:
     case AArch64::UABDLv8i8_v8i16:
     case AArch64::UABDLv16i8_v8i16:
     case AArch64::UABDLv4i16_v4i32:
     case AArch64::UABDLv8i16_v4i32:
     case AArch64::UABDLv2i32_v2i64:
     case AArch64::UABDLv4i32_v2i64:
+    case AArch64::SABALv8i8_v8i16:
+    case AArch64::SABALv16i8_v8i16:
+    case AArch64::SABALv4i16_v4i32:
+    case AArch64::SABALv8i16_v4i32:
+    case AArch64::SABALv2i32_v2i64:
+    case AArch64::SABALv4i32_v2i64:
     case AArch64::SABDLv8i8_v8i16:
     case AArch64::SABDLv16i8_v8i16:
     case AArch64::SABDLv4i16_v4i32:
@@ -9752,34 +9788,46 @@ public:
       unsigned numElts, eltSize;
       bool isUpper = false;
       switch (opcode) {
+      case AArch64::UABALv8i8_v8i16:
       case AArch64::UABDLv8i8_v8i16:
+      case AArch64::SABALv8i8_v8i16:
       case AArch64::SABDLv8i8_v8i16:
         numElts = 8;
         eltSize = 8;
         break;
+      case AArch64::UABALv16i8_v8i16:
       case AArch64::UABDLv16i8_v8i16:
+      case AArch64::SABALv16i8_v8i16:
       case AArch64::SABDLv16i8_v8i16:
         numElts = 16;
         eltSize = 8;
         isUpper = true;
         break;
+      case AArch64::UABALv4i16_v4i32:
       case AArch64::UABDLv4i16_v4i32:
+      case AArch64::SABALv4i16_v4i32:
       case AArch64::SABDLv4i16_v4i32:
         numElts = 4;
         eltSize = 16;
         break;
+      case AArch64::UABALv8i16_v4i32:
       case AArch64::UABDLv8i16_v4i32:
+      case AArch64::SABALv8i16_v4i32:
       case AArch64::SABDLv8i16_v4i32:
         numElts = 8;
         eltSize = 16;
         isUpper = true;
         break;
+      case AArch64::UABALv2i32_v2i64:
       case AArch64::UABDLv2i32_v2i64:
+      case AArch64::SABALv2i32_v2i64:
       case AArch64::SABDLv2i32_v2i64:
         numElts = 2;
         eltSize = 32;
         break;
+      case AArch64::UABALv4i32_v2i64:
       case AArch64::UABDLv4i32_v2i64:
+      case AArch64::SABALv4i32_v2i64:
       case AArch64::SABDLv4i32_v2i64:
         numElts = 4;
         eltSize = 32;
@@ -9791,6 +9839,12 @@ public:
 
       bool isSigned = false;
       switch (opcode) {
+      case AArch64::SABALv8i8_v8i16:
+      case AArch64::SABALv16i8_v8i16:
+      case AArch64::SABALv4i16_v4i32:
+      case AArch64::SABALv8i16_v4i32:
+      case AArch64::SABALv2i32_v2i64:
+      case AArch64::SABALv4i32_v2i64:
       case AArch64::SABDLv8i8_v8i16:
       case AArch64::SABDLv16i8_v8i16:
       case AArch64::SABDLv4i16_v4i32:
@@ -9801,8 +9855,28 @@ public:
         break;
       }
 
-      auto a = readFromVecOperand(1, eltSize, numElts, isUpper);
-      auto b = readFromVecOperand(2, eltSize, numElts, isUpper);
+      bool accumulate = false;
+      switch (opcode) {
+      case AArch64::UABALv8i8_v8i16:
+      case AArch64::UABALv16i8_v8i16:
+      case AArch64::UABALv4i16_v4i32:
+      case AArch64::UABALv8i16_v4i32:
+      case AArch64::UABALv2i32_v2i64:
+      case AArch64::UABALv4i32_v2i64:
+      case AArch64::SABALv8i8_v8i16:
+      case AArch64::SABALv16i8_v8i16:
+      case AArch64::SABALv4i16_v4i32:
+      case AArch64::SABALv8i16_v4i32:
+      case AArch64::SABALv2i32_v2i64:
+      case AArch64::SABALv4i32_v2i64:
+        accumulate = true;
+        break;
+      }
+
+      auto a =
+          readFromVecOperand(accumulate ? 2 : 1, eltSize, numElts, isUpper);
+      auto b =
+          readFromVecOperand(accumulate ? 3 : 2, eltSize, numElts, isUpper);
 
       Value *extended_a, *extended_b;
 
@@ -9819,9 +9893,15 @@ public:
       }
 
       auto difference = createSub(extended_a, extended_b);
-      auto abs = createAbs(difference);
+      Value *res = createAbs(difference);
 
-      updateOutputReg(abs);
+      if (accumulate) {
+        auto c =
+            readFromVecOperand(1, 2 * eltSize, isUpper ? numElts / 2 : numElts);
+        res = createAdd(c, res);
+      }
+
+      updateOutputReg(res);
       break;
     }
 
@@ -10027,12 +10107,24 @@ public:
       break;
     }
 
+    case AArch64::UABAv8i8:
+    case AArch64::UABAv16i8:
+    case AArch64::UABAv4i16:
+    case AArch64::UABAv8i16:
+    case AArch64::UABAv2i32:
+    case AArch64::UABAv4i32:
     case AArch64::UABDv8i8:
     case AArch64::UABDv16i8:
     case AArch64::UABDv4i16:
     case AArch64::UABDv8i16:
     case AArch64::UABDv2i32:
     case AArch64::UABDv4i32:
+    case AArch64::SABAv8i8:
+    case AArch64::SABAv16i8:
+    case AArch64::SABAv4i16:
+    case AArch64::SABAv8i16:
+    case AArch64::SABAv2i32:
+    case AArch64::SABAv4i32:
     case AArch64::SABDv8i8:
     case AArch64::SABDv16i8:
     case AArch64::SABDv4i16:
@@ -10040,11 +10132,19 @@ public:
     case AArch64::SABDv2i32:
     case AArch64::SABDv4i32: {
       unsigned numElts = -1, eltSize = -1;
-      GET_SIZES6(SABD, )
+      GET_SIZES6(UABA, )
       GET_SIZES6(UABD, )
+      GET_SIZES6(SABA, )
+      GET_SIZES6(SABD, )
 
       bool isSigned = false;
       switch (opcode) {
+      case AArch64::SABAv8i8:
+      case AArch64::SABAv16i8:
+      case AArch64::SABAv4i16:
+      case AArch64::SABAv8i16:
+      case AArch64::SABAv2i32:
+      case AArch64::SABAv4i32:
       case AArch64::SABDv8i8:
       case AArch64::SABDv16i8:
       case AArch64::SABDv4i16:
@@ -10056,8 +10156,26 @@ public:
       }
       }
 
-      auto a = readFromVecOperand(1, eltSize, numElts);
-      auto b = readFromVecOperand(2, eltSize, numElts);
+      bool accumulate = false;
+      switch (opcode) {
+      case AArch64::UABAv8i8:
+      case AArch64::UABAv16i8:
+      case AArch64::UABAv4i16:
+      case AArch64::UABAv8i16:
+      case AArch64::UABAv2i32:
+      case AArch64::UABAv4i32:
+      case AArch64::SABAv8i8:
+      case AArch64::SABAv16i8:
+      case AArch64::SABAv4i16:
+      case AArch64::SABAv8i16:
+      case AArch64::SABAv2i32:
+      case AArch64::SABAv4i32:
+        accumulate = true;
+        break;
+      }
+
+      auto a = readFromVecOperand(accumulate ? 2 : 1, eltSize, numElts);
+      auto b = readFromVecOperand(accumulate ? 3 : 2, eltSize, numElts);
 
       Value *extended_a;
       Value *extended_b;
@@ -10072,9 +10190,13 @@ public:
 
       auto difference = createSub(extended_a, extended_b);
       auto abs = createAbs(difference);
-      auto truncated = createTrunc(abs, getVecTy(eltSize, numElts));
+      Value *res = createTrunc(abs, getVecTy(eltSize, numElts));
+      if (accumulate) {
+        auto c = readFromVecOperand(1, eltSize, numElts);
+        res = createAdd(c, res);
+      }
 
-      updateOutputReg(truncated);
+      updateOutputReg(res);
       break;
     }
 
