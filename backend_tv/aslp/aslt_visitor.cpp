@@ -4,6 +4,8 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/MDBuilder.h"
 
 #include <format>
 #include <llvm/IR/Constants.h>
@@ -49,6 +51,13 @@ namespace aslp {
 std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instruction* before) {
   lexpr_t base = nullptr;
   expr_t offset = iface.getIntConst(0, x->getType()->getIntegerBitWidth());
+
+  // experimenting: this code does not convert via GEP and assumes dereferenceable.
+  // x = new llvm::IntToPtrInst(x, llvm::PointerType::get(context, 0), "", iface.get_bb());
+  // llvm::cast<llvm::IntToPtrInst>(x)->setMetadata("dereferenceable", 
+  //     llvm::MDNode::get(context, {(llvm::ConstantAsMetadata::get(iface.getIntConst(99, 64)))}));
+  // x->dump();
+  // return {x, offset};
 
   auto Add = llvm::BinaryOperator::BinaryOps::Add;
   if (auto add = llvm::dyn_cast<llvm::BinaryOperator>(x); add && add->getOpcode() == Add) {
@@ -213,6 +222,7 @@ std::any aslt_visitor::visitCall_stmt(SemanticsParser::Call_stmtContext *ctx) {
 
       auto size = llvm::cast<llvm::ConstantInt>(bytes)->getSExtValue();
       auto [ptr, offset] = ptr_expr(addr);
+      // iface.createStore(val, ptr);
       iface.storeToMemoryValOffset(ptr, offset, size, val);
       return s;
     }
