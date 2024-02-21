@@ -833,6 +833,9 @@ class arm2llvm {
       AArch64::SSHRv4i16_shift,
       AArch64::SSHRv8i8_shift,
       AArch64::SSHRv2i32_shift,
+      AArch64::SSRAv8i8_shift,
+      AArch64::SSRAv4i16_shift,
+      AArch64::SSRAv2i32_shift,
       AArch64::ADDPv8i8,
       AArch64::ADDPv4i16,
       AArch64::ADDPv2i32,
@@ -1282,6 +1285,11 @@ class arm2llvm {
       AArch64::SSHRv2i64_shift,
       AArch64::SSHRv8i16_shift,
       AArch64::SSHRv4i32_shift,
+      AArch64::SSRAv16i8_shift,
+      AArch64::SSRAv8i16_shift,
+      AArch64::SSRAv4i32_shift,
+      AArch64::SSRAd,
+      AArch64::SSRAv2i64_shift,
       AArch64::SHLv16i8_shift,
       AArch64::SHLv8i16_shift,
       AArch64::SHLv4i32_shift,
@@ -10225,6 +10233,64 @@ public:
   } else {                                                                     \
     assert(false);                                                             \
   }
+
+    case AArch64::SSRAv8i8_shift:
+    case AArch64::SSRAv16i8_shift:
+    case AArch64::SSRAv4i16_shift:
+    case AArch64::SSRAv8i16_shift:
+    case AArch64::SSRAv2i32_shift:
+    case AArch64::SSRAv4i32_shift:
+    case AArch64::SSRAd:
+    case AArch64::SSRAv2i64_shift: {
+      unsigned numElts = -1, eltSize = -1;
+      switch (opcode) {
+      case AArch64::SSRAv8i8_shift:
+        eltSize = 8;
+        numElts = 8;
+        break;
+      case AArch64::SSRAv16i8_shift:
+        eltSize = 8;
+        numElts = 16;
+        break;
+      case AArch64::SSRAv4i16_shift:
+        eltSize = 16;
+        numElts = 4;
+        break;
+      case AArch64::SSRAv8i16_shift:
+        eltSize = 16;
+        numElts = 8;
+        break;
+      case AArch64::SSRAv2i32_shift:
+        eltSize = 32;
+        numElts = 2;
+        break;
+      case AArch64::SSRAv4i32_shift:
+        eltSize = 32;
+        numElts = 4;
+        break;
+      case AArch64::SSRAd:
+        eltSize = 64;
+        numElts = 1;
+        break;
+      case AArch64::SSRAv2i64_shift:
+        eltSize = 64;
+        numElts = 2;
+        break;
+      default:
+        assert(false);
+      }
+
+      Value *a, *b, *c;
+      a = readFromVecOperand(2, eltSize, numElts);
+      b = getElemSplat(numElts, eltSize, getImm(3));
+      c = readFromVecOperand(1, eltSize, numElts);
+
+      auto shiftedVec = createMaskedAShr(a, b);
+      auto res = createAdd(shiftedVec, c);
+
+      updateOutputReg(res);
+      break;
+    }
 
     case AArch64::USRAv8i8_shift:
     case AArch64::USRAv4i16_shift:
