@@ -640,6 +640,7 @@ class arm2llvm {
       AArch64::SUBXri,
       AArch64::SUBXrs,
       AArch64::SUBXrx,
+      AArch64::SUBXrx64,
       AArch64::SUBSXrs,
       AArch64::SUBSXri,
       AArch64::SUBSXrx,
@@ -4135,6 +4136,7 @@ public:
     case AArch64::SUBXri:
     case AArch64::SUBXrs:
     case AArch64::SUBXrx:
+    case AArch64::SUBXrx64:
     case AArch64::SUBSXrs:
     case AArch64::SUBSXri:
     case AArch64::SUBSXrx: {
@@ -4150,6 +4152,7 @@ public:
       case AArch64::SUBWrx:
       case AArch64::SUBSWrx:
       case AArch64::SUBXrx:
+      case AArch64::SUBXrx64:
       case AArch64::SUBSXrx: {
         auto extendImm = getImm(3);
         auto extendType = (extendImm >> 3) & 0x7;
