@@ -28,7 +28,7 @@ message(STATUS "llvm-config: ${LLVM_CONFIG}")
 
 include(FetchContent)
 FetchContent_Declare(aslp-cpp
-  URL https://github.com/UQ-PAC/aslp/archive/refs/heads/clientserver.tar.gz
+  URL https://github.com/UQ-PAC/aslp/archive/refs/heads/partial_eval.tar.gz
   # GIT_REPOSITORY https://github.com/UQ-PAC/aslp.git
   # GIT_TAG        clientserver
   SOURCE_SUBDIR  aslp-cpp
