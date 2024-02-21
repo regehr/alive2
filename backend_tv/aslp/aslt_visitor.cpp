@@ -84,8 +84,8 @@ std::pair<llvm::Value*, llvm::Value*> aslt_visitor::unify_sizes(llvm::Value* x, 
   auto ty1 = x->getType(), ty2 = y->getType();
   auto wd1 = ty1->getIntegerBitWidth(), wd2 = ty2->getIntegerBitWidth();
 
-  auto sext = &lifter_interface::createSExt;
-  auto zext = &lifter_interface::createZExt;
+  auto sext = &lifter_interface_llvm::createSExt;
+  auto zext = &lifter_interface_llvm::createZExt;
   const decltype(sext) extend = sign ? sext : zext;
 
   if (wd1 < wd2) {
@@ -243,13 +243,13 @@ std::any aslt_visitor::visitConditionalStmt(SemanticsParser::ConditionalStmtCont
   auto tstmts = std::any_cast<stmt_t>(visitStmts(ctx->tcase));
   auto fstmts = std::any_cast<stmt_t>(visitStmts(ctx->fcase));
 
-  iface.createBranch(cond, tstmts.first, fstmts.first);
+  iface.createBranch(cond, tstmts, fstmts);
 
   auto join = new_stmt("conditional_join");
   link(tstmts, join);
   link(fstmts, join);
 
-  return static_cast<stmt_t>(std::make_pair(entry.first, join.second));
+  return stmt_t{entry.first, join.second};
 }
 
 std::any aslt_visitor::visitTypeBits(SemanticsParser::TypeBitsContext *ctx) {
@@ -685,7 +685,7 @@ std::any aslt_visitor::visitSlice_expr(SemanticsParser::Slice_exprContext *ctx) 
   log() << "visitSlice_expr" << '\n';
   auto exprs = map(ctx->expr(), &aslt_visitor::lit_int);
   assert(exprs.size() == 2 && "surely not");
-  return slice_t(exprs.at(0), exprs.at(1)); // implicit integer cast
+  return lifter_interface_llvm::slice_t(exprs.at(0), exprs.at(1)); // implicit integer cast
 }
 
 std::any aslt_visitor::visitUuid(SemanticsParser::UuidContext *ctx) {

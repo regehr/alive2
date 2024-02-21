@@ -17,21 +17,17 @@
 
 namespace aslp {
 
-using type_t = llvm::Type *;
-using expr_t = llvm::Value *;
-using lexpr_t = llvm::AllocaInst *;
-using stmt_t = std::pair<llvm::BasicBlock *, llvm::BasicBlock *>;
-struct slice_t {
-  unsigned lo;
-  unsigned wd;
-};
+using type_t = lifter_interface_llvm::type_t;
+using expr_t = lifter_interface_llvm::expr_t;
+using lexpr_t = lifter_interface_llvm::lexpr_t;
+using stmt_t = lifter_interface_llvm::stmt_t;
 
 class aslt_visitor : public aslt::SemanticsBaseVisitor { 
 public:
   using super = aslt::SemanticsBaseVisitor;
 
 private:
-  lifter_interface &iface;
+  lifter_interface_llvm &iface;
   bool debug;
   llvm::Function &func;  // needed to create basic blocks in here
   llvm::LLVMContext &context;
@@ -52,7 +48,7 @@ private:
   // }
 
 public:
-  aslt_visitor(lifter_interface &iface, bool debug) : 
+  aslt_visitor(lifter_interface_llvm &iface, bool debug) : 
     iface{iface},
     debug{debug},
     func{iface.ll_function()},
@@ -94,11 +90,11 @@ protected:
     return std::any_cast<lexpr_t>(x);
   }
 
-  virtual slice_t slice(aslt::SemanticsParser::Slice_exprContext* ctx) {
+  virtual lifter_interface_llvm::slice_t slice(aslt::SemanticsParser::Slice_exprContext* ctx) {
     depth++;
     auto x = visitSlice_expr(ctx);
     depth--;
-    return std::any_cast<slice_t>(x);
+    return std::any_cast<lifter_interface_llvm::slice_t>(x);
   }
 
   virtual int64_t lit_int(aslt::SemanticsParser::ExprContext* ctx) {
@@ -108,8 +104,8 @@ protected:
     return i->getSExtValue();
   }
 
-  virtual std::pair<expr_t, expr_t> ptr_expr(llvm::Value* x, llvm::Instruction* before = nullptr);
-  virtual std::pair<llvm::Value*, llvm::Value*> unify_sizes(llvm::Value* x, llvm::Value* y, bool sign = true);
+  virtual std::pair<expr_t, expr_t> ptr_expr(expr_t x, llvm::Instruction* before = nullptr);
+  virtual std::pair<expr_t, expr_t> unify_sizes(expr_t x, expr_t y, bool sign = true);
 
   virtual lexpr_t ref_expr(expr_t expr) {
     // XXX: HACK! since ExprVar are realised as LoadInst, this is incorrect in an array.
@@ -147,7 +143,7 @@ protected:
     s += '_';
     auto newbb = llvm::BasicBlock::Create(context, s, &func);
     iface.set_bb(newbb);
-    return std::make_pair(newbb, newbb);
+    return {newbb, newbb};
   }
 
   stmt_t link(stmt_t head, stmt_t tail) {
@@ -155,7 +151,7 @@ protected:
     auto bb = tail.second;
     assert(bb);
     iface.set_bb(bb);
-    return std::make_pair(head.first, tail.second);
+    return {head.first, tail.second};
   }
 
   virtual lexpr_t get_local(std::string s) const& {

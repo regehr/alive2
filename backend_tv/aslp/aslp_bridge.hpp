@@ -36,7 +36,7 @@ struct config_t {
 };
 
 class bridge {
-  lifter_interface& iface;
+  lifter_interface_llvm& iface;
   llvm::LLVMContext& context;
   const llvm::MCCodeEmitter& mce;
   const llvm::MCSubtargetInfo& sti;
@@ -44,7 +44,7 @@ class bridge {
   aslp_connection conn;
 
 public:
-  bridge(lifter_interface&, const llvm::MCCodeEmitter&, const llvm::MCSubtargetInfo&, const llvm::MCInstrAnalysis&);
+  bridge(lifter_interface_llvm&, const llvm::MCCodeEmitter&, const llvm::MCSubtargetInfo&, const llvm::MCInstrAnalysis&);
 
   std::variant<err_t, stmt_t> run(const llvm::MCInst& inst, const opcode_t& bytes);
   static const config_t& config();

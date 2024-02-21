@@ -199,7 +199,7 @@ public:
   }
 };
 
-class arm2llvm : public aslp::lifter_interface {
+class arm2llvm : public aslp::lifter_interface_llvm {
   Module *LiftedModule{nullptr};
   LLVMContext &Ctx = LiftedModule->getContext();
   MCFunction &MF;
@@ -1641,12 +1641,20 @@ class arm2llvm : public aslp::lifter_interface {
     return GetElementPtrInst::Create(ty, v, idxlist, NameStr, LLVMBB);
   }
 
-  void createBranch(Value *c, BasicBlock *t, BasicBlock *f) override {
+  void createBranch(Value *c, BasicBlock *t, BasicBlock *f) {
     BranchInst::Create(t, f, c, LLVMBB);
   }
 
-  void createBranch(BasicBlock *dst) override {
+  void createBranch(Value *c, stmt_t t, stmt_t f) override {
+   createBranch(c, t.first, f.first);
+  }
+
+  void createBranch(BasicBlock *dst) {
     BranchInst::Create(dst, LLVMBB);
+  }
+
+  void createBranch(stmt_t dst) override {
+    createBranch(dst.first);
   }
 
   LoadInst *createLoad(Type *ty, Value *ptr) override {
@@ -2373,7 +2381,7 @@ class arm2llvm : public aslp::lifter_interface {
     return name;
   }
 
-  llvm::Constant *lookupExprVar(const llvm::MCExpr& expr) override {
+  llvm::Value *lookupExprVar(const llvm::MCExpr& expr) override {
     return lookupGlobal(mapExprVar(&expr));
   }
 

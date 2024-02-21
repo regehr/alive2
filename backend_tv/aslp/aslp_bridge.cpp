@@ -53,7 +53,7 @@ aslp_connection make_conn() {
 
 namespace aslp {
 
-bridge::bridge(lifter_interface& iface, const llvm::MCCodeEmitter& mce, const llvm::MCSubtargetInfo& sti, const llvm::MCInstrAnalysis& ia) 
+bridge::bridge(lifter_interface_llvm& iface, const llvm::MCCodeEmitter& mce, const llvm::MCSubtargetInfo& sti, const llvm::MCInstrAnalysis& ia) 
   : iface{iface}, context{iface.ll_function().getContext()}, mce{mce}, sti{sti}, ia{ia}, conn{make_conn()} { }
 
 
@@ -141,7 +141,7 @@ std::variant<err_t, stmt_t> bridge::run_special(const llvm::MCInst& inst, const 
 
 
       auto expr = inst.getOperand(1).getExpr();
-      llvm::Value* global = iface.lookupExprVar(*expr);
+      expr_t global = iface.lookupExprVar(*expr);
 
       std::string sss;
       llvm::raw_string_ostream ss(sss);
