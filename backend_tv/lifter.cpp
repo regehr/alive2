@@ -593,6 +593,7 @@ class arm2llvm {
       AArch64::SQADDv1i32, AArch64::FMOVSr,     AArch64::FNEGSr,
       AArch64::BRK,        AArch64::UCVTFUWSri, AArch64::UCVTFUWDri,
       AArch64::SCVTFUWSri, AArch64::SCVTFUWDri, AArch64::SCVTFv1i32,
+      AArch64::FRINTMSr,   AArch64::FRINTPSr,
   };
 
   const set<int> instrs_64 = {
@@ -1039,6 +1040,8 @@ class arm2llvm {
       AArch64::SCVTFUXSri,
       AArch64::SCVTFUXDri,
       AArch64::SCVTFv1i64,
+      AArch64::FRINTMDr,
+      AArch64::FRINTPDr,
   };
 
   const set<int> instrs_128 = {
@@ -2041,6 +2044,20 @@ class arm2llvm {
     auto *decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::sqrt, v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
+  }
+
+  CallInst *createConstrainedFloor(Value *v, Metadata *md) {
+    auto *decl = Intrinsic::getDeclaration(
+        LiftedModule, Intrinsic::experimental_constrained_floor, v->getType());
+    return CallInst::Create(decl, {v, MetadataAsValue::get(Ctx, md)},
+                            nextName(), LLVMBB);
+  }
+
+  CallInst *createConstrainedCeil(Value *v, Metadata *md) {
+    auto *decl = Intrinsic::getDeclaration(
+        LiftedModule, Intrinsic::experimental_constrained_ceil, v->getType());
+    return CallInst::Create(decl, {v, MetadataAsValue::get(Ctx, md)},
+                            nextName(), LLVMBB);
   }
 
   SelectInst *createSelect(Value *cond, Value *a, Value *b) {
@@ -7289,6 +7306,26 @@ public:
       auto fp_val = readFromFPOperand(1, op1Size);
       auto converted = op0Size < op1Size ? createFPTrunc(fp_val, fTy)
                                          : createFPExt(fp_val, fTy);
+
+      updateOutputReg(converted);
+      break;
+    }
+
+    case AArch64::FRINTMSr:
+    case AArch64::FRINTMDr:
+    case AArch64::FRINTPSr:
+    case AArch64::FRINTPDr: {
+      auto &op1 = CurInst->getOperand(1);
+      assert(op1.isReg());
+
+      auto md = MDString::get(Ctx, "fpexcept.strict");
+      Value *converted;
+      if (opcode == AArch64::FRINTMSr || opcode == AArch64::FRINTMDr)
+        converted = createConstrainedFloor(
+            readFromFPOperand(1, getRegSize(op1.getReg())), md);
+      else if (opcode == AArch64::FRINTPSr || opcode == AArch64::FRINTPDr)
+        converted = createConstrainedCeil(
+            readFromFPOperand(1, getRegSize(op1.getReg())), md);
 
       updateOutputReg(converted);
       break;
