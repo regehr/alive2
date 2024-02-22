@@ -1467,6 +1467,14 @@ class arm2llvm {
       AArch64::LD1Rv4s,
       AArch64::LD1Rv1d,
       AArch64::LD1Rv2d,
+      AArch64::LD1Rv8b_POST,
+      AArch64::LD1Rv16b_POST,
+      AArch64::LD1Rv4h_POST,
+      AArch64::LD1Rv8h_POST,
+      AArch64::LD1Rv2s_POST,
+      AArch64::LD1Rv4s_POST,
+      AArch64::LD1Rv1d_POST,
+      AArch64::LD1Rv2d_POST,
       AArch64::LD1Onev8b,
       AArch64::LD1Onev16b,
       AArch64::LD1Onev4h,
@@ -2109,6 +2117,10 @@ class arm2llvm {
   }
 
   ShuffleVectorInst *createShuffleVector(Value *v, ArrayRef<int> mask) {
+    return new ShuffleVectorInst(v, mask, nextName(), LLVMBB);
+  }
+
+  ShuffleVectorInst *createShuffleVector(Value *v, Value *mask) {
     return new ShuffleVectorInst(v, mask, nextName(), LLVMBB);
   }
 
@@ -5605,56 +5617,55 @@ public:
     case AArch64::LD1Rv8h:
     case AArch64::LD1Rv2s:
     case AArch64::LD1Rv4s:
-    case AArch64::LD1Rv2d: {
-      auto &op0 = CurInst->getOperand(0);
-      auto &op1 = CurInst->getOperand(1);
-
-      assert(op0.isReg() && op1.isReg());
-
-      // Read source
-      auto dst = readFromReg(op0.getReg());
-      if (getRegSize(op0.getReg()) == 64) {
-        dst = createTrunc(dst, i64);
-      }
-      auto baseReg = op1.getReg();
-      assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
-             (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
-             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
-
-      auto base = readPtrFromReg(baseReg);
-
+    case AArch64::LD1Rv1d:
+    case AArch64::LD1Rv2d:
+    case AArch64::LD1Rv8b_POST:
+    case AArch64::LD1Rv16b_POST:
+    case AArch64::LD1Rv4h_POST:
+    case AArch64::LD1Rv8h_POST:
+    case AArch64::LD1Rv2s_POST:
+    case AArch64::LD1Rv4s_POST:
+    case AArch64::LD1Rv1d_POST:
+    case AArch64::LD1Rv2d_POST: {
       unsigned numElts, eltSize;
-
       switch (opcode) {
       case AArch64::LD1Rv8b:
+      case AArch64::LD1Rv8b_POST:
         numElts = 8;
         eltSize = 8;
         break;
       case AArch64::LD1Rv16b:
+      case AArch64::LD1Rv16b_POST:
         numElts = 16;
         eltSize = 8;
         break;
       case AArch64::LD1Rv4h:
+      case AArch64::LD1Rv4h_POST:
         numElts = 4;
         eltSize = 16;
         break;
       case AArch64::LD1Rv8h:
+      case AArch64::LD1Rv8h_POST:
         numElts = 8;
         eltSize = 16;
         break;
       case AArch64::LD1Rv2s:
+      case AArch64::LD1Rv2s_POST:
         numElts = 2;
         eltSize = 32;
         break;
       case AArch64::LD1Rv4s:
+      case AArch64::LD1Rv4s_POST:
         numElts = 4;
         eltSize = 32;
         break;
       case AArch64::LD1Rv1d:
+      case AArch64::LD1Rv1d_POST:
         numElts = 1;
         eltSize = 64;
         break;
       case AArch64::LD1Rv2d:
+      case AArch64::LD1Rv2d_POST:
         numElts = 2;
         eltSize = 64;
         break;
@@ -5664,19 +5675,52 @@ public:
         break;
       }
 
-      auto loaded = makeLoadWithOffset(base, 0, eltSize / 8);
-      auto casted = createBitCast(dst, getVecTy(eltSize, numElts));
+      bool isPost = false;
+      switch (opcode) {
+      case AArch64::LD1Rv8b_POST:
+      case AArch64::LD1Rv16b_POST:
+      case AArch64::LD1Rv4h_POST:
+      case AArch64::LD1Rv8h_POST:
+      case AArch64::LD1Rv2s_POST:
+      case AArch64::LD1Rv4s_POST:
+      case AArch64::LD1Rv1d_POST:
+      case AArch64::LD1Rv2d_POST:
+        isPost = true;
+        break;
+      default:
+        isPost = false;
+        break;
+      }
+      auto dst = readFromVecOperand(isPost ? 1 : 0, eltSize, numElts);
+      auto baseReg = CurInst->getOperand(isPost ? 2 : 1).getReg();
+      assert((baseReg >= AArch64::X0 && baseReg <= AArch64::X28) ||
+             (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
+             (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
 
-      // FIXME: Alternative to creating many insertelement instructions, insert
-      //  the element in the first lane and create a shufflevector to copy it to
-      //  the rest of the lanes doing the same task in 2 instructions. The
-      //  shuffle mask will just be <numElts x i32> zeroinitializer
-      Value *updated_dst = casted;
-      for (unsigned i = 0; i < numElts; i++) {
-        updated_dst = createInsertElement(updated_dst, loaded, i);
+      Value *offset = nullptr;
+      if (isPost) {
+        if (CurInst->getOperand(3).isReg() &&
+            CurInst->getOperand(3).getReg() != AArch64::XZR) {
+          offset = readFromReg(CurInst->getOperand(3).getReg());
+        } else {
+          offset = getIntConst((eltSize / 8), 64);
+        }
       }
 
-      updateOutputReg(updated_dst);
+      auto base = readPtrFromReg(baseReg);
+      auto baseAddr = createPtrToInt(base, i64);
+      auto loaded = makeLoadWithOffset(base, 0, eltSize / 8);
+      auto single_inserted = createInsertElement(dst, loaded, 0);
+      auto shuffled =
+          createShuffleVector(single_inserted, getZeroVec(numElts, 32));
+
+      if (isPost) {
+        updateReg(shuffled, CurInst->getOperand(1).getReg());
+        auto added = createAdd(baseAddr, offset);
+        updateOutputReg(added);
+      } else {
+        updateOutputReg(shuffled);
+      }
       break;
     }
 
