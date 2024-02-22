@@ -731,6 +731,7 @@ class arm2llvm {
       AArch64::SCVTFUWSri,
       AArch64::SCVTFUWDri,
       AArch64::SCVTFv1i32,
+      AArch64::FRINTASr,
       AArch64::FRINTMSr,
       AArch64::FRINTPSr,
   };
@@ -845,6 +846,8 @@ class arm2llvm {
       AArch64::LDPXpost,
       AArch64::LDPDpost,
       AArch64::LDPSWi,
+      AArch64::LDPSWpre,
+      AArch64::LDPSWpost,
       AArch64::LDPXi,
       AArch64::LDPDi,
       AArch64::LDRDui,
@@ -1181,6 +1184,7 @@ class arm2llvm {
       AArch64::SCVTFUXSri,
       AArch64::SCVTFUXDri,
       AArch64::SCVTFv1i64,
+      AArch64::FRINTADr,
       AArch64::FRINTMDr,
       AArch64::FRINTPDr,
   };
@@ -2197,6 +2201,13 @@ class arm2llvm {
     auto *decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::sqrt, v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
+  }
+
+  CallInst *createConstrainedRound(Value *v, Metadata *md) {
+    auto *decl = Intrinsic::getDeclaration(
+        LiftedModule, Intrinsic::experimental_constrained_round, v->getType());
+    return CallInst::Create(decl, {v, MetadataAsValue::get(Ctx, md)},
+                            nextName(), LLVMBB);
   }
 
   CallInst *createConstrainedFloor(Value *v, Metadata *md) {
@@ -5740,6 +5751,8 @@ public:
     case AArch64::LD1Onev4s_POST:
     case AArch64::LD1Onev1d_POST:
     case AArch64::LD1Onev2d_POST:
+    case AArch64::LD1Twov2d:
+    case AArch64::LD1Fourv2d:
     case AArch64::LD2Twov8b:
     case AArch64::LD2Twov16b:
     case AArch64::LD2Twov4h:
@@ -6509,6 +6522,8 @@ public:
     case AArch64::ST1Onev4s_POST:
     case AArch64::ST1Onev1d_POST:
     case AArch64::ST1Onev2d_POST:
+    case AArch64::ST1Twov2d:
+    case AArch64::ST1Fourv2d:
     case AArch64::ST2Twov8b:
     case AArch64::ST2Twov16b:
     case AArch64::ST2Twov4h:
@@ -7046,11 +7061,13 @@ public:
       break;
     }
 
+    case AArch64::LDPSWpre:
     case AArch64::LDPWpre:
     case AArch64::LDPSpre:
     case AArch64::LDPXpre:
     case AArch64::LDPDpre:
     case AArch64::LDPQpre:
+    case AArch64::LDPSWpost:
     case AArch64::LDPWpost:
     case AArch64::LDPSpost:
     case AArch64::LDPXpost:
@@ -7058,8 +7075,10 @@ public:
     case AArch64::LDPQpost: {
       unsigned scale;
       switch (opcode) {
+      case AArch64::LDPSWpre:
       case AArch64::LDPWpre:
       case AArch64::LDPSpre:
+      case AArch64::LDPSWpost:
       case AArch64::LDPWpost:
       case AArch64::LDPSpost: {
         scale = 2;
@@ -7081,6 +7100,17 @@ public:
         *out << "\nError Unknown opcode\n";
         visitError();
       }
+      }
+
+      bool sExt = false;
+      switch(opcode) {
+        case AArch64::LDPSWpre:
+        case AArch64::LDPSWpost:
+          sExt = true;
+          break;
+        default:
+          sExt = false;
+          break;
       }
       unsigned size = pow(2, scale);
       auto &op0 = CurInst->getOperand(0);
@@ -7122,8 +7152,8 @@ public:
         loaded1 = makeLoadWithOffset(base, zeroVal, size);
         loaded2 = makeLoadWithOffset(base, getIntConst(size, 64), size);
       }
-      updateReg(loaded1, destReg1);
-      updateReg(loaded2, destReg2);
+      updateReg(loaded1, destReg1, sExt);
+      updateReg(loaded2, destReg2, sExt);
 
       auto added = createAdd(baseAddr, offsetVal1);
       updateOutputReg(added);
@@ -7496,6 +7526,8 @@ public:
       break;
     }
 
+    case AArch64::FRINTASr:
+    case AArch64::FRINTADr:
     case AArch64::FRINTMSr:
     case AArch64::FRINTMDr:
     case AArch64::FRINTPSr:
@@ -7505,15 +7537,27 @@ public:
 
       auto md = MDString::get(Ctx, "fpexcept.strict");
       Value *converted;
-      if (opcode == AArch64::FRINTMSr || opcode == AArch64::FRINTMDr) {
-        converted = createConstrainedFloor(
-            readFromFPOperand(1, getRegSize(op1.getReg())), md);
-      } else if (opcode == AArch64::FRINTPSr || opcode == AArch64::FRINTPDr) {
-        converted = createConstrainedCeil(
-            readFromFPOperand(1, getRegSize(op1.getReg())), md);
-      } else {
-        assert(false);
+      switch (opcode) {
+        case AArch64::FRINTASr:
+        case AArch64::FRINTADr: {
+                converted = createConstrainedRound(
+                readFromFPOperand(1, getRegSize(op1.getReg())), md);
+                break;
+                }
+        case AArch64::FRINTMSr:
+        case AArch64::FRINTMDr: {
+          converted = createConstrainedFloor(
+              readFromFPOperand(1, getRegSize(op1.getReg())), md);
+          break;
+        }
+        case AArch64::FRINTPSr:
+        case AArch64::FRINTPDr: {
+          converted = createConstrainedCeil(
+              readFromFPOperand(1, getRegSize(op1.getReg())), md);
+          break;
+        }
       }
+
       updateOutputReg(converted);
       break;
     }
