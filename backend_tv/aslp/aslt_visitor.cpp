@@ -24,7 +24,7 @@ namespace {
    if (cond)
      return;
 
-   std::string msg{"Assertion failure! "};
+   std::string msg{"Aslp assertion failure! "};
    msg += str;
    if (val) {
      std::string s;
@@ -44,6 +44,9 @@ namespace {
     assert(false && "unreachable");
   }
 }
+
+#define require_(x) require(x, #x)
+#undef assert
 
 namespace aslp {
 
@@ -74,7 +77,7 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instructi
     offset = iface.getIntConst(0, wd);
   }
 
-  assert(base && offset && "unable to coerce to pointer");
+  require(base && offset, "unable to coerce to pointer", x);
   auto load = iface.createLoad(base->getAllocatedType(), base);
   auto ptr = new llvm::IntToPtrInst(load, llvm::PointerType::get(context, 0), "", iface.get_bb());
   return {ptr, offset};
@@ -113,7 +116,7 @@ std::any aslt_visitor::visitStmts(SemanticsParser::StmtsContext *ctx) {
   }
 
   auto ctxs = ctx->stmt();
-  assert(!ctxs.empty() && "statement list must not be empty!");
+  require(!ctxs.empty(), "statement list must not be empty!");
 
   stmt_counts[depth+1] = 0;
   stmt_t s = stmt(ctxs.at(0));
@@ -228,7 +231,7 @@ std::any aslt_visitor::visitCall_stmt(SemanticsParser::Call_stmtContext *ctx) {
     }
   }
 
-  assert(false && "call stmt unsup");
+  die("call stmt unsup: " + name);
 }
 
 std::any aslt_visitor::visitConditionalStmt(SemanticsParser::ConditionalStmtContext *ctx) {
@@ -237,7 +240,7 @@ std::any aslt_visitor::visitConditionalStmt(SemanticsParser::ConditionalStmtCont
   auto entry = new_stmt("conditional");
   
   auto cond = expr(ctx->expr());
-  assert(cond->getType()->getIntegerBitWidth() == 1 && "condition must have type i1");
+  require(cond->getType()->getIntegerBitWidth() == 1, "condition must have type i1", cond);
 
   // NOTE! visitStmts will restore the bb after it concludes, i.e. reset to 'entry'
   auto tstmts = std::any_cast<stmt_t>(visitStmts(ctx->tcase));
@@ -267,7 +270,7 @@ std::any aslt_visitor::visitTypeConstructor(aslt::SemanticsParser::TypeConstruct
   auto name = context->name->getText();
   if (name == "FPRounding")
     return (type_t)iface.getIntTy(2);
-  assert(false && "type constructor");
+  die("type constructor unsup: " + name);
 }
 
 std::any aslt_visitor::visitTypeBoolean(SemanticsParser::TypeBooleanContext *ctx) {
@@ -293,7 +296,7 @@ std::any aslt_visitor::visitLExprVar(SemanticsParser::LExprVarContext *ctx) {
     // XXX following classic lifter's ignoring of FPSR
     return iface.createAlloca(iface.getIntTy(64), nullptr, "FPSR_void");
   }
-  assert(false && "lexprvar");
+  die("lexprvar unsup: " + name);
 }
 
 std::any aslt_visitor::visitLExprField(SemanticsParser::LExprFieldContext *ctx) {
@@ -307,16 +310,16 @@ std::any aslt_visitor::visitLExprField(SemanticsParser::LExprFieldContext *ctx) 
     if (field == "Z") return iface.get_reg(reg_t::PSTATE, (int)pstate_t::Z);
     if (field == "C") return iface.get_reg(reg_t::PSTATE, (int)pstate_t::C);
     if (field == "V") return iface.get_reg(reg_t::PSTATE, (int)pstate_t::V);
-    assert(false && "pstate unexpect");
+    die("pstate unexpect");
   }
-  assert(false && "lexpr field unsup");
+  die("lexpr field unsup: " + field, base);
 }
 
 std::any aslt_visitor::visitLExprArray(SemanticsParser::LExprArrayContext *ctx) {
   log() << "visitLExprArray" << '\n';
   auto lhs = lexpr(ctx->lexpr());
   auto index = map(ctx->expr(), &aslt_visitor::lit_int);
-  assert(index.size() == 1);
+  require(index.size() == 1, "array index sizes != 1");
 
   if (lhs == xreg_sentinel) {
     return iface.get_reg(reg_t::X, index.at(0));
@@ -324,7 +327,7 @@ std::any aslt_visitor::visitLExprArray(SemanticsParser::LExprArrayContext *ctx) 
     return iface.get_reg(reg_t::V, index.at(0));
   }
 
-  assert(false && "lexpr array unsup");
+  die("lexpr array unsup");
 }
 
 std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
@@ -351,7 +354,7 @@ std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
     // XXX do not support FPCR-dependent behaviour
     return static_cast<expr_t>(llvm::UndefValue::get(iface.getIntTy(32)));
   else 
-    assert(false && "unsupported or undefined variable!");
+    die("unsupported or undefined variable: " + name);
 
   auto ptr = llvm::cast<llvm::AllocaInst>(var);
   return static_cast<expr_t>(iface.createLoad(ptr->getAllocatedType(), ptr));
@@ -371,7 +374,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
   if (args.size() == 1) {
     auto x = args[0];
     if (name == "cvt_bool_bv.0") {
-      assert(x->getType()->getIntegerBitWidth() == 1 && "size mismatch in cvt bv bool");
+      require(x->getType()->getIntegerBitWidth() == 1, "size mismatch in cvt bv bool");
       return x;
 
     } else if (name == "not_bits.0" || name == "not_bool.0") {
@@ -382,12 +385,12 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
     auto x = args[0], y = args[1];
     if (name == "SignExtend.0" && targs.size() == 2) {
       type_t finalty = llvm::Type::getIntNTy(context, targs[1]);
-      assert(finalty != x->getType()); // it is undef to sext to the same size
+      require_(finalty != x->getType()); // it is undef to sext to the same size
       return static_cast<expr_t>(iface.createSExt(x, finalty));
 
     } else if (name == "ZeroExtend.0" && targs.size() == 2) {
       type_t finalty = llvm::Type::getIntNTy(context, targs[1]);
-      assert(finalty != x->getType());
+      require_(finalty != x->getType());
       return static_cast<expr_t>(iface.createZExt(x, finalty));
 
     } else if (name == "eq_bits.0") {
@@ -461,8 +464,8 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 
       auto upperwd = upper->getType()->getIntegerBitWidth();
       auto lowerwd = lower->getType()->getIntegerBitWidth();
-      assert(upperwd > 0);
-      assert (lowerwd > 0);
+      require_(upperwd > 0);
+      require_(lowerwd > 0);
 
       auto finalty = iface.getIntTy(upperwd + lowerwd);
 
@@ -610,7 +613,7 @@ std::any aslt_visitor::visitExprField(SemanticsParser::ExprFieldContext *ctx) {
   auto base = expr_var(ctx->expr());
   auto field = ctx->ID()->getText();
   if (base == pstate_sentinel) {
-    assert(field.length() == 1 && "pstate field name length unexpect");
+    require(field.length() == 1, "pstate field name length unexpect");
     auto c = field.at(0);
     auto reg = iface.get_reg(reg_t::PSTATE, (unsigned)pstate_map.at(c));
     auto load = iface.createLoad(reg->getAllocatedType(), reg);
@@ -625,7 +628,7 @@ std::any aslt_visitor::visitExprArray(SemanticsParser::ExprArrayContext *ctx) {
   log() << "visitExprArray" << '\n';
   auto base = expr_var(ctx->base);
 
-  assert(ctx->indices.size() == 1 && "array access has multiple indices");
+  require(ctx->indices.size() == 1, "array access has multiple indices");
   auto index = lit_int(ctx->indices.at(0));
 
   lexpr_t reg = nullptr;
@@ -634,7 +637,7 @@ std::any aslt_visitor::visitExprArray(SemanticsParser::ExprArrayContext *ctx) {
   } else if (base == vreg_sentinel) {
     reg = iface.get_reg(reg_t::V, index);
   }
-  assert(reg && "expr base array unsup");
+  require(reg, "expr base array unsup");
 
   auto load = iface.createLoad(reg->getAllocatedType(), reg);
   return static_cast<expr_t>(load);
@@ -683,7 +686,7 @@ std::any aslt_visitor::visitTargs(SemanticsParser::TargsContext *ctx) {
 std::any aslt_visitor::visitSlice_expr(SemanticsParser::Slice_exprContext *ctx) {
   log() << "visitSlice_expr" << '\n';
   auto exprs = map(ctx->expr(), &aslt_visitor::lit_int);
-  assert(exprs.size() == 2 && "surely not");
+  require(exprs.size() == 2, "surely not...!");
   return lifter_interface_llvm::slice_t(exprs.at(0), exprs.at(1)); // implicit integer cast
 }
 
