@@ -97,12 +97,17 @@ protected:
     return std::any_cast<lifter_interface_llvm::slice_t>(x);
   }
 
+  virtual int64_t integer(aslt::SemanticsParser::IntegerContext* ctx) {
+    return std::any_cast<int64_t>(visitInteger(ctx));
+  }
+
   virtual int64_t lit_int(aslt::SemanticsParser::ExprContext* ctx) {
     assert(dynamic_cast<aslt::SemanticsParser::Expr_Context*>(ctx->expr_()) && "non-literal found where a ExprLitInt was expected");
     auto x = expr(ctx);
     auto i = llvm::cast<llvm::ConstantInt>(x);
     return i->getSExtValue();
   }
+
 
   virtual std::pair<expr_t, expr_t> ptr_expr(expr_t x, llvm::Instruction* before = nullptr);
   virtual std::pair<expr_t, expr_t> unify_sizes(expr_t x, expr_t y, bool sign = true);
@@ -204,13 +209,14 @@ public:
   virtual std::any visitExprField(aslt::SemanticsParser::ExprFieldContext *ctx) override;
   virtual std::any visitExprArray(aslt::SemanticsParser::ExprArrayContext *ctx) override;
   virtual std::any visitExprLitInt(aslt::SemanticsParser::ExprLitIntContext *ctx) override;
-  virtual std::any visitExprLitHex(aslt::SemanticsParser::ExprLitHexContext *ctx) override;
+  // virtual std::any visitExprLitHex(aslt::SemanticsParser::ExprLitHexContext *ctx) override;
   virtual std::any visitExprLitBits(aslt::SemanticsParser::ExprLitBitsContext *ctx) override;
-  virtual std::any visitExprLitMask(aslt::SemanticsParser::ExprLitMaskContext *ctx) override;
-  virtual std::any visitExprLitString(aslt::SemanticsParser::ExprLitStringContext *ctx) override;
+  // virtual std::any visitExprLitMask(aslt::SemanticsParser::ExprLitMaskContext *ctx) override;
+  // virtual std::any visitExprLitString(aslt::SemanticsParser::ExprLitStringContext *ctx) override;
   virtual std::any visitTargs(aslt::SemanticsParser::TargsContext *ctx) override;
   virtual std::any visitSlice_expr(aslt::SemanticsParser::Slice_exprContext *ctx) override;
-  virtual std::any visitUuid(aslt::SemanticsParser::UuidContext *ctx) override;
+  // virtual std::any visitUuid(aslt::SemanticsParser::UuidContext *ctx) override;
+  virtual std::any visitInteger(aslt::SemanticsParser::IntegerContext *ctx) override;
 
   virtual std::any defaultResult() override {
     return std::any{};
