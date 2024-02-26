@@ -3923,7 +3923,7 @@ StateValue Store::toSMT(State &s) const {
   // skip large initializers. FIXME: this should be moved to memory so it can
   // fold subsequent trivial loads
   if (s.isInitializationPhase() &&
-      Memory::getStoreByteSize(val->getType()) / (bits_byte / 8) > 128) {
+      Memory::getStoreByteSize(val->getType()) / (bits_byte / 8) > 256) {
     s.doesApproximation("Large constant initializer removed");
     return {};
   }

@@ -180,8 +180,12 @@ void checkSupport(Function *srcFn) {
     exit(-1);
   }
 
-  for (auto &v : srcFn->args()) {
-    auto *ty = v.getType();
+  for (auto &arg : srcFn->args()) {
+    if (arg.hasByValAttr()) {
+      *out << "\nERROR: we don't support the byval parameter attribute yet\n\n";
+      exit(-1);
+    }
+    auto *ty = arg.getType();
     if (ty->isStructTy()) {
       *out << "\nERROR: we don't support structures in arguments yet\n\n";
       exit(-1);
@@ -240,7 +244,7 @@ void checkSupport(Function *srcFn) {
     }
   }
 
-  *out << "source function has " << llvmInstCount << " LLVM instructions\n";
+  *out << llvmInstCount << " LLVM instructions in source function\n";
 }
 
 /*

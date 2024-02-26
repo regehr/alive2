@@ -1,7 +1,3 @@
-; FIXME: this should work some day..
-
-; ERROR: Couldn't prove the correctness of the transformation
-
 @str = constant [129 x i8] c"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", align 16
 
 define i8 @src(i32 %idx) {
