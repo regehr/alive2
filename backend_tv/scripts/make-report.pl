@@ -120,6 +120,9 @@ sub classify($) {
         if ($data =~ /^(UNREACHABLE.*)$/) {
             return "[f] $1";
         }
+        if ($data =~ /Aslp assertion failure! (.*)$/) {
+            return "[f] Aslp: $1";
+        }
     }
     return "[f] Unknown failure";
 }

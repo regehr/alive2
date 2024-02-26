@@ -23,15 +23,15 @@ die unless $ret;
 my $NPROCS = Sys::CPU::cpu_count();
 print "using $NPROCS cores\n";
 
-my $LLVMDIS = $ENV{"HOME"}."/llvm-project/for-alive/bin/llvm-dis";
-my $ARMTV = $ENV{"HOME"}."/alive2-regehr/build/backend-tv";
+my $LLVMDIS = $ENV{"HOME"}."/progs/llvm-regehr/llvm/build/bin/llvm-dis";
+my $ARMTV = $ENV{"HOME"}."/progs/alive2-regehr/build/backend-tv";
 
 my @funcs = ();
 my $skipped = 0;
 
 sub scan_file($) {
     (my $file) = @_;
-    print ".";
+#     print ".";
     my $num = 0;
     open my $INF, "$LLVMDIS $file -o - |" or die;
     while (my $line = <$INF>) {
@@ -88,10 +88,15 @@ sub go($) {
 my $dir = $ARGV[0];
 die "please specify directory of LLVM bitcode" unless (-d $dir);
 my @files = glob "$dir/*.bc";
+print "found ", scalar @files, " .bc files\n";
 
-foreach my $file (@files) {
+splice @files, 1000;
+
+while (my ($i, $file) = each @files) {
+    print "\r$i" if ($i & ((1 << 8) - 1)) == 0;
     scan_file($file);
 }
+print "\n";
 
 shuffle(\@funcs);
 
@@ -110,10 +115,11 @@ foreach my $ref (@funcs) {
     $count++;
     my $pctstr = sprintf("%.1f", $count * 100.0 / $total);
     if ($pctstr ne $opctstr) {
-        print("$pctstr %\n");
+        print("\r$pctstr %");
         $opctstr = $pctstr;
     }
 }
+print "\n";
 
 wait_for_one() while ($num_running > 0);
 print "normal termination.\n";
