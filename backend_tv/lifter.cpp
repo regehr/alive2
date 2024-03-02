@@ -929,6 +929,14 @@ class arm2llvm {
       AArch64::USHLLv8i8_shift,
       AArch64::USHLLv2i32_shift,
       AArch64::USHLLv4i16_shift,
+      AArch64::SLIv8i8_shift,
+      AArch64::SLIv4i16_shift,
+      AArch64::SLIv2i32_shift,
+      AArch64::SLId,
+      AArch64::SRIv8i8_shift,
+      AArch64::SRIv4i16_shift,
+      AArch64::SRIv2i32_shift,
+      AArch64::SRId,
       AArch64::XTNv8i8,
       AArch64::XTNv4i16,
       AArch64::XTNv2i32,
@@ -1454,6 +1462,14 @@ class arm2llvm {
       AArch64::USHLLv8i16_shift,
       AArch64::USHLLv16i8_shift,
       AArch64::USHLLv4i32_shift,
+      AArch64::SLIv16i8_shift,
+      AArch64::SLIv8i16_shift,
+      AArch64::SLIv4i32_shift,
+      AArch64::SLIv2i64_shift,
+      AArch64::SRIv16i8_shift,
+      AArch64::SRIv8i16_shift,
+      AArch64::SRIv4i32_shift,
+      AArch64::SRIv2i64_shift,
       AArch64::DUPi16,
       AArch64::DUPi64,
       AArch64::DUPi32,
@@ -10056,6 +10072,110 @@ public:
       }
 
       updateOutputReg(res);
+      break;
+    }
+
+    case AArch64::SLIv8i8_shift:
+    case AArch64::SLIv16i8_shift:
+    case AArch64::SLIv4i16_shift:
+    case AArch64::SLIv8i16_shift:
+    case AArch64::SLIv2i32_shift:
+    case AArch64::SLIv4i32_shift:
+    case AArch64::SLId:
+    case AArch64::SLIv2i64_shift:
+    case AArch64::SRIv8i8_shift:
+    case AArch64::SRIv16i8_shift:
+    case AArch64::SRIv4i16_shift:
+    case AArch64::SRIv8i16_shift:
+    case AArch64::SRIv2i32_shift:
+    case AArch64::SRIv4i32_shift:
+    case AArch64::SRId:
+    case AArch64::SRIv2i64_shift: {
+      unsigned numElts = -1, eltSize = -1;
+      switch (opcode) {
+      case AArch64::SLIv8i8_shift:
+      case AArch64::SRIv8i8_shift:
+        numElts = 8;
+        eltSize = 8;
+        break;
+      case AArch64::SLIv16i8_shift:
+      case AArch64::SRIv16i8_shift:
+        numElts = 16;
+        eltSize = 8;
+        break;
+      case AArch64::SLIv4i16_shift:
+      case AArch64::SRIv4i16_shift:
+        numElts = 4;
+        eltSize = 16;
+        break;
+      case AArch64::SLIv8i16_shift:
+      case AArch64::SRIv8i16_shift:
+        numElts = 8;
+        eltSize = 16;
+        break;
+      case AArch64::SLIv2i32_shift:
+      case AArch64::SRIv2i32_shift:
+        numElts = 2;
+        eltSize = 32;
+        break;
+      case AArch64::SLIv4i32_shift:
+      case AArch64::SRIv4i32_shift:
+        numElts = 4;
+        eltSize = 32;
+        break;
+      case AArch64::SLId:
+      case AArch64::SRId:
+        numElts = 1;
+        eltSize = 64;
+        break;
+      case AArch64::SLIv2i64_shift:
+      case AArch64::SRIv2i64_shift:
+        numElts = 2;
+        eltSize = 64;
+        break;
+      default:
+        assert(false && "Invalid opcode for SLI");
+        break;
+      }
+
+      auto shiftAmt = getImm(3);
+      auto a = readFromVecOperand(2, eltSize, numElts);
+      auto shiftVec = getElemSplat(numElts, eltSize, shiftAmt);
+      Value *shifted_a;
+      u_int64_t maskAmt;
+      switch (opcode) {
+      case AArch64::SLIv8i8_shift:
+      case AArch64::SLIv16i8_shift:
+      case AArch64::SLIv4i16_shift:
+      case AArch64::SLIv8i16_shift:
+      case AArch64::SLIv2i32_shift:
+      case AArch64::SLIv4i32_shift:
+      case AArch64::SLId:
+      case AArch64::SLIv2i64_shift:
+        shifted_a = createMaskedShl(a, shiftVec);
+        maskAmt = (1ULL << shiftAmt) - 1;
+        break;
+      case AArch64::SRIv8i8_shift:
+      case AArch64::SRIv16i8_shift:
+      case AArch64::SRIv4i16_shift:
+      case AArch64::SRIv8i16_shift:
+      case AArch64::SRIv2i32_shift:
+      case AArch64::SRIv4i32_shift:
+      case AArch64::SRId:
+      case AArch64::SRIv2i64_shift:
+        shifted_a = createMaskedLShr(a, shiftVec);
+        maskAmt = ((1ULL << shiftAmt) - 1) << (eltSize - shiftAmt);
+        break;
+      default:
+        assert(false && "Invalid opcode for SLI");
+        break;
+      }
+
+      auto res = readFromVecOperand(1, eltSize, numElts);
+      auto mask = getElemSplat(numElts, eltSize, maskAmt);
+      auto masked_res = createAnd(res, mask);
+
+      updateOutputReg(createOr(masked_res, shifted_a));
       break;
     }
 
