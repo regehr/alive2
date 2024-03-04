@@ -20,7 +20,7 @@ my $MAXKB = 16 * $GIG;
 my $ret = setrlimit(RLIMIT_VMEM, $MAXKB, $MAXKB);
 die unless $ret;
 
-my $NPROCS = Sys::CPU::cpu_count() - 1;
+my $NPROCS = Sys::CPU::cpu_count();
 print "using $NPROCS cores\n";
 
 my $LLVMDIS = $ENV{"LLVMDIS"} || $ENV{"HOME"}."/progs/llvm-regehr/llvm/build/bin/llvm-dis";
