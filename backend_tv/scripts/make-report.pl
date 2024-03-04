@@ -130,7 +130,7 @@ sub classify($) {
 my %cmds = ();
 
 foreach my $fn (glob "logs/*.log") {
-    print "$fn\n";
+    # print "$fn\n";
     open my $INF, "<$fn" or die;
     my @lines = ();
     my $cmdline;

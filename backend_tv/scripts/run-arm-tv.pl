@@ -90,7 +90,7 @@ die "please specify directory of LLVM bitcode" unless (-d $dir);
 my @files = glob "$dir/*.bc";
 print "found ", scalar @files, " .bc files\n";
 
-splice @files, 1000;
+# splice @files, 1000;
 
 while (my ($i, $file) = each @files) {
     print "\r$i" if ($i & ((1 << 8) - 1)) == 0;
