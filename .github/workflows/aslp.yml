@@ -1,0 +1,60 @@
+name: Build and test arm-tv+aslp
+
+on:
+  push:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      CMAKE_BUILD_TYPE: Release
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: cachix/install-nix-action@v25
+    - uses: cachix/cachix-action@v14
+      with:
+        name: pac-nix
+        useDaemon: false
+    - run: ./build.sh
+      shell: "nix develop github:katrinafyi/pac-nix#alive2-aslp --command bash -e {0}"
+
+    # XXX this should be nixed eventually...
+    - run: sudo apt-get install libbsd-resource-perl libsys-cpu-perl
+    - run: |
+        wget https://users.cs.utah.edu/~regehr/arm-tests.tar.bz2
+        tar xf arm-tests.tar.bz2
+        rm -rf logs
+
+    - name: ./backend_tv/scripts/run-arm-tv.pl
+      run: |
+        pushd arm-tests
+        find . -name '*.ll' -print0 | xargs -0 -n1 -P8 llvm-as
+        popd
+
+        nix shell github:katrinafyi/pac-nix#aslp --command aslp-server >aslp-server.out &
+        ASLP_PID=$!
+
+        export TIMEOUT=3
+        export LLVMDIS=$(which llvm-dis)
+        export BACKENDTV=$(realpath build/backend-tv)
+
+        ./backend_tv/scripts/run-arm-tv.pl ./arm-tests
+
+        kill $ASLP_PID
+      shell: "nix develop github:katrinafyi/pac-nix#alive2-aslp --command bash -eo pipefail {0}"
+
+    - run: tar caf logs.tar.zst logs
+      if: always()
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: logs
+        path: logs.tar.zst
+
+

@@ -109,7 +109,7 @@ std::any aslt_visitor::visitStmts(SemanticsParser::StmtsContext *ctx) {
   // store and reset current bb to support nesting statements nicely
   auto bb = iface.get_bb();
 
-  if (ctx == nullptr) {
+  if (ctx == nullptr || ctx->stmt().empty()) {
     auto empty = new_stmt("stmtlist_empty");
     iface.set_bb(bb);
     return empty;

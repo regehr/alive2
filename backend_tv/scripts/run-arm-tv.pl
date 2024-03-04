@@ -13,18 +13,18 @@ use BSD::Resource;
 # - SPEC modules tend to be big, would be very nice to automatically
 #   run llvm-reduce on some categories of problems
 
-my $TIMEOUT = 60;
+my $TIMEOUT = $ENV{"TIMEOUT"} || 60;
 
 my $GIG = 1000 * 1000 * 1000;
 my $MAXKB = 16 * $GIG;
 my $ret = setrlimit(RLIMIT_VMEM, $MAXKB, $MAXKB);
 die unless $ret;
 
-my $NPROCS = Sys::CPU::cpu_count();
+my $NPROCS = Sys::CPU::cpu_count() - 1;
 print "using $NPROCS cores\n";
 
-my $LLVMDIS = $ENV{"HOME"}."/progs/llvm-regehr/llvm/build/bin/llvm-dis";
-my $ARMTV = $ENV{"HOME"}."/progs/alive2-regehr/build/backend-tv";
+my $LLVMDIS = $ENV{"LLVMDIS"} || $ENV{"HOME"}."/progs/llvm-regehr/llvm/build/bin/llvm-dis";
+my $ARMTV = $ENV{"BACKENDTV"} || $ENV{"HOME"}."/progs/alive2-regehr/build/backend-tv";
 
 my @funcs = ();
 my $skipped = 0;
@@ -90,7 +90,10 @@ die "please specify directory of LLVM bitcode" unless (-d $dir);
 my @files = glob "$dir/*.bc";
 print "found ", scalar @files, " .bc files\n";
 
-# splice @files, 1000;
+my $LIMIT = $ENV{"LIMIT"};
+if ($LIMIT) {
+    splice @files, $LIMIT + 0;
+}
 
 while (my ($i, $file) = each @files) {
     print "\r$i" if ($i & ((1 << 8) - 1)) == 0;
