@@ -1065,6 +1065,18 @@ class arm2llvm {
       AArch64::UMAXv8i8,
       AArch64::UMAXv4i16,
       AArch64::UMAXv2i32,
+      AArch64::SMINPv8i8,
+      AArch64::SMINPv4i16,
+      AArch64::SMINPv2i32,
+      AArch64::SMAXPv8i8,
+      AArch64::SMAXPv4i16,
+      AArch64::SMAXPv2i32,
+      AArch64::UMINPv8i8,
+      AArch64::UMINPv4i16,
+      AArch64::UMINPv2i32,
+      AArch64::UMAXPv8i8,
+      AArch64::UMAXPv4i16,
+      AArch64::UMAXPv2i32,
       AArch64::UMULLv4i16_indexed,
       AArch64::UMULLv2i32_indexed,
       AArch64::UMULLv8i8_v8i16,
@@ -1408,6 +1420,18 @@ class arm2llvm {
       AArch64::UMAXv16i8,
       AArch64::UMAXv8i16,
       AArch64::UMAXv4i32,
+      AArch64::SMINPv16i8,
+      AArch64::SMINPv8i16,
+      AArch64::SMINPv4i32,
+      AArch64::SMAXPv16i8,
+      AArch64::SMAXPv8i16,
+      AArch64::SMAXPv4i32,
+      AArch64::UMINPv16i8,
+      AArch64::UMINPv8i16,
+      AArch64::UMINPv4i32,
+      AArch64::UMAXPv16i8,
+      AArch64::UMAXPv8i16,
+      AArch64::UMAXPv4i32,
       AArch64::USRAv16i8_shift,
       AArch64::USRAv8i16_shift,
       AArch64::USRAv2i64_shift,
@@ -2153,6 +2177,15 @@ class arm2llvm {
 
   ShuffleVectorInst *createShuffleVector(Value *v, Value *mask) {
     return new ShuffleVectorInst(v, mask, nextName(), LLVMBB);
+  }
+
+  ShuffleVectorInst *createShuffleVector(Value *v1, Value *v2,
+                                         ArrayRef<int> mask) {
+    return new ShuffleVectorInst(v1, v2, mask, nextName(), LLVMBB);
+  }
+
+  ShuffleVectorInst *createShuffleVector(Value *v1, Value *v2, Value *mask) {
+    return new ShuffleVectorInst(v1, v2, mask, nextName(), LLVMBB);
   }
 
   Value *getIndexedElement(unsigned idx, unsigned eltSize, unsigned reg) {
@@ -9005,6 +9038,30 @@ public:
     case AArch64::UMAXv16i8:
     case AArch64::UMAXv8i16:
     case AArch64::UMAXv4i32:
+    case AArch64::SMINPv8i8:
+    case AArch64::SMINPv4i16:
+    case AArch64::SMINPv2i32:
+    case AArch64::SMINPv16i8:
+    case AArch64::SMINPv8i16:
+    case AArch64::SMINPv4i32:
+    case AArch64::SMAXPv8i8:
+    case AArch64::SMAXPv4i16:
+    case AArch64::SMAXPv2i32:
+    case AArch64::SMAXPv16i8:
+    case AArch64::SMAXPv8i16:
+    case AArch64::SMAXPv4i32:
+    case AArch64::UMINPv8i8:
+    case AArch64::UMINPv4i16:
+    case AArch64::UMINPv2i32:
+    case AArch64::UMINPv16i8:
+    case AArch64::UMINPv8i16:
+    case AArch64::UMINPv4i32:
+    case AArch64::UMAXPv8i8:
+    case AArch64::UMAXPv4i16:
+    case AArch64::UMAXPv2i32:
+    case AArch64::UMAXPv16i8:
+    case AArch64::UMAXPv8i16:
+    case AArch64::UMAXPv4i32:
     case AArch64::SMULLv8i8_v8i16:
     case AArch64::SMULLv2i32_v2i64:
     case AArch64::SMULLv4i16_v4i32:
@@ -9184,6 +9241,12 @@ public:
       case AArch64::SMINv16i8:
       case AArch64::SMINv8i16:
       case AArch64::SMINv4i32:
+      case AArch64::SMINPv8i8:
+      case AArch64::SMINPv4i16:
+      case AArch64::SMINPv2i32:
+      case AArch64::SMINPv16i8:
+      case AArch64::SMINPv8i16:
+      case AArch64::SMINPv4i32:
         op = [&](Value *a, Value *b) { return createSMin(a, b); };
         break;
       case AArch64::SMAXv8i8:
@@ -9192,6 +9255,12 @@ public:
       case AArch64::SMAXv16i8:
       case AArch64::SMAXv8i16:
       case AArch64::SMAXv4i32:
+      case AArch64::SMAXPv8i8:
+      case AArch64::SMAXPv4i16:
+      case AArch64::SMAXPv2i32:
+      case AArch64::SMAXPv16i8:
+      case AArch64::SMAXPv8i16:
+      case AArch64::SMAXPv4i32:
         op = [&](Value *a, Value *b) { return createSMax(a, b); };
         break;
       case AArch64::UMINv8i8:
@@ -9200,6 +9269,12 @@ public:
       case AArch64::UMINv16i8:
       case AArch64::UMINv8i16:
       case AArch64::UMINv4i32:
+      case AArch64::UMINPv8i8:
+      case AArch64::UMINPv4i16:
+      case AArch64::UMINPv2i32:
+      case AArch64::UMINPv16i8:
+      case AArch64::UMINPv8i16:
+      case AArch64::UMINPv4i32:
         op = [&](Value *a, Value *b) { return createUMin(a, b); };
         break;
       case AArch64::UMAXv8i8:
@@ -9208,6 +9283,12 @@ public:
       case AArch64::UMAXv16i8:
       case AArch64::UMAXv8i16:
       case AArch64::UMAXv4i32:
+      case AArch64::UMAXPv8i8:
+      case AArch64::UMAXPv4i16:
+      case AArch64::UMAXPv2i32:
+      case AArch64::UMAXPv16i8:
+      case AArch64::UMAXPv8i16:
+      case AArch64::UMAXPv4i32:
         op = [&](Value *a, Value *b) { return createUMax(a, b); };
         break;
       case AArch64::UMULLv16i8_v8i16:
@@ -9468,8 +9549,7 @@ public:
         assert(false && "missed a case");
       }
 
-      int eltSize;
-      int numElts;
+      unsigned eltSize, numElts;
       switch (opcode) {
       case AArch64::USHLv1i64:
       case AArch64::SSHLv1i64:
@@ -9483,6 +9563,10 @@ public:
       case AArch64::SMAXv2i32:
       case AArch64::UMINv2i32:
       case AArch64::UMAXv2i32:
+      case AArch64::SMINPv2i32:
+      case AArch64::SMAXPv2i32:
+      case AArch64::UMINPv2i32:
+      case AArch64::UMAXPv2i32:
       case AArch64::SMULLv2i32_v2i64:
       case AArch64::USHRv2i32_shift:
       case AArch64::MULv2i32:
@@ -9512,9 +9596,6 @@ public:
       case AArch64::SUBv2i64:
       case AArch64::USHLv2i64:
       case AArch64::SSHLv2i64:
-        numElts = 2;
-        eltSize = 64;
-        break;
       case AArch64::USHRv2i64_shift:
         numElts = 2;
         eltSize = 64;
@@ -9525,6 +9606,10 @@ public:
       case AArch64::SMAXv4i16:
       case AArch64::UMINv4i16:
       case AArch64::UMAXv4i16:
+      case AArch64::SMINPv4i16:
+      case AArch64::SMAXPv4i16:
+      case AArch64::UMINPv4i16:
+      case AArch64::UMAXPv4i16:
       case AArch64::SMULLv4i16_v4i32:
       case AArch64::USHRv4i16_shift:
       case AArch64::SSHLLv4i16_shift:
@@ -9553,6 +9638,10 @@ public:
       case AArch64::SMAXv4i32:
       case AArch64::UMINv4i32:
       case AArch64::UMAXv4i32:
+      case AArch64::SMINPv4i32:
+      case AArch64::SMAXPv4i32:
+      case AArch64::UMINPv4i32:
+      case AArch64::UMAXPv4i32:
       case AArch64::SMULLv4i32_v2i64:
       case AArch64::USHRv4i32_shift:
       case AArch64::MULv4i32:
@@ -9583,6 +9672,10 @@ public:
       case AArch64::SMAXv8i8:
       case AArch64::UMINv8i8:
       case AArch64::UMAXv8i8:
+      case AArch64::SMINPv8i8:
+      case AArch64::SMAXPv8i8:
+      case AArch64::UMINPv8i8:
+      case AArch64::UMAXPv8i8:
       case AArch64::SMULLv8i8_v8i16:
       case AArch64::MULv8i8:
       case AArch64::SSHLLv8i8_shift:
@@ -9627,6 +9720,10 @@ public:
       case AArch64::SMAXv8i16:
       case AArch64::UMINv8i16:
       case AArch64::UMAXv8i16:
+      case AArch64::SMINPv8i16:
+      case AArch64::SMAXPv8i16:
+      case AArch64::UMINPv8i16:
+      case AArch64::UMAXPv8i16:
       case AArch64::UADDLv8i16_v4i32:
       case AArch64::UADDWv8i16_v4i32:
       case AArch64::SADDLv8i16_v4i32:
@@ -9644,6 +9741,10 @@ public:
       case AArch64::SMAXv16i8:
       case AArch64::UMINv16i8:
       case AArch64::UMAXv16i8:
+      case AArch64::SMINPv16i8:
+      case AArch64::SMAXPv16i8:
+      case AArch64::UMINPv16i8:
+      case AArch64::UMAXPv16i8:
       case AArch64::SMULLv16i8_v8i16:
       case AArch64::USHRv16i8_shift:
       case AArch64::MULv16i8:
@@ -9673,6 +9774,51 @@ public:
       default:
         assert(false && "missed case");
         break;
+      }
+
+      // Preprocessing the two operands
+      switch (opcode) {
+      case AArch64::SMINPv8i8:
+      case AArch64::SMINPv4i16:
+      case AArch64::SMINPv2i32:
+      case AArch64::SMINPv16i8:
+      case AArch64::SMINPv8i16:
+      case AArch64::SMINPv4i32:
+      case AArch64::SMAXPv8i8:
+      case AArch64::SMAXPv4i16:
+      case AArch64::SMAXPv2i32:
+      case AArch64::SMAXPv16i8:
+      case AArch64::SMAXPv8i16:
+      case AArch64::SMAXPv4i32:
+      case AArch64::UMINPv8i8:
+      case AArch64::UMINPv4i16:
+      case AArch64::UMINPv2i32:
+      case AArch64::UMINPv16i8:
+      case AArch64::UMINPv8i16:
+      case AArch64::UMINPv4i32:
+      case AArch64::UMAXPv8i8:
+      case AArch64::UMAXPv4i16:
+      case AArch64::UMAXPv2i32:
+      case AArch64::UMAXPv16i8:
+      case AArch64::UMAXPv8i16:
+      case AArch64::UMAXPv4i32: {
+        unsigned mask1[numElts], mask2[numElts];
+        ArrayRef<int> mask1Ref((int *)mask1, numElts),
+            mask2Ref((int *)mask2, numElts);
+        for (unsigned i = 0; i < numElts; i++) {
+          mask1[i] = 2 * i;
+          mask2[i] = 2 * i + 1;
+        }
+        auto vector_a = createBitCast(a, getVecTy(eltSize, numElts));
+        auto vector_b = createBitCast(b, getVecTy(eltSize, numElts));
+
+        auto new_a = createShuffleVector(vector_b, vector_a, mask1Ref);
+        auto new_b = createShuffleVector(vector_b, vector_a, mask2Ref);
+
+        a = createBitCast(new_a, getIntTy(eltSize * numElts));
+        b = createBitCast(new_b, getIntTy(eltSize * numElts));
+        break;
+      }
       }
 
       // Some instructions have first operand of a different type than the
