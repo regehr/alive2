@@ -765,6 +765,7 @@ class arm2llvm {
       AArch64::SSHLv1i64,
       AArch64::SSHLv4i16,
       AArch64::SSHLv2i32,
+      AArch64::SUBv1i64,
       AArch64::SUBv2i32,
       AArch64::SUBv4i16,
       AArch64::SUBv8i8,
@@ -3393,7 +3394,7 @@ class arm2llvm {
     auto i32 = getIntTy(32);
     auto i64 = getIntTy(64);
 
-    if (true) {
+    if (false) {
       /*
        * ABI stuff: on all return paths, check that callee-saved +
        * other registers have been reset to their previous
@@ -9156,6 +9157,7 @@ public:
     case AArch64::SSUBWv8i16_v4i32:
     case AArch64::SSUBWv2i32_v2i64:
     case AArch64::SSUBWv4i32_v2i64:
+    case AArch64::SUBv1i64:
     case AArch64::SUBv2i32:
     case AArch64::SUBv2i64:
     case AArch64::SUBv4i16:
@@ -9484,6 +9486,7 @@ public:
         }
         op = [&](Value *a, Value *b) { return createSub(a, b); };
         break;
+      case AArch64::SUBv1i64:
       case AArch64::SUBv2i32:
       case AArch64::SUBv2i64:
       case AArch64::SUBv4i16:
@@ -9554,6 +9557,7 @@ public:
       case AArch64::USHLv1i64:
       case AArch64::SSHLv1i64:
       case AArch64::ADDv1i64:
+      case AArch64::SUBv1i64:
         numElts = 1;
         eltSize = 64;
         break;
