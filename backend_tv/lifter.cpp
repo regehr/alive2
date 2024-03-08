@@ -3394,7 +3394,7 @@ class arm2llvm {
     auto i32 = getIntTy(32);
     auto i64 = getIntTy(64);
 
-    if (false) {
+    if (true) {
       /*
        * ABI stuff: on all return paths, check that callee-saved +
        * other registers have been reset to their previous
