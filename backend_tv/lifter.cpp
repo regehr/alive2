@@ -739,6 +739,9 @@ class arm2llvm {
       AArch64::FRINTASr,
       AArch64::FRINTMSr,
       AArch64::FRINTPSr,
+      AArch64::SQXTNv1i8,
+      AArch64::SQXTNv1i16,
+      AArch64::SQXTNv1i32,
   };
 
   const set<int> instrs_64 = {
@@ -944,6 +947,9 @@ class arm2llvm {
       AArch64::XTNv8i8,
       AArch64::XTNv4i16,
       AArch64::XTNv2i32,
+      AArch64::SQXTNv8i8,
+      AArch64::SQXTNv4i16,
+      AArch64::SQXTNv2i32,
       AArch64::MLSv2i32,
       AArch64::NEGv1i64,
       AArch64::NEGv4i16,
@@ -1938,6 +1944,9 @@ class arm2llvm {
       AArch64::XTNv16i8,
       AArch64::XTNv8i16,
       AArch64::XTNv4i32,
+      AArch64::SQXTNv16i8,
+      AArch64::SQXTNv8i16,
+      AArch64::SQXTNv4i32,
       AArch64::FNEGv4f32,
       AArch64::FNEGv2f64,
   };
@@ -3149,6 +3158,54 @@ class arm2llvm {
   void assertSame(Value *a, Value *b) {
     auto *c = createICmp(ICmpInst::Predicate::ICMP_EQ, a, b);
     CallInst::Create(assertDecl, {c}, "", LLVMBB);
+  }
+
+  // Implemented library pseudocode for signed satuaration from A64 ISA manual
+  tuple<Value *, bool> SignedSatQ(Value *i, unsigned bitWidth) {
+    auto W = getBitWidth(i);
+    auto max = getIntConst((1 << (bitWidth - 1)) - 1, W);
+    auto min = getIntConst(-(1 << (bitWidth - 1)), W);
+    Value *max_bitWidth =
+        ConstantInt::get(Ctx, APInt::getSignedMaxValue(bitWidth));
+    Value *min_bitWidth =
+        ConstantInt::get(Ctx, APInt::getSignedMinValue(bitWidth));
+    Value *i_bitWidth = createTrunc(i, getIntTy(bitWidth));
+
+    auto sat = createOr(createICmp(ICmpInst::Predicate::ICMP_SGT, i, max),
+                        createICmp(ICmpInst::Predicate::ICMP_SLT, i, min));
+    auto max_or_min =
+        createSelect(createICmp(ICmpInst::Predicate::ICMP_SGT, i, max),
+                     max_bitWidth, min_bitWidth);
+
+    auto res = createSelect(sat, max_or_min, i_bitWidth);
+    return make_pair(res, sat);
+  }
+
+  // Implemented library pseudocode for unsigned satuaration from A64 ISA manual
+  tuple<Value *, bool> UnsignedSatQ(Value *i, unsigned bitWidth) {
+    auto W = getBitWidth(i);
+    auto max = getIntConst((1 << bitWidth) - 1, W);
+    auto min = getIntConst(0, W);
+    Value *max_bitWidth = ConstantInt::get(Ctx, APInt::getMaxValue(bitWidth));
+    Value *min_bitWidth = ConstantInt::get(Ctx, APInt::getMinValue(bitWidth));
+    Value *i_bitWidth = createTrunc(i, getIntTy(bitWidth));
+
+    auto sat = createOr(createICmp(ICmpInst::Predicate::ICMP_UGT, i, max),
+                        createICmp(ICmpInst::Predicate::ICMP_ULT, i, min));
+    auto max_or_min =
+        createSelect(createICmp(ICmpInst::Predicate::ICMP_UGT, i, max),
+                     max_bitWidth, min_bitWidth);
+
+    auto res = createSelect(sat, max_or_min, i_bitWidth);
+    return make_pair(res, sat);
+  }
+
+  // Implemented library pseudocode for satuaration from A64 ISA manual
+  tuple<Value *, bool> SatQ(Value *i, unsigned bitWidth, bool isSigned) {
+    auto [result, sat] =
+        isSigned ? SignedSatQ(i, bitWidth) : UnsignedSatQ(i, bitWidth);
+
+    return make_pair(result, sat);
   }
 
   // From https://github.com/agustingianni/retools
@@ -11349,7 +11406,6 @@ public:
       assert(getBitWidth(src) == 128 &&
              "Source value is not a vector with 128 bits");
 
-      // eltSize is in bits
       u_int64_t eltSize, numElts, part;
       part = opcode == AArch64::XTNv2i32 || opcode == AArch64::XTNv4i16 ||
                      opcode == AArch64::XTNv8i8
@@ -11385,7 +11441,7 @@ public:
 
       Value *final_vector = narrowed_vector;
       // For XTN2 - insertion to upper half
-      if (part == 1) {
+      if (part) {
         // Preserve the lower 64 bits so, read from destination register
         // and insert to the upper 64 bits
         Value *dest = readFromReg(op0.getReg());
@@ -11398,6 +11454,113 @@ public:
 
       // Write 64 bits for XTN or 128 bits XTN2 to output register
       updateOutputReg(final_vector);
+      break;
+    }
+
+      //    case AArch64::SQXTNv1i8:
+      //    case AArch64::SQXTNv1i16:
+      //    case AArch64::SQXTNv1i32:
+    case AArch64::SQXTNv8i8:
+    case AArch64::SQXTNv4i16:
+    case AArch64::SQXTNv2i32:
+    case AArch64::SQXTNv16i8:
+    case AArch64::SQXTNv8i16:
+    case AArch64::SQXTNv4i32: {
+      auto &op0 = CurInst->getOperand(0);
+      u_int64_t srcReg =
+          opcode == AArch64::SQXTNv1i8 || opcode == AArch64::SQXTNv1i16 ||
+                  opcode == AArch64::SQXTNv1i32 ||
+                  opcode == AArch64::SQXTNv8i8 ||
+                  opcode == AArch64::SQXTNv4i16 || opcode == AArch64::SQXTNv2i32
+              ? 1
+              : 2;
+      auto &op1 = CurInst->getOperand(srcReg);
+      assert(isSIMDandFPRegOperand(op0) && isSIMDandFPRegOperand(op0));
+
+      Value *src = readFromReg(op1.getReg());
+      assert(getBitWidth(src) == 128 &&
+             "Source value is not a vector with 128 bits");
+
+      u_int64_t eltSize, numElts, part;
+      part = opcode == AArch64::SQXTNv1i8 || opcode == AArch64::SQXTNv1i16 ||
+                     opcode == AArch64::SQXTNv1i32 ||
+                     opcode == AArch64::SQXTNv8i8 ||
+                     opcode == AArch64::SQXTNv4i16 ||
+                     opcode == AArch64::SQXTNv2i32
+                 ? 0
+                 : 1;
+      switch (opcode) {
+      case AArch64::SQXTNv1i8:
+      case AArch64::SQXTNv16i8:
+      case AArch64::SQXTNv8i8:
+        numElts = 8;
+        eltSize = 8;
+        break;
+      case AArch64::SQXTNv1i16:
+      case AArch64::SQXTNv8i16:
+      case AArch64::SQXTNv4i16:
+        numElts = 4;
+        eltSize = 16;
+        break;
+      case AArch64::SQXTNv1i32:
+      case AArch64::SQXTNv2i32:
+      case AArch64::SQXTNv4i32:
+        numElts = 2;
+        eltSize = 32;
+        break;
+      default:
+        *out << "\nError Unknown opcode\n";
+        visitError();
+        break;
+      }
+
+      if (opcode == AArch64::SQXTNv1i8 || opcode == AArch64::SQXTNv1i16 ||
+          opcode == AArch64::SQXTNv1i32) {
+        numElts = 1;
+      }
+
+      bool isSigned = false;
+      switch (opcode) {
+      case AArch64::SQXTNv1i8:
+      case AArch64::SQXTNv1i16:
+      case AArch64::SQXTNv1i32:
+      case AArch64::SQXTNv8i8:
+      case AArch64::SQXTNv4i16:
+      case AArch64::SQXTNv2i32:
+      case AArch64::SQXTNv16i8:
+      case AArch64::SQXTNv8i16:
+      case AArch64::SQXTNv4i32:
+        isSigned = true;
+        break;
+      }
+
+      // BitCast src to a vector of numElts x (2*eltSize) for narrowing
+      assert(numElts * (2 * eltSize) == 128 && "BitCasting to wrong type");
+      Value *src_vector = createBitCast(src, getVecTy(2 * eltSize, numElts));
+
+      Value *final_vector = getUndefVec(numElts, eltSize);
+      // Perform element-wise saturating narrow using SatQ
+      for (unsigned i = 0; i < numElts; ++i) {
+        auto element = createExtractElement(src_vector, i);
+        auto [narrowed_element, sat] = SatQ(element, eltSize, isSigned);
+        final_vector = createInsertElement(final_vector, narrowed_element, i);
+      }
+
+      // For SQXTN2 - insertion to upper half
+      if (part) {
+        // Preserve the lower 64 bits so, read from destination register
+        // and insert to the upper 64 bits
+        Value *dest = readFromReg(op0.getReg());
+        Value *original_dest_vector = createBitCast(dest, getVecTy(64, 2));
+
+        Value *element = createBitCast(final_vector, i64);
+
+        final_vector = createInsertElement(original_dest_vector, element, 1);
+      }
+
+      // Write 64 bits for SQXTN or 128 bits SQXTN2 to output register
+      updateOutputReg(final_vector);
+
       break;
     }
 
