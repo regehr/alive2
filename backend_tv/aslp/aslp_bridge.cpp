@@ -118,10 +118,10 @@ std::variant<err_t, stmt_t> bridge::parse(std::string_view aslt) {
 
   aslt_visitor visitor{iface, config().debug};
 
-  auto ctx = parser.stmts();
+  auto ctx = parser.stmt_lines();
   assert(ctx && "parsing failed! syntax error?");
 
-  return std::any_cast<stmt_t>(visitor.visitStmts(ctx));
+  return std::any_cast<stmt_t>(visitor.visitStmt_lines(ctx));
 }
 
 #ifndef ASLT_DIR

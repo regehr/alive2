@@ -146,7 +146,7 @@ std::any aslt_visitor::visitConstDecl(SemanticsParser::ConstDeclContext *ctx) {
   type_t ty = type(ctx->type());
   auto rhs = expr(ctx->expr());
 
-  auto name = ctx->ID()->getText();
+  auto name = ident(ctx->ident());
   log() << name << '\n';
 
   auto v = new llvm::AllocaInst(ty, 0, name, s.second);
@@ -163,7 +163,7 @@ std::any aslt_visitor::visitVarDecl(SemanticsParser::VarDeclContext *ctx) {
   type_t ty = type(ctx->type());
   auto rhs = expr(ctx->expr());
 
-  auto name = ctx->ID()->getText();
+  auto name = ident(ctx->ident());
   log() << name << '\n';
 
   auto v = new llvm::AllocaInst(ty, 0, name, s.second);
@@ -178,10 +178,9 @@ std::any aslt_visitor::visitVarDeclsNoInit(SemanticsParser::VarDeclsNoInitContex
 
   auto s = new_stmt("vardeclnoinit");
   type_t ty = type(ctx->type());
-  auto names = ctx->ID();
+  auto names = map(ctx->ident(), &aslt_visitor::ident);
 
-  for (auto namectx : names) {
-    auto name = namectx->getText();
+  for (auto name : names) {
     log() << name << '\n';
     auto v = new llvm::AllocaInst(ty, 0, name, s.second);
     add_local(name, v);
@@ -206,7 +205,7 @@ std::any aslt_visitor::visitThrow(aslt::SemanticsParser::ThrowContext *ctx) {
 }
 
 std::any aslt_visitor::visitCall_stmt(SemanticsParser::Call_stmtContext *ctx) {
-  auto name = ctx->ID()->getText();
+  auto name = ident(ctx->ident());
   log() << "visitCall_stmt" << '\n';
 
   auto s = new_stmt("call");
@@ -280,7 +279,7 @@ std::any aslt_visitor::visitTypeBoolean(SemanticsParser::TypeBooleanContext *ctx
 
 std::any aslt_visitor::visitLExprVar(SemanticsParser::LExprVarContext *ctx) {
   log() << "visitLExprVar" << '\n';
-  auto name = ctx->ID()->getText();
+  auto name = ident(ctx->ident());
 
   if (locals.contains(name)) {
     return locals.at(name);
@@ -303,7 +302,7 @@ std::any aslt_visitor::visitLExprField(SemanticsParser::LExprFieldContext *ctx) 
   log() << "visitLExprField" << '\n';
 
   lexpr_t base = lexpr(ctx->lexpr());
-  std::string field = ctx->ID()->getText();
+  std::string field = ident(ctx->ident());
 
   if (base == pstate_sentinel) {
     if (field == "N") return iface.get_reg(reg_t::PSTATE, (int)pstate_t::N);
@@ -332,7 +331,7 @@ std::any aslt_visitor::visitLExprArray(SemanticsParser::LExprArrayContext *ctx) 
 
 std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
   log() << "visitExprVar " << ctx->getText() << '\n';
-  auto name = ctx->ID()->getText();
+  auto name = ident(ctx->ident());
 
   expr_t var;
   if (locals.contains(name))
@@ -361,7 +360,7 @@ std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
 }
 
 std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) {
-  auto name = ctx->ID()->getText();
+  auto name = ident(ctx->ident());
   log() 
     << "visitExprTApply " 
     << std::format("{} [{} targs] ({} args)", name, ctx->targs().size(), ctx->expr().size())
@@ -611,7 +610,7 @@ std::any aslt_visitor::visitExprField(SemanticsParser::ExprFieldContext *ctx) {
   };
 
   auto base = expr_var(ctx->expr());
-  auto field = ctx->ID()->getText();
+  auto field = ident(ctx->ident());
   if (base == pstate_sentinel) {
     require(field.length() == 1, "pstate field name length unexpect");
     auto c = field.at(0);
@@ -658,14 +657,14 @@ std::any aslt_visitor::visitExprLitInt(SemanticsParser::ExprLitIntContext *ctx) 
 std::any aslt_visitor::visitExprLitBits(SemanticsParser::ExprLitBitsContext *ctx) {
   log() << "visitExprLitBits" << '\n';
 
-  auto isbit = [](char x) { return x == '1' || x == '0'; };
-  auto filtered = ctx->BINARY()->getText() | std::ranges::views::filter(isbit);
-
-  std::string s;
-  std::ranges::copy(filtered, std::back_inserter(s));
+  std::string s = std::any_cast<std::string>(visitBits(ctx->bits()));
 
   auto ty = llvm::Type::getIntNTy(context, s.length());
   return static_cast<expr_t>(llvm::ConstantInt::get(ty, s, 2));
+}
+
+std::any aslt_visitor::visitExprParen(aslt::SemanticsParser::ExprParenContext *ctx) {
+  return expr(ctx->expr());
 }
 
 // std::any aslt_visitor::visitExprLitMask(SemanticsParser::ExprLitMaskContext *ctx) {
@@ -680,7 +679,7 @@ std::any aslt_visitor::visitExprLitBits(SemanticsParser::ExprLitBitsContext *ctx
 
 std::any aslt_visitor::visitTargs(SemanticsParser::TargsContext *ctx) {
   // log() << "visitTargs" << '\n';
-  return visitExpr(ctx->expr());
+  return visitChildren(ctx->expr());
 }
 
 std::any aslt_visitor::visitSlice_expr(SemanticsParser::Slice_exprContext *ctx) {
@@ -696,8 +695,23 @@ std::any aslt_visitor::visitSlice_expr(SemanticsParser::Slice_exprContext *ctx) 
 // }
 
 std::any aslt_visitor::visitInteger(aslt::SemanticsParser::IntegerContext *ctx) {
-  auto s = OR(ctx->DECIMAL(), ctx->BINARY())->getText();
+  auto s = ctx->DECIMAL()->getText();
   return (int64_t)std::stoll(s);
 }
+
+std::any aslt_visitor::visitBits(aslt::SemanticsParser::BitsContext *ctx) {
+  auto isbit = [](char x) { return x == '1' || x == '0'; };
+  auto filtered = ctx->BINARY()->getText() | std::ranges::views::filter(isbit);
+
+  std::string s;
+  std::ranges::copy(filtered, std::back_inserter(s));
+
+  return static_cast<std::string>(s);
+}
+
+std::any aslt_visitor::visitIdent(aslt::SemanticsParser::IdentContext *ctx) {
+  return static_cast<std::string>(ctx->ID()->getText());
+}
+
 
 }

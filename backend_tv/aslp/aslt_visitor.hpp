@@ -13,6 +13,7 @@
 
 #include "SemanticsBaseVisitor.h"
 
+#include "SemanticsParser.h"
 #include "interface.hpp"
 
 namespace aslp {
@@ -71,21 +72,22 @@ protected:
 
   virtual type_t type(aslt::SemanticsParser::TypeContext* ctx) {
     depth++;
-    auto x = visitType(ctx);
+    auto x = ctx->accept(this);
     depth--;
     return std::any_cast<type_t>(x);
   }
 
   virtual expr_t expr(aslt::SemanticsParser::ExprContext* ctx) {
     depth++;
-    auto x = visitExpr(ctx);
+    auto x = ctx->accept(this);
     depth--;
     return std::any_cast<expr_t>(x);
   }
 
   virtual lexpr_t lexpr(aslt::SemanticsParser::LexprContext* ctx) {
     depth++;
-    auto x = visitLexpr(ctx);
+    auto x = ctx->accept(this);
+    std::cout << x.type().name() << std::endl;
     depth--;
     return std::any_cast<lexpr_t>(x);
   }
@@ -102,12 +104,14 @@ protected:
   }
 
   virtual int64_t lit_int(aslt::SemanticsParser::ExprContext* ctx) {
-    assert(dynamic_cast<aslt::SemanticsParser::Expr_Context*>(ctx->expr_()) && "non-literal found where a ExprLitInt was expected");
     auto x = expr(ctx);
     auto i = llvm::cast<llvm::ConstantInt>(x);
     return i->getSExtValue();
   }
 
+  virtual std::string ident(aslt::SemanticsParser::IdentContext* ctx) {
+    return std::any_cast<std::string>(visitIdent(ctx));
+  }
 
   virtual std::pair<expr_t, expr_t> ptr_expr(expr_t x, llvm::Instruction* before = nullptr);
   virtual std::pair<expr_t, expr_t> unify_sizes(expr_t x, expr_t y, bool sign = true);
@@ -211,17 +215,21 @@ public:
   virtual std::any visitExprLitInt(aslt::SemanticsParser::ExprLitIntContext *ctx) override;
   // virtual std::any visitExprLitHex(aslt::SemanticsParser::ExprLitHexContext *ctx) override;
   virtual std::any visitExprLitBits(aslt::SemanticsParser::ExprLitBitsContext *ctx) override;
+  virtual std::any visitExprParen(aslt::SemanticsParser::ExprParenContext *ctx) override;
   // virtual std::any visitExprLitMask(aslt::SemanticsParser::ExprLitMaskContext *ctx) override;
   // virtual std::any visitExprLitString(aslt::SemanticsParser::ExprLitStringContext *ctx) override;
   virtual std::any visitTargs(aslt::SemanticsParser::TargsContext *ctx) override;
   virtual std::any visitSlice_expr(aslt::SemanticsParser::Slice_exprContext *ctx) override;
   // virtual std::any visitUuid(aslt::SemanticsParser::UuidContext *ctx) override;
   virtual std::any visitInteger(aslt::SemanticsParser::IntegerContext *ctx) override;
+  virtual std::any visitBits(aslt::SemanticsParser::BitsContext *ctx) override;
+  virtual std::any visitIdent(aslt::SemanticsParser::IdentContext *ctx) override;
 
   virtual std::any defaultResult() override {
     return std::any{};
   }
   virtual std::any aggregateResult(std::any vec, std::any nextResult) override {
+    // std::cerr << vec.type().name() << " | " << nextResult.type().name() << std::endl;
     return nextResult;
   }
 
