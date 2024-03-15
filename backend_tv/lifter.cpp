@@ -739,6 +739,9 @@ class arm2llvm {
       AArch64::FRINTASr,
       AArch64::FRINTMSr,
       AArch64::FRINTPSr,
+      AArch64::UQXTNv1i8,
+      AArch64::UQXTNv1i16,
+      AArch64::UQXTNv1i32,
       AArch64::SQXTNv1i8,
       AArch64::SQXTNv1i16,
       AArch64::SQXTNv1i32,
@@ -947,6 +950,9 @@ class arm2llvm {
       AArch64::XTNv8i8,
       AArch64::XTNv4i16,
       AArch64::XTNv2i32,
+      AArch64::UQXTNv8i8,
+      AArch64::UQXTNv4i16,
+      AArch64::UQXTNv2i32,
       AArch64::SQXTNv8i8,
       AArch64::SQXTNv4i16,
       AArch64::SQXTNv2i32,
@@ -1944,6 +1950,9 @@ class arm2llvm {
       AArch64::XTNv16i8,
       AArch64::XTNv8i16,
       AArch64::XTNv4i32,
+      AArch64::UQXTNv16i8,
+      AArch64::UQXTNv8i16,
+      AArch64::UQXTNv4i32,
       AArch64::SQXTNv16i8,
       AArch64::SQXTNv8i16,
       AArch64::SQXTNv4i32,
@@ -3163,6 +3172,7 @@ class arm2llvm {
   // Implemented library pseudocode for signed satuaration from A64 ISA manual
   tuple<Value *, bool> SignedSatQ(Value *i, unsigned bitWidth) {
     auto W = getBitWidth(i);
+    assert(bitWidth < W);
     auto max = getIntConst((1 << (bitWidth - 1)) - 1, W);
     auto min = getIntConst(-(1 << (bitWidth - 1)), W);
     Value *max_bitWidth =
@@ -3184,6 +3194,7 @@ class arm2llvm {
   // Implemented library pseudocode for unsigned satuaration from A64 ISA manual
   tuple<Value *, bool> UnsignedSatQ(Value *i, unsigned bitWidth) {
     auto W = getBitWidth(i);
+    assert(bitWidth < W);
     auto max = getIntConst((1 << bitWidth) - 1, W);
     auto min = getIntConst(0, W);
     Value *max_bitWidth = ConstantInt::get(Ctx, APInt::getMaxValue(bitWidth));
@@ -11457,6 +11468,15 @@ public:
       break;
     }
 
+      //    case AArch64::UQXTNv1i8:
+      //    case AArch64::UQXTNv1i16:
+      //    case AArch64::UQXTNv1i32:
+    case AArch64::UQXTNv8i8:
+    case AArch64::UQXTNv4i16:
+    case AArch64::UQXTNv2i32:
+    case AArch64::UQXTNv16i8:
+    case AArch64::UQXTNv8i16:
+    case AArch64::UQXTNv4i32:
       //    case AArch64::SQXTNv1i8:
       //    case AArch64::SQXTNv1i16:
       //    case AArch64::SQXTNv1i32:
@@ -11467,13 +11487,39 @@ public:
     case AArch64::SQXTNv8i16:
     case AArch64::SQXTNv4i32: {
       auto &op0 = CurInst->getOperand(0);
-      u_int64_t srcReg =
-          opcode == AArch64::SQXTNv1i8 || opcode == AArch64::SQXTNv1i16 ||
-                  opcode == AArch64::SQXTNv1i32 ||
-                  opcode == AArch64::SQXTNv8i8 ||
-                  opcode == AArch64::SQXTNv4i16 || opcode == AArch64::SQXTNv2i32
-              ? 1
-              : 2;
+
+      u_int64_t srcReg, part;
+      switch (opcode) {
+      case AArch64::UQXTNv1i8:
+      case AArch64::UQXTNv1i16:
+      case AArch64::UQXTNv1i32:
+      case AArch64::UQXTNv8i8:
+      case AArch64::UQXTNv4i16:
+      case AArch64::UQXTNv2i32:
+      case AArch64::SQXTNv1i8:
+      case AArch64::SQXTNv1i16:
+      case AArch64::SQXTNv1i32:
+      case AArch64::SQXTNv8i8:
+      case AArch64::SQXTNv4i16:
+      case AArch64::SQXTNv2i32:
+        srcReg = 1;
+        part = 0;
+        break;
+      case AArch64::UQXTNv16i8:
+      case AArch64::UQXTNv8i16:
+      case AArch64::UQXTNv4i32:
+      case AArch64::SQXTNv16i8:
+      case AArch64::SQXTNv8i16:
+      case AArch64::SQXTNv4i32:
+        srcReg = 2;
+        part = 1;
+        break;
+      default:
+        *out << "\nError Unknown opcode\n";
+        visitError();
+        break;
+      }
+
       auto &op1 = CurInst->getOperand(srcReg);
       assert(isSIMDandFPRegOperand(op0) && isSIMDandFPRegOperand(op0));
 
@@ -11481,27 +11527,29 @@ public:
       assert(getBitWidth(src) == 128 &&
              "Source value is not a vector with 128 bits");
 
-      u_int64_t eltSize, numElts, part;
-      part = opcode == AArch64::SQXTNv1i8 || opcode == AArch64::SQXTNv1i16 ||
-                     opcode == AArch64::SQXTNv1i32 ||
-                     opcode == AArch64::SQXTNv8i8 ||
-                     opcode == AArch64::SQXTNv4i16 ||
-                     opcode == AArch64::SQXTNv2i32
-                 ? 0
-                 : 1;
+      u_int64_t eltSize, numElts;
       switch (opcode) {
+      case AArch64::UQXTNv1i8:
+      case AArch64::UQXTNv16i8:
+      case AArch64::UQXTNv8i8:
       case AArch64::SQXTNv1i8:
       case AArch64::SQXTNv16i8:
       case AArch64::SQXTNv8i8:
         numElts = 8;
         eltSize = 8;
         break;
+      case AArch64::UQXTNv1i16:
+      case AArch64::UQXTNv8i16:
+      case AArch64::UQXTNv4i16:
       case AArch64::SQXTNv1i16:
       case AArch64::SQXTNv8i16:
       case AArch64::SQXTNv4i16:
         numElts = 4;
         eltSize = 16;
         break;
+      case AArch64::UQXTNv1i32:
+      case AArch64::UQXTNv4i32:
+      case AArch64::UQXTNv2i32:
       case AArch64::SQXTNv1i32:
       case AArch64::SQXTNv2i32:
       case AArch64::SQXTNv4i32:
@@ -11514,8 +11562,9 @@ public:
         break;
       }
 
-      if (opcode == AArch64::SQXTNv1i8 || opcode == AArch64::SQXTNv1i16 ||
-          opcode == AArch64::SQXTNv1i32) {
+      if (opcode == AArch64::UQXTNv1i8 || opcode == AArch64::UQXTNv1i16 ||
+          opcode == AArch64::UQXTNv1i32 || opcode == AArch64::SQXTNv1i8 ||
+          opcode == AArch64::SQXTNv1i16 || opcode == AArch64::SQXTNv1i32) {
         numElts = 1;
       }
 
@@ -11546,7 +11595,7 @@ public:
         final_vector = createInsertElement(final_vector, narrowed_element, i);
       }
 
-      // For SQXTN2 - insertion to upper half
+      // For UQXTN2, SQXTN2 - insertion to upper half
       if (part) {
         // Preserve the lower 64 bits so, read from destination register
         // and insert to the upper 64 bits
@@ -11558,7 +11607,8 @@ public:
         final_vector = createInsertElement(original_dest_vector, element, 1);
       }
 
-      // Write 64 bits for SQXTN or 128 bits SQXTN2 to output register
+      // Write 64 bits for UQXTN, SQXTN or 128 bits for UQXTN2, SQXTN2 to output
+      // register
       updateOutputReg(final_vector);
 
       break;
