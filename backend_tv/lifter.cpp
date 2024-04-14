@@ -526,7 +526,7 @@ class arm2llvm {
       AArch64::SUBSWrx, AArch64::SUBSXri, AArch64::SUBSXrs, AArch64::SUBSXrx,
       AArch64::ANDSWri, AArch64::ANDSWrr, AArch64::ANDSWrs, AArch64::ANDSXri,
       AArch64::ANDSXrr, AArch64::ANDSXrs, AArch64::BICSWrs, AArch64::BICSXrs,
-      AArch64::ADCSXr,  AArch64::ADCSWr,
+      AArch64::ADCSWr,  AArch64::ADCSXr,  AArch64::SBCSWr,  AArch64::SBCSXr,
   };
 
   const set<int> instrs_32 = {
@@ -543,6 +543,8 @@ class arm2llvm {
       AArch64::ADCWr,
       AArch64::ADCSWr,
       AArch64::ASRVWr,
+      AArch64::SBCSWr,
+      AArch64::SBCWr,
       AArch64::SUBWri,
       AArch64::SUBWrs,
       AArch64::SUBWrx,
@@ -790,6 +792,8 @@ class arm2llvm {
       AArch64::ADCXr,
       AArch64::ADCSXr,
       AArch64::ASRVXr,
+      AArch64::SBCXr,
+      AArch64::SBCSXr,
       AArch64::SUBXri,
       AArch64::SUBXrs,
       AArch64::SUBXrx,
@@ -1058,6 +1062,7 @@ class arm2llvm {
       AArch64::USHRv8i8_shift,
       AArch64::USHRv4i16_shift,
       AArch64::USHRv2i32_shift,
+      AArch64::USHRd,
       AArch64::SMULLv8i8_v8i16,
       AArch64::SMULLv2i32_v2i64,
       AArch64::SMULLv4i16_v4i32,
@@ -4435,12 +4440,25 @@ public:
       break;
     }
 
-    case AArch64::ADCXr:
     case AArch64::ADCWr:
+    case AArch64::ADCXr:
+    case AArch64::ADCSWr:
     case AArch64::ADCSXr:
-    case AArch64::ADCSWr: {
+    case AArch64::SBCWr:
+    case AArch64::SBCXr:
+    case AArch64::SBCSWr:
+    case AArch64::SBCSXr: {
       auto a = readFromOperand(1);
       auto b = readFromOperand(2);
+
+      switch (opcode) {
+      case AArch64::SBCWr:
+      case AArch64::SBCXr:
+      case AArch64::SBCSWr:
+      case AArch64::SBCSXr:
+        b = createNot(b);
+        break;
+      }
 
       auto [res, flags] = addWithCarry(a, b, getC());
       updateOutputReg(res);
@@ -9141,6 +9159,8 @@ public:
     case AArch64::USHRv16i8_shift:
     case AArch64::USHRv8i16_shift:
     case AArch64::USHRv4i32_shift:
+    case AArch64::USHRd:
+    case AArch64::USHRv2i64_shift:
     case AArch64::MULv2i32:
     case AArch64::MULv8i8:
     case AArch64::MULv4i16:
@@ -9274,8 +9294,7 @@ public:
     case AArch64::USHLLv8i16_shift:
     case AArch64::USHLLv16i8_shift:
     case AArch64::USHLLv4i16_shift:
-    case AArch64::USHLLv2i32_shift:
-    case AArch64::USHRv2i64_shift: {
+    case AArch64::USHLLv2i32_shift: {
       unsigned op1Size = 0;
       switch (opcode) {
       case AArch64::UADDWv8i8_v8i16:
@@ -9389,6 +9408,7 @@ public:
       case AArch64::USHRv16i8_shift:
       case AArch64::USHRv8i16_shift:
       case AArch64::USHRv4i32_shift:
+      case AArch64::USHRd:
         splatImm2 = true;
         op = [&](Value *a, Value *b) { return createMaskedLShr(a, b); };
         break;
@@ -9621,6 +9641,7 @@ public:
       unsigned eltSize, numElts;
       switch (opcode) {
       case AArch64::USHLv1i64:
+      case AArch64::USHRd:
       case AArch64::SSHLv1i64:
       case AArch64::ADDv1i64:
       case AArch64::SUBv1i64:
