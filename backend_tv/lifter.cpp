@@ -1006,6 +1006,7 @@ class arm2llvm {
       AArch64::SHLv8i8_shift,
       AArch64::SHLv4i16_shift,
       AArch64::SHLv2i32_shift,
+      AArch64::SHLd,
       AArch64::SSHRv4i16_shift,
       AArch64::SSHRv8i8_shift,
       AArch64::SSHRv2i32_shift,
@@ -9180,6 +9181,7 @@ public:
     case AArch64::SHLv2i64_shift:
     case AArch64::SHLv8i8_shift:
     case AArch64::SHLv4i16_shift:
+    case AArch64::SHLd:
     case AArch64::SHLv2i32_shift:
     case AArch64::BICv4i16:
     case AArch64::BICv8i8:
@@ -9436,6 +9438,7 @@ public:
       case AArch64::SHLv2i64_shift:
       case AArch64::SHLv8i8_shift:
       case AArch64::SHLv4i16_shift:
+      case AArch64::SHLd:
       case AArch64::SHLv2i32_shift:
         splatImm2 = true;
         op = [&](Value *a, Value *b) { return createMaskedShl(a, b); };
@@ -9643,6 +9646,7 @@ public:
       case AArch64::USHLv1i64:
       case AArch64::USHRd:
       case AArch64::SSHLv1i64:
+      case AArch64::SHLd:
       case AArch64::ADDv1i64:
       case AArch64::SUBv1i64:
         numElts = 1;
