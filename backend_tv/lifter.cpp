@@ -1236,6 +1236,10 @@ class arm2llvm {
       AArch64::PRFMroX,
       AArch64::PRFMui,
       AArch64::PRFUMi,
+      AArch64::PACIASP,
+      AArch64::PACIBSP,
+      AArch64::AUTIASP,
+      AArch64::AUTIBSP,
       AArch64::HINT,
   };
 
@@ -4211,6 +4215,10 @@ public:
     case AArch64::PRFMroX:
     case AArch64::PRFMui:
     case AArch64::PRFUMi:
+    case AArch64::PACIASP:
+    case AArch64::PACIBSP:
+    case AArch64::AUTIASP:
+    case AArch64::AUTIBSP:
     case AArch64::HINT: {
       // NO-OPS
       break;
