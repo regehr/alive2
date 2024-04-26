@@ -1007,9 +1007,10 @@ class arm2llvm {
       AArch64::SHLv4i16_shift,
       AArch64::SHLv2i32_shift,
       AArch64::SHLd,
-      AArch64::SSHRv4i16_shift,
       AArch64::SSHRv8i8_shift,
+      AArch64::SSHRv4i16_shift,
       AArch64::SSHRv2i32_shift,
+      AArch64::SSHRd,
       AArch64::SSRAv8i8_shift,
       AArch64::SSRAv4i16_shift,
       AArch64::SSRAv2i32_shift,
@@ -1072,6 +1073,7 @@ class arm2llvm {
       AArch64::USRAv8i8_shift,
       AArch64::USRAv4i16_shift,
       AArch64::USRAv2i32_shift,
+      AArch64::USRAd,
       AArch64::SMINv8i8,
       AArch64::SMINv4i16,
       AArch64::SMINv2i32,
@@ -1457,8 +1459,8 @@ class arm2llvm {
       AArch64::UMAXPv4i32,
       AArch64::USRAv16i8_shift,
       AArch64::USRAv8i16_shift,
-      AArch64::USRAv2i64_shift,
       AArch64::USRAv4i32_shift,
+      AArch64::USRAv2i64_shift,
       AArch64::SMULLv8i16_v4i32,
       AArch64::SMULLv16i8_v8i16,
       AArch64::SMULLv4i32_v2i64,
@@ -9176,13 +9178,14 @@ public:
     case AArch64::MULv16i8:
     case AArch64::MULv8i16:
     case AArch64::MULv4i32:
-    case AArch64::SSHRv4i16_shift:
     case AArch64::SSHRv8i8_shift:
-    case AArch64::SSHRv2i32_shift:
     case AArch64::SSHRv16i8_shift:
-    case AArch64::SSHRv2i64_shift:
+    case AArch64::SSHRv4i16_shift:
     case AArch64::SSHRv8i16_shift:
+    case AArch64::SSHRv2i32_shift:
     case AArch64::SSHRv4i32_shift:
+    case AArch64::SSHRd:
+    case AArch64::SSHRv2i64_shift:
     case AArch64::SHLv16i8_shift:
     case AArch64::SHLv8i16_shift:
     case AArch64::SHLv4i32_shift:
@@ -9430,13 +9433,14 @@ public:
       case AArch64::MULv4i32:
         op = [&](Value *a, Value *b) { return createMul(a, b); };
         break;
-      case AArch64::SSHRv4i16_shift:
       case AArch64::SSHRv8i8_shift:
-      case AArch64::SSHRv2i32_shift:
       case AArch64::SSHRv16i8_shift:
-      case AArch64::SSHRv2i64_shift:
+      case AArch64::SSHRv4i16_shift:
       case AArch64::SSHRv8i16_shift:
+      case AArch64::SSHRv2i32_shift:
       case AArch64::SSHRv4i32_shift:
+      case AArch64::SSHRd:
+      case AArch64::SSHRv2i64_shift:
         splatImm2 = true;
         op = [&](Value *a, Value *b) { return createMaskedAShr(a, b); };
         break;
@@ -9653,6 +9657,7 @@ public:
       switch (opcode) {
       case AArch64::USHLv1i64:
       case AArch64::USHRd:
+      case AArch64::SSHRd:
       case AArch64::SSHLv1i64:
       case AArch64::SHLd:
       case AArch64::ADDv1i64:
@@ -10941,7 +10946,6 @@ public:
     }
 
 #define GET_SIZES7(INSN, SUFF)                                                 \
-  unsigned numElts, eltSize;                                                   \
   if (opcode == AArch64::INSN##v8i8##SUFF) {                                   \
     numElts = 8;                                                               \
     eltSize = 8;                                                               \
@@ -10963,8 +10967,6 @@ public:
   } else if (opcode == AArch64::INSN##v2i64##SUFF) {                           \
     numElts = 2;                                                               \
     eltSize = 64;                                                              \
-  } else {                                                                     \
-    assert(false);                                                             \
   }
 
     case AArch64::SSRAv8i8_shift:
@@ -11026,13 +11028,19 @@ public:
     }
 
     case AArch64::USRAv8i8_shift:
-    case AArch64::USRAv4i16_shift:
-    case AArch64::USRAv2i32_shift:
     case AArch64::USRAv16i8_shift:
+    case AArch64::USRAv4i16_shift:
     case AArch64::USRAv8i16_shift:
+    case AArch64::USRAv2i32_shift:
+    case AArch64::USRAv4i32_shift:
     case AArch64::USRAv2i64_shift:
-    case AArch64::USRAv4i32_shift: {
+    case AArch64::USRAd: {
+      unsigned numElts, eltSize;
       GET_SIZES7(USRA, _shift);
+      if (opcode == AArch64::USRAd) {
+        numElts = 1;
+        eltSize = 64;
+      }
       auto a = readFromVecOperand(1, eltSize, numElts);
       auto b = readFromVecOperand(2, eltSize, numElts);
       auto exp = getImm(3);
@@ -11055,6 +11063,7 @@ public:
     case AArch64::ZIP1v16i8:
     case AArch64::ZIP1v2i64:
     case AArch64::ZIP1v4i32: {
+      unsigned numElts, eltSize;
       GET_SIZES7(ZIP1, );
       auto a = readFromVecOperand(1, eltSize, numElts);
       auto b = readFromVecOperand(2, eltSize, numElts);
@@ -11076,6 +11085,7 @@ public:
     case AArch64::ZIP2v2i64:
     case AArch64::ZIP2v16i8:
     case AArch64::ZIP2v4i32: {
+      unsigned numElts, eltSize;
       GET_SIZES7(ZIP2, );
       auto a = readFromVecOperand(1, eltSize, numElts);
       auto b = readFromVecOperand(2, eltSize, numElts);
@@ -11097,6 +11107,7 @@ public:
     case AArch64::ADDPv4i32:
     case AArch64::ADDPv8i16:
     case AArch64::ADDPv2i64: {
+      unsigned numElts, eltSize;
       GET_SIZES7(ADDP, );
       auto x = readFromOperand(1);
       auto y = readFromOperand(2);
