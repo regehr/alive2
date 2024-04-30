@@ -17,6 +17,7 @@ class VectorType;
 
 namespace lifter {
 
+void checkArguments(llvm::CallInst *ci, llvm::Value *val);
 void checkVectorTy(llvm::VectorType *Ty);
 
 extern std::ostream *out;

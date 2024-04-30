@@ -117,11 +117,16 @@ void checkSupportHelper(Instruction &i, const DataLayout &DL,
     exit(-1);
   }
   if (auto *ci = dyn_cast<CallInst>(&i)) {
+    auto &Ctx = ci->getContext();
     if (auto callee = ci->getCalledFunction()) {
-      if (!callee->isIntrinsic())
+      if (!callee->isIntrinsic()) {
         for (auto arg = callee->arg_begin(); arg != callee->arg_end(); ++arg)
           if (auto *vTy = dyn_cast<VectorType>(arg->getType()))
             checkVectorTy(vTy);
+      } else if (callee->isConstrainedFPIntrinsic() ||
+                 callee->getName().contains("llvm.fptrunc.round"))
+        checkArguments(
+            ci, MetadataAsValue::get(Ctx, MDString::get(Ctx, "round.dynamic")));
       if (callee->isVarArg()) {
         *out << "\nERROR: varargs not supported\n\n";
         exit(-1);
@@ -147,6 +152,15 @@ void checkSupportHelper(Instruction &i, const DataLayout &DL,
 } // namespace
 
 namespace lifter {
+
+void checkArguments(CallInst *ci, Value *val) {
+  for (auto &arg : ci->args()) {
+    if (arg.get() == val) {
+      *out << "\nERROR: " << val->getNameOrAsOperand() << " not supported\n\n";
+      exit(-1);
+    }
+  }
+}
 
 void checkVectorTy(VectorType *Ty) {
   auto *EltTy = Ty->getElementType();
