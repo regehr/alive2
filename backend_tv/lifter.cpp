@@ -1980,7 +1980,8 @@ class arm2llvm : public aslp::lifter_interface_llvm {
   }
 
   llvm::AllocaInst* get_reg(aslp::reg_t regtype, uint64_t num) override {
-    using namespace aslp; // reg_t and pstate_t
+    using reg_t = aslp::reg_t;
+    using pstate_t = aslp::pstate_t;
 
     uint64_t reg = 0;
     if (regtype == reg_t::X) {

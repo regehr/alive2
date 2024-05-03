@@ -57,7 +57,7 @@ expr:
 	    OPEN_BRACKET (expr (SCOLON expr)*)? CLOSE_BRACKET
 	    CLOSE_PAREN                                                             # ExprTApply
 	| 'Expr_Slices' OPEN_PAREN expr COMMA
-			OPEN_BRACKET OPEN_PAREN slice_expr CLOSE_PAREN CLOSE_BRACKET
+			OPEN_BRACKET slice_expr CLOSE_BRACKET
 			CLOSE_PAREN										                                          # ExprSlices
 	| 'Expr_Field' OPEN_PAREN expr COMMA ident CLOSE_PAREN                      # ExprField
 	| 'Expr_Array' OPEN_PAREN base=expr (COMMA indices+=expr)* CLOSE_PAREN			# ExprArray

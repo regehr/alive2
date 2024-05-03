@@ -103,29 +103,38 @@ std::any aslt_visitor::visitStmt(SemanticsParser::StmtContext *ctx) {
   return std::any_cast<stmt_t>(super::visitStmt(ctx));
 }
 
-std::any aslt_visitor::visitStmts(SemanticsParser::StmtsContext *ctx) {
+stmt_t aslt_visitor::visit_stmt(const std::vector<aslt::SemanticsParser::StmtContext *>& stmts) {
   log() << "visitStmts " << '\n';
 
   // store and reset current bb to support nesting statements nicely
   auto bb = iface.get_bb();
 
-  if (ctx == nullptr || ctx->stmt().empty()) {
+  if (stmts.empty()) {
     auto empty = new_stmt("stmtlist_empty");
     iface.set_bb(bb);
     return empty;
   }
 
-  auto ctxs = ctx->stmt();
-  require(!ctxs.empty(), "statement list must not be empty!");
+  require(!stmts.empty(), "statement list must not be empty!");
 
   stmt_counts[depth+1] = 0;
-  stmt_t s = stmt(ctxs.at(0));
-  for (auto& s2 : ctx->stmt() | std::ranges::views::drop(1)) {
+  stmt_t s = stmt(stmts.at(0));
+  for (auto& s2 : stmts | std::ranges::views::drop(1)) {
     s = link(s, stmt(s2));
   }
 
   iface.set_bb(bb);
   return s;
+}
+
+std::any aslt_visitor::visitStmts(SemanticsParser::StmtsContext *ctx) {
+  static constexpr std::vector<aslt::SemanticsParser::StmtContext *> empty;
+  return visit_stmt(ctx ? ctx->stmt() : empty);
+}
+
+std::any aslt_visitor::visitStmt_lines(aslt::SemanticsParser::Stmt_linesContext *ctx) {
+  static constexpr std::vector<aslt::SemanticsParser::StmtContext *> empty;
+  return visit_stmt(ctx ? ctx->stmt() : empty);
 }
 
 std::any aslt_visitor::visitAssign(SemanticsParser::AssignContext *ctx) {

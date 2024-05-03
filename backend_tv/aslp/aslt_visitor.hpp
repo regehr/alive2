@@ -191,7 +191,9 @@ protected:
   }
 public:
   virtual std::any visitStmt(aslt::SemanticsParser::StmtContext *ctx) override;
+  virtual stmt_t visit_stmt(const std::vector<aslt::SemanticsParser::StmtContext*>& stmts);
   virtual std::any visitStmts(aslt::SemanticsParser::StmtsContext *ctx) override;
+  virtual std::any visitStmt_lines(aslt::SemanticsParser::Stmt_linesContext *ctx) override;
   virtual std::any visitAssign(aslt::SemanticsParser::AssignContext *ctx) override;
   virtual std::any visitConstDecl(aslt::SemanticsParser::ConstDeclContext *ctx) override;
   virtual std::any visitVarDecl(aslt::SemanticsParser::VarDeclContext *ctx) override;
