@@ -263,6 +263,62 @@ std::any aslt_visitor::visitConditionalStmt(SemanticsParser::ConditionalStmtCont
   return stmt_t{entry.first, join.second};
 }
 
+std::any aslt_visitor::visitLoopStmt(SemanticsParser::LoopStmtContext *ctx) {
+  log() << "visitLoop_stmt" << '\n';
+
+  bool inc = ctx->direction()->getText() == "Direction_Up";
+
+  /* Loop index type is an integer, which seems to always be 100 bits wide */
+  int width = 100;
+  type_t ty = iface.getIntTy(width);
+
+  /* for_header:
+   *  var := start
+   *  goto body
+   *
+   * inc_body:
+   *  stmts
+   *  var := var + 1
+   *  if var > end then exit else body
+   *
+   * dec_body:
+   *  stmts
+   *  var := var - 1
+   *  if var < end then exit else body
+   *
+   * for_exit:
+   */
+
+  auto exit = new_stmt("for_exit");
+  auto entry = new_stmt("for_header");
+
+  /* Allocate and init the loop index */
+  auto start = expr(ctx->start_index);
+  auto name = ident(ctx->ident());
+  auto v = new llvm::AllocaInst(ty, 0, name, entry.second);
+  new llvm::StoreInst(start, v, entry.second);
+  add_local(name, v);
+
+  /* Process loop body */
+  auto body = std::any_cast<stmt_t>(visitStmts(ctx->stmts()));
+  iface.set_bb(body.second); // TODO: Not sure if this is necessary
+
+  /* Increment/Decrement counter */
+  auto v2 = iface.createLoad(ty, v);
+  auto rhs2 = inc ? iface.createAdd(v2, iface.getIntConst(1, width)) : iface.createSub(v2, iface.getIntConst(1, width));
+  new llvm::StoreInst(rhs2, v, body.second);
+
+  /* Test stop, branching to exit or back to body entry */
+  auto stop = expr(ctx->stop_index);
+  auto cond = iface.createICmp(inc ? llvm::ICmpInst::Predicate::ICMP_SLT :  llvm::ICmpInst::Predicate::ICMP_SGT, stop, rhs2);
+  iface.createBranch(cond, exit, body);
+
+  /* Fallthrough for entry */
+  link(entry,body);
+
+  return stmt_t{entry.first, exit.second};
+}
+
 std::any aslt_visitor::visitTypeBits(SemanticsParser::TypeBitsContext *ctx) {
   log() << "visitTypeBits" << ' ' << ctx->getText() << '\n';
   auto bits = lit_int(ctx->expr());
@@ -400,6 +456,11 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       type_t finalty = llvm::Type::getIntNTy(context, targs[1]);
       require_(finalty != x->getType());
       return static_cast<expr_t>(iface.createZExt(x, finalty));
+
+    } else if (name == "cvt_int_bits.0") {
+      /* Needed to convert loop index into bv */
+      type_t finalty = llvm::Type::getIntNTy(context, targs[0]);
+      return static_cast<expr_t>(iface.createTrunc(x, finalty));
 
     } else if (name == "eq_bits.0") {
       return static_cast<expr_t>(iface.createICmp(llvm::CmpInst::Predicate::ICMP_EQ, x, y));

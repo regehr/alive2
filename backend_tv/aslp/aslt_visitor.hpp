@@ -202,6 +202,7 @@ public:
   virtual std::any visitThrow(aslt::SemanticsParser::ThrowContext *ctx) override;
   virtual std::any visitCall_stmt(aslt::SemanticsParser::Call_stmtContext *ctx) override;
   virtual std::any visitConditionalStmt(aslt::SemanticsParser::ConditionalStmtContext *ctx) override;
+  virtual std::any visitLoopStmt(aslt::SemanticsParser::LoopStmtContext *ctx) override;
   virtual std::any visitTypeBits(aslt::SemanticsParser::TypeBitsContext *context) override;
   virtual std::any visitTypeBoolean(aslt::SemanticsParser::TypeBooleanContext *context) override;
   virtual std::any visitTypeRegister(aslt::SemanticsParser::TypeRegisterContext *context) override;
