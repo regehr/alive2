@@ -600,15 +600,27 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 std::any aslt_visitor::visitExprSlices(SemanticsParser::ExprSlicesContext *ctx) {
   log() << "visitExprSlices" << '\n';
   auto base = expr(ctx->expr());
+  auto basewd = base->getType()->getIntegerBitWidth();
   auto sl = slice(ctx->slice_expr());
-  // a slice is done by right shifting by the "low" value,
-  // then, truncating to the "width" value
-  auto lo = llvm::ConstantInt::get(base->getType(), sl.lo);
-  auto wdty = llvm::Type::getIntNTy(context, sl.wd);
-  // raw shift ok, since slice must be within bounds.
-  auto shifted = !lo->isZeroValue() ? iface.createRawLShr(base, lo) : base;
-  auto trunced = iface.createTrunc(shifted, wdty);
-  return static_cast<expr_t>(trunced);
+
+  if (basewd % sl.wd == 0 && sl.lo % sl.wd == 0 && sl.wd > 1) {
+    // if slice is aligned and not a single bit, treat it as a vector.
+    auto elemty = llvm::IntegerType::get(context, sl.wd);
+    auto arrayty = llvm::VectorType::get(elemty, llvm::ElementCount::getFixed(basewd / sl.wd));
+    auto vec = iface.createBitCast(base, arrayty);
+
+    auto ret = iface.createExtractElement(vec, llvm::ConstantInt::get(base->getType(), sl.lo / sl.wd));
+    return static_cast<expr_t>(ret);
+  } else {
+    // otherwise, a slice is done by right shifting by the "low" value,
+    // then, truncating to the "width" value
+    auto lo = llvm::ConstantInt::get(base->getType(), sl.lo);
+    auto wdty = llvm::Type::getIntNTy(context, sl.wd);
+    // raw shift ok, since slice must be within bounds.
+    auto shifted = !lo->isZeroValue() ? iface.createRawLShr(base, lo) : base;
+    auto trunced = iface.createTrunc(shifted, wdty);
+    return static_cast<expr_t>(trunced);
+  }
 }
 
 std::any aslt_visitor::visitExprField(SemanticsParser::ExprFieldContext *ctx) {
