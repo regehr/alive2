@@ -112,8 +112,11 @@ print "\n";
 foreach my $ref (@funcs) {
     (my $file, my $func, my $num) = @{$ref};
     my ($out, $path, $suffix) = File::Basename::fileparse($file, ".bc");
-    my $outfile = "logs/${out}_${num}.log";
-    my $cmd = "/usr/bin/timeout -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile 2>&1";
+    my $outfile = "logs/${out}_${num}.base.log";
+    my $outfile_aslp = "logs/${out}_${num}.aslp.log";
+    my $cmd = "ASLP=false /usr/bin/timeout -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile 2>&1";
+    go($cmd);
+    my $cmd = "/usr/bin/timeout -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile_aslp 2>&1";
     go($cmd);
     $count++;
     my $pctstr = sprintf("%.1f", $count * 100.0 / $total);
