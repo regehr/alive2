@@ -13,7 +13,7 @@ use BSD::Resource;
 # - SPEC modules tend to be big, would be very nice to automatically
 #   run llvm-reduce on some categories of problems
 
-my $TIMEOUT = $ENV{"TIMEOUT"} || 60;
+my $TIMEOUT = $ENV{"TIMEOUT"} || 30;
 
 my $GIG = 1000 * 1000 * 1000;
 my $MAXKB = 2 * $GIG;
@@ -70,6 +70,18 @@ sub shuffle ($) {
     }
 }
 
+# https://stackoverflow.com/a/19932810
+sub difftime2string ($) {
+  my ($x) = @_;
+  ($x < 0) and return "-" . difftime2string(-$x);
+  ($x < 1) and return sprintf("%.2fms",$x*1000);
+  ($x < 100) and return sprintf("%.2fsec",$x);
+  ($x < 6000) and return sprintf("%.2fmin",$x/60);
+  ($x < 108000) and return sprintf("%.2fhrs",$x/3600);
+  ($x < 400*24*3600) and return sprintf("%.2fdays",$x/(24*3600));
+  return sprintf("%.2f years",$x/(365.25*24*3600));
+}
+
 my $num_running = 0;
 my $opid = $$;
 
@@ -118,6 +130,7 @@ shuffle(\@funcs);
 mkdir("logs") or die "oops-- can't create logs directory";
 mkdir("logs-aslp") or die "oops-- can't create logs-aslp directory";
 
+my $starttime = time(); # seconds
 my $count = 0;
 my $total = scalar(@funcs);
 my $opctstr = "";
@@ -132,9 +145,16 @@ foreach my $ref (@funcs) {
     $cmd = "/usr/bin/timeout -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile_aslp 2>&1";
     go($cmd);
     $count++;
-    my $pctstr = sprintf("%.1f", $count * 100.0 / $total);
+    my $pctstr = sprintf("%.2f", $count * 100.0 / $total);
     if ($pctstr ne $opctstr) {
-        print("\r$pctstr %");
+        my $elapsed = time() - $starttime; # seconds
+        if ($elapsed <= 0) { $elapsed = 1; }
+        my $proportion = ($count / $total);
+        my $remaining = ($elapsed / $proportion) * (1.0 - $proportion); # seconds
+        my $remainingstr = difftime2string($remaining);
+        my $elapsedstr = difftime2string($elapsed);
+        my $projectedstr = difftime2string($elapsed + $remaining);
+        print("\r$pctstr % ($elapsedstr elapsed / $projectedstr projected, $remainingstr remaining)                ");
         $opctstr = $pctstr;
     }
 }
