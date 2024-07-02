@@ -70,6 +70,7 @@
 #include <vector>
 
 #include "aslp/aslp_bridge.hpp"
+#include "aslp/aarch64_map.hpp"
 
 using namespace std;
 using namespace llvm;
@@ -218,6 +219,8 @@ class arm2llvm : public aslp::lifter_interface_llvm {
   const MCCodeEmitter &MCE;
   const MCSubtargetInfo &STI;
   const MCInstrAnalysis &IA;
+
+  std::map<std::string, unsigned int> encodingCounts;
 
   // Map of ADRP MCInsts to the string representations of the operand variable
   // names
@@ -4149,18 +4152,20 @@ public:
     if (auto a64Opcode = getArmOpcode(I)) {
       auto aslpResult = bridge.run(I, a64Opcode.value());
 
-      if (auto stmts = std::get_if<aslp::stmt_t>(&aslpResult)) {
+      if (auto result = std::get_if<aslp::result_t>(&aslpResult)) {
 
         // branch lifter's entry BB to entry BB in ASLP result,
         // then set ASLP's exit BB to be the next BB.
         LLVMBB = entrybb;
-        this->createBranch(stmts->first);
-        LLVMBB = stmts->second;
+        auto [encoding, stmts] = *result;
+        this->createBranch(stmts.first);
+        LLVMBB = stmts.second;
 
         *out 
           << "... lifted via aslp: " 
           << instrPrinter->getOpcodeName(I.getOpcode()).str() 
           << std::endl;
+        encodingCounts[encoding]++;
         return;
 
       } else {
@@ -4184,6 +4189,9 @@ public:
       *out << "... arm opnum failed\n";
       // arm opcode translation failed, possibly SEH_NOP. continue with classic.
     }
+
+    std::string encoding{"classic_" + aslp::aarch64_revmap().at(opcode)};
+    encodingCounts[encoding]++;
 
     // always create new bb per instruction, to match aslp
     auto newbb = BasicBlock::Create(Ctx, "lifter_" + nextName(), liftedFn);
@@ -11879,6 +11887,12 @@ public:
       }
     }
     *out << armInstNum << " AArch64 instructions\n";
+
+    *out << "encoding counts: ";
+    for (auto& [enc, count] : encodingCounts) {
+      *out << enc << '=' << count << ',';
+    }
+    *out << '\n';
     return liftedFn;
   }
 };

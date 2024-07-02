@@ -11,7 +11,6 @@
 #include "interface.hpp"
 #include "aslt_visitor.hpp"
 
-#include <aslp-cpp/aslp-cpp_export.hpp>
 #include <aslp-cpp/aslp-cpp.hpp>
 
 
@@ -19,6 +18,9 @@ namespace aslp {
 
 // an opcode for ASLP is four bytes (= 32 bits), in Arm's conventional little-endian order.
 using opcode_t = std::array<uint8_t, 4>;
+
+// encoding name + semantics
+using result_t = std::tuple<std::string, stmt_t>;
 
 enum struct err_t {
   missing,
@@ -46,13 +48,13 @@ class bridge {
 public:
   bridge(lifter_interface_llvm&, const llvm::MCCodeEmitter&, const llvm::MCSubtargetInfo&, const llvm::MCInstrAnalysis&);
 
-  std::variant<err_t, stmt_t> run(const llvm::MCInst& inst, const opcode_t& bytes);
+  std::variant<err_t, result_t> run(const llvm::MCInst& inst, const opcode_t& bytes);
   static const config_t& config();
 
 protected:
   using parsed_t = std::reference_wrapper<aslt::SemanticsParser::StmtsContext>;
 
-  std::variant<err_t, stmt_t> run_special(const llvm::MCInst& inst, const opcode_t& bytes);
+  std::variant<err_t, result_t> run_special(const llvm::MCInst& inst, const opcode_t& bytes);
   std::variant<err_t, stmt_t> parse(std::string_view aslt);
 };
 

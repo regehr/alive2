@@ -129,11 +129,14 @@ std::variant<err_t, stmt_t> bridge::parse(std::string_view aslt) {
 #endif
 
 
-std::variant<err_t, stmt_t> bridge::run_special(const llvm::MCInst& inst, const opcode_t& bytes) {
+std::variant<err_t, result_t> bridge::run_special(const llvm::MCInst& inst, const opcode_t& bytes) {
   llvm::BasicBlock* bb{nullptr};
+  std::string name{"special_unknown"};
 
   if (inst.getOpcode() == 1572) { // ADRP
       assert(inst.getOperand(0).isReg());
+
+      name = "special_adrp";
 
       bb = llvm::BasicBlock::Create(
           context, "aslp_" + iface.nextName() + "_special", &iface.ll_function());
@@ -161,13 +164,13 @@ std::variant<err_t, stmt_t> bridge::run_special(const llvm::MCInst& inst, const 
   }
 
   if (bb)
-    return stmt_t{bb, bb};
+    return std::make_tuple(name, stmt_t{bb, bb});
   else
     return err_t::banned;
 }
 
 
-std::variant<err_t, stmt_t> bridge::run(const llvm::MCInst& inst, const opcode_t& bytes) {
+std::variant<err_t, result_t> bridge::run(const llvm::MCInst& inst, const opcode_t& bytes) {
   const auto& mcinst_banned = config().mcinst_banned;
   bool banned = !config().enable
     || ia.isBranch(inst)
@@ -180,13 +183,14 @@ std::variant<err_t, stmt_t> bridge::run(const llvm::MCInst& inst, const opcode_t
     return err_t::banned;
 
   auto special = run_special(inst, bytes);
-  if (std::holds_alternative<stmt_t>(special)) {
+  if (std::holds_alternative<result_t>(special)) {
     return special;
   }
 
+  std::string encoding;
   std::string semantics;
   try {
-    semantics = conn.get_opcode(get_opnum(bytes));
+    std::tie(encoding, semantics) = conn.get_opcode(get_opnum(bytes));
   } catch (const std::runtime_error& e) {
     std::cerr << "aslp_client reported error during disassembly: " << e.what() << std::endl;
     return err_t::missing;
@@ -197,12 +201,12 @@ std::variant<err_t, stmt_t> bridge::run(const llvm::MCInst& inst, const opcode_t
   // aslt_path = std::filesystem::absolute(aslt_path);
 
   auto parsed = parse(semantics);
-  auto ret = std::get_if<stmt_t>(&parsed);
-  if (!ret)
-    return parsed;
+  auto err = std::get_if<err_t>(&parsed);
+  if (err)
+    return *err;
 
   std::cerr << "ASLP FINISHED!" << std::endl;
-  return *ret;
+  return std::make_tuple(encoding, std::get<stmt_t>(parsed));
 }
 
 
