@@ -16,11 +16,13 @@ use BSD::Resource;
 my $TIMEOUT = $ENV{"TIMEOUT"} || 60;
 
 my $GIG = 1000 * 1000 * 1000;
-my $MAXKB = 16 * $GIG;
-my $ret = setrlimit(RLIMIT_VMEM, $MAXKB, $MAXKB);
+my $MAXKB = 2 * $GIG;
+my $ret = setrlimit(RLIMIT_RSS, $MAXKB, $MAXKB);
 die unless $ret;
+# RLIMIT_VMEM prevents asan from functioning
 
-my $NPROCS = Sys::CPU::cpu_count();
+# my $NPROCS = Sys::CPU::cpu_count();
+my $NPROCS = 10;
 print "using $NPROCS cores\n";
 
 my $LLVMDIS = $ENV{"LLVMDIS"} || $ENV{"HOME"}."/progs/llvm-regehr/llvm/build/bin/llvm-dis";
@@ -88,6 +90,7 @@ sub go($) {
 my $dir = $ARGV[0];
 die "please specify directory of LLVM bitcode" unless (-d $dir);
 my @files = glob "$dir/*.bc";
+# splice(@files, 10);
 print "found ", scalar @files, " .bc files\n";
 
 my $LIMIT = $ENV{"LIMIT"};
@@ -104,6 +107,7 @@ print "\n";
 shuffle(\@funcs);
 
 mkdir("logs") or die "oops-- can't create logs directory";
+mkdir("logs-aslp") or die "oops-- can't create logs-aslp directory";
 
 my $count = 0;
 my $total = scalar(@funcs);
@@ -112,8 +116,8 @@ print "\n";
 foreach my $ref (@funcs) {
     (my $file, my $func, my $num) = @{$ref};
     my ($out, $path, $suffix) = File::Basename::fileparse($file, ".bc");
-    my $outfile = "logs/${out}_${num}.base.log";
-    my $outfile_aslp = "logs/${out}_${num}.aslp.log";
+    my $outfile = "logs/${out}_${num}.log";
+    my $outfile_aslp = "logs-aslp/${out}_${num}.log";
     my $cmd = "ASLP=false /usr/bin/timeout -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile 2>&1";
     go($cmd);
     my $cmd = "/usr/bin/timeout -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile_aslp 2>&1";

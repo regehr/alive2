@@ -17,6 +17,7 @@ if ! [[ -d llvm-dev ]]; then
   nix build 'github:katrinafyi/pac-nix#llvm-custom-git.libllvm^dev' -o llvm
 fi
 
+  # -DCMAKE_BUILD_TYPE=Release \
 cmake -B build -DBUILD_TV=1 \
   -DCMAKE_PREFIX_PATH=$(realpath antlr-dev)';'$(realpath llvm-dev) \
   -DANTLR4_JAR_LOCATION=$(realpath antlr-jar) \
