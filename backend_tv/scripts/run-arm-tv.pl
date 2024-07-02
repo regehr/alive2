@@ -35,7 +35,17 @@ sub scan_file($) {
     (my $file) = @_;
 #     print ".";
     my $num = 0;
-    open my $INF, "$LLVMDIS $file -o - |" or die;
+
+    my $llfile = $file;
+    $llfile =~ s/[.]bc$/.ll/;
+    my $INF;
+
+    # simply read .ll file if it exists next to the .bc file
+    if (-e $llfile) {
+        open $INF, "<$llfile" or die "failed to read .ll file";
+    } else {
+        open $INF, "$LLVMDIS $file -o - |" or die "failed to llvm-dis";
+    }
     while (my $line = <$INF>) {
         chomp($line);
         next unless $line =~ /^define /;
@@ -90,7 +100,6 @@ sub go($) {
 my $dir = $ARGV[0];
 die "please specify directory of LLVM bitcode" unless (-d $dir);
 my @files = glob "$dir/*.bc";
-# splice(@files, 10);
 print "found ", scalar @files, " .bc files\n";
 
 my $LIMIT = $ENV{"LIMIT"};
@@ -120,7 +129,7 @@ foreach my $ref (@funcs) {
     my $outfile_aslp = "logs-aslp/${out}_${num}.log";
     my $cmd = "ASLP=false /usr/bin/timeout -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile 2>&1";
     go($cmd);
-    my $cmd = "/usr/bin/timeout -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile_aslp 2>&1";
+    $cmd = "/usr/bin/timeout -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile_aslp 2>&1";
     go($cmd);
     $count++;
     my $pctstr = sprintf("%.1f", $count * 100.0 / $total);
