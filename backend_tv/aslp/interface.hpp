@@ -52,6 +52,9 @@ public:
   virtual expr_t getIntConst(uint64_t val, u_int64_t bits) = 0;
   virtual type_t getIntTy(unsigned bits) = 0; 
   virtual type_t getFPType(unsigned bits) = 0; 
+  virtual type_t getVecTy(unsigned eltSize, unsigned numElts, bool isFP = false) = 0;
+
+  virtual expr_t getUndefVec(unsigned numElts, unsigned eltSize) = 0;
 
   virtual void assertTrue(expr_t cond) = 0;
 
@@ -112,6 +115,8 @@ public:
 
   virtual expr_t createPtrToInt(expr_t v, type_t ty) = 0;
 
+  virtual expr_t createInsertElement(expr_t vec, expr_t val, expr_t idx) = 0;
+
   virtual expr_t createInsertElement(expr_t vec, expr_t val, int idx) = 0;
 
   virtual expr_t createExtractElement(expr_t v, expr_t idx) = 0;
@@ -119,6 +124,8 @@ public:
   virtual expr_t createExtractElement(expr_t v, int idx) = 0;
 
   virtual expr_t createShuffleVector(expr_t v, llvm::ArrayRef<int> mask) = 0;
+
+  virtual expr_t createShuffleVector(expr_t v, expr_t v2, llvm::ArrayRef<int> mask) = 0;
 
   virtual expr_t getIndexedElement(unsigned idx, unsigned eltSize, unsigned reg) = 0;
 
