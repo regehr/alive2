@@ -4,6 +4,13 @@
 #include <string>
 
 namespace aslp {
+#ifndef AARCH64_MAP_IMPL
+
+const std::map<std::string, int>& aarch64_map();
+const std::map<int, const std::string>& aarch64_revmap();
+
+#else
+
 const std::map<std::string, int>& aarch64_map() {
   static std::map<std::string, int> map;
   if (map.size() == 0) {
@@ -16482,9 +16489,11 @@ const std::map<int, const std::string>& aarch64_revmap() {
   }
   return map;
 }
-
+#endif
 } // namespace aslp
 
+
+#ifdef AARCH64_MAP_CHECK
 static_assert(llvm::AArch64::PHI == 0);
 static_assert(llvm::AArch64::INLINEASM == 1);
 static_assert(llvm::AArch64::INLINEASM_BR == 2);
@@ -24718,3 +24727,5 @@ static_assert(llvm::AArch64::ZIP_VG4_4Z4Z_H == 8229);
 static_assert(llvm::AArch64::ZIP_VG4_4Z4Z_Q == 8230);
 static_assert(llvm::AArch64::ZIP_VG4_4Z4Z_S == 8231);
 static_assert(llvm::AArch64::INSTRUCTION_LIST_END == 8232);
+#endif
+

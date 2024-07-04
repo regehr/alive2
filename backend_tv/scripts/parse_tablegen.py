@@ -15,8 +15,8 @@ def main():
   print('#pragma once\n')
   print('#include <map>')
   print('#include <string>\n')
-  print('#define GET_INSTRINFO_ENUM')
-  print('#include "Target/AArch64/AArch64GenInstrInfo.inc"\n')
+  # print('#define GET_INSTRINFO_ENUM')
+  # print('#include "Target/AArch64/AArch64GenInstrInfo.inc"\n')
   print('namespace aslp {')
   print('const std::map<std::string, int>& aarch64_map() {')
   print('  static std::map<std::string, int> map;')
@@ -38,8 +38,10 @@ def main():
 
   print('\n} // namespace aslp\n')
 
+  print('#ifdef AARCH64_MAP_CHECK')
   for name, code in instructions:
     print(f'static_assert(llvm::AArch64::{name} == {code});')
+  print('#endif')
 
 
 if __name__ == '__main__':

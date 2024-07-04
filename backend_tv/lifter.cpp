@@ -69,8 +69,10 @@
 #include <utility>
 #include <vector>
 
-#include "aslp/aslp_bridge.hpp"
+#define AARCH64_MAP_CHECK
+#define AARCH64_MAP_IMPL
 #include "aslp/aarch64_map.hpp"
+#include "aslp/aslp_bridge.hpp"
 
 using namespace std;
 using namespace llvm;
@@ -4118,6 +4120,8 @@ public:
       x.getValue()->dump();
       std::cout << std::endl;
     }
+    if (Fixups.size() != 0)
+      return std::nullopt;
 
     aslp::opcode_t ret;
     unsigned i = 0;
@@ -4186,7 +4190,9 @@ public:
         }
       }
     } else {
-      *out << "... arm opnum failed\n";
+      *out << "... arm opnum failed: "
+          << instrPrinter->getOpcodeName(I.getOpcode()).str() 
+          << '\n';
       // arm opcode translation failed, possibly SEH_NOP. continue with classic.
     }
 

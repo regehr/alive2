@@ -14,7 +14,7 @@
 #include "SemanticsParser.h"
 #include "SemanticsLexer.h"
 
-#include "aslp/aarch64_map.hpp"
+#include "aarch64_map.hpp"
 #include "interface.hpp"
 #include "aslt_visitor.hpp"
 #include "aslp_bridge.hpp"
