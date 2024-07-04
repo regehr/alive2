@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
+import io
 import os
 import csv
 import sys
+import tarfile
 import random
 import subprocess
 import concurrent.futures
@@ -89,16 +91,22 @@ def main():
   keys += ['aslp_outcome']
   keys += ['aslp_detail']
 
-  with open('out.csv', 'w', newline='') as csvfile:
-    writer = csv.DictWriter(csvfile, fieldnames=keys, restval=0)
-    writer.writeheader()
+  csvfile = io.StringIO()
+  writer = csv.DictWriter(csvfile, fieldnames=keys, restval=0)
+  writer.writeheader()
 
-    for f, (classic, aslp, counts) in tqdm(classified.items()):
-      t = lambda x: x.split(' ')[0]
-      row = {'id': f.stem, 'old_outcome': t(classic), 'old_detail': classic, 'aslp_outcome': t(aslp), 'aslp_detail': aslp}
-      row |= counts
-      assert set(row.keys()) <= set(keys)
-      writer.writerow(row) # type: ignore
+  for f, (classic, aslp, counts) in tqdm(classified.items()):
+    t = lambda x: x.split(' ')[0]
+    row = {'id': f.stem, 'old_outcome': t(classic), 'old_detail': classic, 'aslp_outcome': t(aslp), 'aslp_detail': aslp}
+    row |= counts
+    assert set(row.keys()) <= set(keys)
+    writer.writerow(row) # type: ignore
+
+  data = csvfile.getvalue().encode('utf-8')
+  with tarfile.open('table.tar.gz', 'w:gz') as t:
+    ti = tarfile.TarInfo('table.csv')
+    ti.size = len(data)
+    t.addfile(ti, io.BytesIO(data))
 
 if __name__ == '__main__':
   main()
