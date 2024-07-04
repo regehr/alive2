@@ -11,6 +11,7 @@ import concurrent.futures
 from subprocess import PIPE, DEVNULL
 from collections import defaultdict
 from pathlib import Path
+from typing import cast, Any
 
 try:
   from tqdm import tqdm # type: ignore
@@ -75,9 +76,10 @@ def main():
   logs = list(logs_dir.glob('*.log'))
   for f in logs:
     assert (aslplogs_dir / f.name).exists()
+
+  classified: dict[Path, tuple[str, str, dict]] = cast(Any, {f: () for f in logs})
   random.shuffle(logs)
 
-  classified: dict[Path, tuple[str, str, dict]] = {}
   with concurrent.futures.ThreadPoolExecutor() as pool:
     futures = {pool.submit(process_log, f, aslplogs_dir / f.name): f for f in logs}
     for f in tqdm(concurrent.futures.as_completed(futures.keys()), total=len(futures), mininterval=1):
