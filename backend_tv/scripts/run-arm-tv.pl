@@ -13,7 +13,7 @@ use BSD::Resource;
 # - SPEC modules tend to be big, would be very nice to automatically
 #   run llvm-reduce on some categories of problems
 
-my $TIMEOUT = $ENV{"TIMEOUT"} || 30;
+my $TIMEOUT = $ENV{"TIMEOUT"} || 60;
 
 my $GIG = 1000 * 1000 * 1000;
 my $MAXKB = 2 * $GIG;

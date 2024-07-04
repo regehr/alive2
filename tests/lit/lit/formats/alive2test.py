@@ -9,6 +9,8 @@ import os, re, signal, string, subprocess
 ok_string = 'Transformation seems to be correct!'
 ok_interp = 'functions interpreted successfully'
 
+assert os.path.isfile('./backend-tv'), 'alive2 lit.py should be run from build directory.'
+
 def executeCommand(command):
   p = subprocess.Popen(command,
                        stdout=subprocess.PIPE,
