@@ -14,6 +14,7 @@
 #include "SemanticsParser.h"
 #include "SemanticsLexer.h"
 
+#include "aslp/aarch64_map.hpp"
 #include "interface.hpp"
 #include "aslt_visitor.hpp"
 #include "aslp_bridge.hpp"
@@ -133,7 +134,8 @@ std::variant<err_t, result_t> bridge::run_special(const llvm::MCInst& inst, cons
   llvm::BasicBlock* bb{nullptr};
   std::string name{"special_unknown"};
 
-  if (inst.getOpcode() == 1572) { // ADRP
+  auto& opname = aarch64_revmap().at(inst.getOpcode());
+  if (opname == "ADR" || opname == "ADRP") { // ADRP
       assert(inst.getOperand(0).isReg());
 
       name = "special_adrp";
