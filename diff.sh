@@ -32,6 +32,6 @@ diff -u $classic $aslp >$diff
 printf '%s\n' '' \
   "finished! backend-tv '$arg'" \
   "  aslp (status $aslp_status): $aslp" \
-  "  classic (status $classic_status): $aslp" \
+  "  classic (status $classic_status): $classic" \
   "  diff: $diff" \
   >&2
