@@ -16,10 +16,6 @@
 using namespace aslt;
 
 namespace {
-  antlr4::tree::TerminalNode* OR(antlr4::tree::TerminalNode* x, antlr4::tree::TerminalNode* y) {
-    return x ? x : y;
-  }
-
   void require(bool cond, const std::string_view& str, llvm::Value* val = nullptr) {
    if (cond)
      return;
@@ -230,6 +226,7 @@ std::any aslt_visitor::visitCall_stmt(SemanticsParser::Call_stmtContext *ctx) {
       // Perform a write of 'size' bytes. The byte order is reversed for a big-endian access.
       // Mem[bits(64) address, integer size, AccType acctype] = bits(size*8) value
       auto addr = args[0], bytes = args[1], acctype = args[2], val = args[3];
+      (void)acctype;
 
       auto size = llvm::cast<llvm::ConstantInt>(bytes)->getSExtValue();
       auto [ptr, offset] = ptr_expr(addr);
@@ -501,6 +498,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
     }
   } else if (args.size() == 3) {
     auto x = args[0], y = args[1], z = args[2];
+    (void)z;
 
     if (name == "Mem.read.0") {
       // Perform a read of 'size' bytes. The access byte order is reversed for a big-endian access.
@@ -539,6 +537,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       // PSTATE . N = result [ 3 +: 1 ] ;
 
       auto a = args[0], b = args[1], signalnan = args[2], fpcr = args[3];
+      (void)fpcr;
 
       // XXX we do not support signalling nans
       iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, signalnan, llvm::ConstantInt::get(signalnan->getType(), 0)));
@@ -567,7 +566,10 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
     if (name == "FixedToFP.0" && targs.size() == 2) {
       // bits(N) FixedToFP(bits(M) op, integer fbits, boolean unsigned, FPCRType fpcr, FPRounding rounding)
       auto wdin = targs[0], wdout = targs[1];
+      (void)wdin;
       auto val = args[0], fbits = args[1], unsign = args[2], fpcr = args[3], rounding = args[4];
+      (void)fpcr, (void)rounding;
+
       // XXX with zero fractional bits, this is a simple cast. otherwise, we would need to consider rounding.
       iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, fbits, llvm::ConstantInt::get(fbits->getType(), 0)));
 
@@ -582,6 +584,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       // bits(M) FPToFixed(bits(N) op, integer fbits, boolean unsigned, FPCRType fpcr, FPRounding rounding)
       auto wdout = targs[0], wdin = targs[1];
       auto val = args[0], fbits = args[1], unsign = args[2], fpcr = args[3], rounding = args[4];
+      (void)fpcr, (void)rounding;
       // XXX same problems as FixedToFP.
       iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, fbits, llvm::ConstantInt::get(fbits->getType(), 0)));
 
