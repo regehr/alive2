@@ -8,11 +8,37 @@ its Aslt format into LLVM IR compatible with the existing lifter.
 
 Requirements:
 - very recent LLVM (tested with 19.0.0git or 18.1.0-rc2), built with RTTI+EH.
-- ANTLR4 parser framework, installed by your system package manager.
+- ANTLR4 parser framework.
 - [aslp-cpp](https://github.com/UQ-PAC/aslp/tree/partial_eval/aslp-cpp), which should be fetched automatically.
-- aslp-server, running alongside the backend-tv tool, see below.
+- [aslp-server](https://github.com/UQ-PAC/aslp), running alongside the backend-tv tool, see below.
 
-If needed, these can be given explicitly as cmake arguments. Here is an example:
+## building
+
+These instructions will install all of the required dependencies and build the backend-tv tool.
+
+1. Install the Nix package manager:
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
+   ```
+2. Allow your user to use custom Nix caches for faster installation:
+   ```bash
+   printf '%s\n' "extra-trusted-users = $USER" | sudo tee -a /etc/nix/nix.conf
+   ```
+3. Install dependencies and build the backend-tv tool:
+   ```bash
+   ./build.sh  # say 'y' if prompted for substituters or trusted keys
+   ```
+4. Start aslp-server and leave running:
+   ```bash
+   ./nix/aslp/bin/aslp-server  # or otherwise, if already installed
+   ```
+5. Use backend-tv, for example:
+   ```bash
+   ./build/backend-tv ./tests/arm-tv/cmp/sgt.aarch64.ll
+   ```
+
+If desired, the tool can also be built manually by adapting the following cmake command.
+This might be useful to use local versions of particular dependencies.
 ```bash
 cmake -B build -DBUILD_TV=1 \
   -DCMAKE_PREFIX_PATH=./antlr-dev/.';'~/progs/llvm-regehr/llvm/build/ \
@@ -20,6 +46,7 @@ cmake -B build -DBUILD_TV=1 \
   -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp 
 ```
 
+<!--
 You will also need the *aslp-server* which provides the Aslp semantics over HTTP.
 The suggested way to get this is using the Nix package manager. Once Nix is installed, use
 ```bash
@@ -27,6 +54,7 @@ nix --extra-experimental-features nix-command --extra-experimental-features flak
 ```
 This should build and launch aslp-server from the [pac-nix](https://github.com/katrinafyi/pac-nix) packages.
 Otherwise, you can compile with Dune from the [aslp](https://github.com/UQ-PAC/aslp) repository then run `dune exec aslp-server`.
+-->
 
 ## usage
 
