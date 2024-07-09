@@ -4116,10 +4116,13 @@ public:
 
     MCE.encodeInstruction(I, Code, Fixups, STI);
     for (auto x : Fixups) {
-      std::cerr << "fixup: " << x.getKind() << ' ' << x.getTargetKind() << ' ' << x.getOffset() << ' ' << std::flush;
-      x.getValue()->dump();
-      std::cout << std::endl;
+      // std::cerr << "fixup: " << x.getKind() << ' ' << x.getTargetKind() << ' ' << x.getOffset() << ' ' << std::flush;
+      // x.getValue()->dump();
+      // std::cout << std::endl;
+      (void)x;
     }
+
+    // do not hand any instructions with relocation fixups to aslp
     if (Fixups.size() != 0)
       return std::nullopt;
 
@@ -4166,7 +4169,9 @@ public:
         LLVMBB = stmts.second;
 
         *out 
-          << "... lifted via aslp: " 
+          << "... lifted via aslp: "
+          << encoding
+          << " - "
           << instrPrinter->getOpcodeName(I.getOpcode()).str() 
           << std::endl;
         encodingCounts[encoding]++;

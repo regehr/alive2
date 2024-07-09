@@ -87,7 +87,7 @@ protected:
   virtual lexpr_t lexpr(aslt::SemanticsParser::LexprContext* ctx) {
     depth++;
     auto x = ctx->accept(this);
-    std::cout << x.type().name() << std::endl;
+    // std::cout << x.type().name() << std::endl;
     depth--;
     return std::any_cast<lexpr_t>(x);
   }

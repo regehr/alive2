@@ -207,7 +207,7 @@ std::variant<err_t, result_t> bridge::run(const llvm::MCInst& inst, const opcode
   if (err)
     return *err;
 
-  std::cerr << "ASLP FINISHED!" << std::endl;
+  // std::cerr << "ASLP FINISHED!" << std::endl;
   return std::make_tuple(encoding, std::get<stmt_t>(parsed));
 }
 
