@@ -61,7 +61,7 @@ def process_log(log: Path, aslplog: Path):
     return s
 
   counts = defaultdict(int)
-  with open(log) as f:
+  with open(aslplog) as f:
     for l in f:
       if not l.startswith('encoding counts: '): continue
       for term in l.replace('encoding counts: ', '').split(','):
