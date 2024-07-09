@@ -1,0 +1,24 @@
+# meeting 2024-07-09
+
+* nuno is working on physical pointers, might help with inttoptr confusion
+* originally lifted to alive, but needed bespoke optimisation passes
+* john needs to build aslp
+* worst thing: spec successes < 25%. alive doesn't support "invoke"
+* fuzzer: mutations of llvm functions. alternative generation-based fuzzer, less powerful.
+* aslp section in regehr's paper:
+  * two ways to lift instructions
+  * costs of using auto-generated lifter?
+  * engineering problem
+  * how much domain knowledge (in writing hand-written lifters) can be integrated with auto-generated lifters?
+  * are optimisations too domain-specific? i.e. specific to alive?
+  * should be well-fit within paper. explore trade-offs
+  * instruction-specific fixes or systematic fixes
+    * power of 2 widths
+    * vectoriser
+    * slicing, concat
+* nuno working on memory model section in paper
+
+* regehr on sail and isar: alasdair armstrong. each instruction would be more work than manual approach
+
+* get to bottom of performance issues: are there a few root causes or millions of cuts?
+
