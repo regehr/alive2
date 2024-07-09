@@ -51,5 +51,7 @@ def main():
   rel.sort_values('relative', inplace=True)
   print(rel.tail(10).to_string())
 
+  # TODO: we should look at encodings which are in /no/ successful tests.
+
 if __name__ == '__main__':
   main()
