@@ -7,6 +7,7 @@ export CXXFLAGS
 export CFLAGS
 cd "$(dirname "$0")"
 
+mkdir -p nix && cd nix
 if ! [[ -f antlr-jar ]]; then
   nix build 'nixpkgs#antlr.src' -o antlr-jar
 fi
@@ -16,11 +17,15 @@ fi
 if ! [[ -d llvm-dev ]]; then
   nix build 'github:katrinafyi/pac-nix#llvm-custom-git.libllvm^dev' -o llvm
 fi
+if ! ( [[ -d aslp ]] || command -v aslp-server &>/dev/null ); then
+  nix build 'github:katrinafyi/pac-nix#aslp' -o aslp
+fi
+cd ..
 
   # -DCMAKE_BUILD_TYPE=Release \
 cmake -B build -DBUILD_TV=1 \
-  -DCMAKE_PREFIX_PATH=$(realpath antlr-dev)';'$(realpath llvm-dev) \
-  -DANTLR4_JAR_LOCATION=$(realpath antlr-jar) \
+  -DCMAKE_PREFIX_PATH=$(realpath nix/antlr-dev)';'$(realpath nix/llvm-dev) \
+  -DANTLR4_JAR_LOCATION=$(realpath nix/antlr-jar) \
   "$@"
   # -DLLVM_DIR=~/progs/llvm-regehr/llvm/build/lib/cmake/llvm/ \
   # -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp \
