@@ -569,13 +569,12 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       // bits(W * N) select_vec (M, N, W) (bits(W * M) x, bits(32 * N) sel)
       auto x_vector = iface.createBitCast(args[0], iface.getVecTy(targs[2], targs[0]));
       auto count = targs[1];
-      int mask[count];
-      llvm::ArrayRef<int> maskRef(mask, count);
+      std::vector<int> mask(count);
       auto sel = llvm::cast<llvm::ConstantInt>(y)->getValue();
       for (unsigned i = 0; i < count; ++i) {
-        mask[i] = sel.extractBitsAsZExtValue(32, i * 32);
+        mask.at(i) = sel.extractBitsAsZExtValue(32, i * 32);
       }
-      auto res = iface.createShuffleVector(x_vector, maskRef) ;
+      auto res = iface.createShuffleVector(x_vector, {mask}) ;
       return iface.createBitCast(res, iface.getIntTy(count * targs[2]));
 
     } else if (name == "reduce_add.0") {
@@ -695,13 +694,12 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto x_vector = iface.createBitCast(args[0], iface.getVecTy(targs[2], targs[0]));
       auto y_vector = iface.createBitCast(args[1], iface.getVecTy(targs[2], targs[0]));
       auto count = targs[1];
-      int mask[count];
-      llvm::ArrayRef<int> maskRef(mask, count);
+      std::vector<int> mask(count);
       auto sel = llvm::cast<llvm::ConstantInt>(z)->getValue();
       for (unsigned i = 0; i < count; ++i) {
-        mask[i] = sel.extractBitsAsZExtValue(32, i * 32);
+        mask.at(i) = sel.extractBitsAsZExtValue(32, i * 32);
       }
-      auto res = iface.createShuffleVector(y_vector, x_vector, maskRef) ;
+      auto res = iface.createShuffleVector(y_vector, x_vector, {mask}) ;
       return iface.createBitCast(res, iface.getIntTy(count * targs[2]));
 
     } else if ((name == "FPAdd.0" || name == "FPSub.0" || name == "FPMul.0") && args.size() == 3) {
