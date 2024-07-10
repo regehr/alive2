@@ -5,7 +5,7 @@ grammar Semantics;
 // See aslp/libASL/asl.ott for reference grammar Bap-ali-plugin/asli_lifer.ml may also be useful for
 // visitors
 
-stmt: assignment_stmt | call_stmt | conditional_stmt;
+stmt: assignment_stmt | call_stmt | conditional_stmt | loop_stmt;
 stmts: OPEN_BRACKET (stmt (SCOLON stmt)*)? CLOSE_BRACKET;
 
 stmt_lines: stmt* EOF;  // a convenient entry point for space-separated stmts, unused within this gramamr
@@ -34,6 +34,12 @@ conditional_stmt:
 		OPEN_BRACKET CLOSE_BRACKET COMMA  // elseif chains are transformed away by aslp
 		fcase=stmts CLOSE_PAREN
 	# ConditionalStmt
+;
+
+loop_stmt:
+  'Stmt_For' OPEN_PAREN ident COMMA start_index=expr COMMA direction COMMA stop_index=expr COMMA
+    stmts CLOSE_PAREN
+  #LoopStmt
 ;
 
 type_register_slices:
@@ -68,6 +74,10 @@ expr:
 	// | 'Expr_LitMask' OPEN_PAREN QUOTE BINARY QUOTE CLOSE_PAREN		# ExprLitMask
 	// | 'Expr_LitString' OPEN_PAREN QUOTE ident QUOTE CLOSE_PAREN		# ExprLitString
 ;
+
+direction:
+  'Direction_Up' |
+  'Direction_Down' ;
 
 ident: QUOTE ID QUOTE;
 

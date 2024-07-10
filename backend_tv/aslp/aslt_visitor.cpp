@@ -260,6 +260,62 @@ std::any aslt_visitor::visitConditionalStmt(SemanticsParser::ConditionalStmtCont
   return stmt_t{entry.first, join.second};
 }
 
+std::any aslt_visitor::visitLoopStmt(SemanticsParser::LoopStmtContext *ctx) {
+  log() << "visitLoop_stmt" << '\n';
+
+  bool inc = ctx->direction()->getText() == "Direction_Up";
+
+  /* Loop index type is an integer, which seems to always be 100 bits wide */
+  int width = 100;
+  type_t ty = iface.getIntTy(width);
+
+  /* for_header:
+   *  var := start
+   *  goto body
+   *
+   * inc_body:
+   *  stmts
+   *  var := var + 1
+   *  if var > end then exit else body
+   *
+   * dec_body:
+   *  stmts
+   *  var := var - 1
+   *  if var < end then exit else body
+   *
+   * for_exit:
+   */
+
+  auto exit = new_stmt("for_exit");
+  auto entry = new_stmt("for_header");
+
+  /* Allocate and init the loop index */
+  auto start = expr(ctx->start_index);
+  auto name = ident(ctx->ident());
+  auto v = new llvm::AllocaInst(ty, 0, name, entry.second);
+  new llvm::StoreInst(start, v, entry.second);
+  add_local(name, v);
+
+  /* Process loop body */
+  auto body = std::any_cast<stmt_t>(visitStmts(ctx->stmts()));
+  iface.set_bb(body.second); // TODO: Not sure if this is necessary
+
+  /* Increment/Decrement counter */
+  auto v2 = iface.createLoad(ty, v);
+  auto rhs2 = inc ? iface.createAdd(v2, iface.getIntConst(1, width)) : iface.createSub(v2, iface.getIntConst(1, width));
+  new llvm::StoreInst(rhs2, v, body.second);
+
+  /* Test stop, branching to exit or back to body entry */
+  auto stop = expr(ctx->stop_index);
+  auto cond = iface.createICmp(inc ? llvm::ICmpInst::Predicate::ICMP_SLT :  llvm::ICmpInst::Predicate::ICMP_SGT, stop, rhs2);
+  iface.createBranch(cond, exit, body);
+
+  /* Fallthrough for entry */
+  link(entry,body);
+
+  return stmt_t{entry.first, exit.second};
+}
+
 std::any aslt_visitor::visitTypeBits(SemanticsParser::TypeBitsContext *ctx) {
   log() << "visitTypeBits" << ' ' << ctx->getText() << '\n';
   auto bits = lit_int(ctx->expr());
@@ -275,6 +331,8 @@ std::any aslt_visitor::visitTypeConstructor(aslt::SemanticsParser::TypeConstruct
   auto name = context->name->getText();
   if (name == "FPRounding")
     return (type_t)iface.getIntTy(2);
+  if (name == "\"boolean\"")
+    return iface.getIntTy(1);
   die("type constructor unsup: " + name);
 }
 
@@ -382,9 +440,11 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       require(x->getType()->getIntegerBitWidth() == 1, "size mismatch in cvt bv bool");
       return x;
 
+    } else if (name == "cvt_bits_uint.0") {
+      return x;
+
     } else if (name == "not_bits.0" || name == "not_bool.0") {
       return static_cast<expr_t>(iface.createNot(x));
-
     } 
   } else if (args.size() == 2) {
     auto x = args[0], y = args[1];
@@ -397,6 +457,11 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       type_t finalty = llvm::Type::getIntNTy(context, targs[1]);
       require_(finalty != x->getType());
       return static_cast<expr_t>(iface.createZExt(x, finalty));
+
+    } else if (name == "cvt_int_bits.0") {
+      /* Needed to convert loop index into bv */
+      type_t finalty = llvm::Type::getIntNTy(context, targs[0]);
+      return static_cast<expr_t>(iface.createTrunc(x, finalty));
 
     } else if (name == "eq_bits.0") {
       return static_cast<expr_t>(iface.createICmp(llvm::CmpInst::Predicate::ICMP_EQ, x, y));
@@ -472,6 +537,13 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       require_(upperwd > 0);
       require_(lowerwd > 0);
 
+      if (upperwd == lowerwd) {
+        auto valueToStore = iface.getUndefVec(2, upperwd);
+        valueToStore = iface.createInsertElement(valueToStore, x, 1);
+        valueToStore = iface.createInsertElement(valueToStore, y, 0);
+        return iface.createBitCast(valueToStore, iface.getIntTy(upperwd * 2));
+      }
+
       auto finalty = iface.getIntTy(upperwd + lowerwd);
 
       upper = iface.createZExt(upper, finalty);
@@ -483,19 +555,32 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 
     } else if (name == "replicate_bits.0") {
       auto count = llvm::cast<llvm::ConstantInt>(y)->getSExtValue();
-
       auto basewd = x->getType()->getIntegerBitWidth() ;
-      auto finalwd = basewd * count;
-      auto finalty = iface.getIntTy(finalwd);
-
-      auto base = iface.createZExt(x, finalty);
-      expr_t ret = base;
-      for (unsigned i = 1; i < count; i++) {
-        auto shifted = iface.createRawShl(base, iface.getIntConst(basewd * i, finalwd));
-        ret = iface.createOr(ret, shifted);
+      auto valueToStore = iface.getUndefVec(count, basewd);
+      for (unsigned i = 0; i < count; ++i) {
+        valueToStore = iface.createInsertElement(valueToStore, x, i);
       }
-      return ret;
+      return iface.createBitCast(valueToStore, iface.getIntTy( basewd * count));
+
+    } else if (name == "select_vec.0") {
+      // bits(W * N) select_vec (M, N, W) (bits(W * M) x, bits(32 * N) sel)
+      auto x_vector = iface.createBitCast(args[0], iface.getVecTy(targs[2], targs[0]));
+      auto count = targs[1];
+      std::vector<int> mask(count);
+      auto sel = llvm::cast<llvm::ConstantInt>(y)->getValue();
+      for (unsigned i = 0; i < count; ++i) {
+        mask.at(i) = sel.extractBitsAsZExtValue(32, i * 32);
+      }
+      auto res = iface.createShuffleVector(x_vector, {mask}) ;
+      return iface.createBitCast(res, iface.getIntTy(count * targs[2]));
+
+    } else if (name == "reduce_add.0") {
+      auto x_vector = iface.createBitCast(args[0], iface.getVecTy(targs[1], targs[0]));
+      auto sum = iface.createVectorReduceAdd(x_vector);
+      return iface.createAdd(sum, args[1]);
+
     }
+
   } else if (args.size() == 3) {
     auto x = args[0], y = args[1], z = args[2];
     (void)z;
@@ -509,6 +594,111 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto [ptr, offset] = ptr_expr(x);
       auto load = iface.makeLoadWithOffset(ptr, offset, size->getSExtValue());
       return static_cast<expr_t>(load);
+
+    } else if (name == "Elem.read.0") {
+      // bits(size) Elem[bits(N) vector, integer e, integer size]
+      auto elem_size = llvm::cast<llvm::ConstantInt>(z)->getSExtValue();
+      auto vec_size = x->getType()->getIntegerBitWidth();
+      auto elems = vec_size / elem_size;
+      auto vector = iface.createBitCast(x, iface.getVecTy(elem_size, elems));
+      return iface.createExtractElement(vector, y);
+
+    } else if (name == "add_vec.0") {
+      // bits(W * N) add_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
+      auto x_vector = iface.createBitCast(x, iface.getVecTy(targs[1], targs[0]));
+      auto y_vector = iface.createBitCast(y, iface.getVecTy(targs[1], targs[0]));
+      auto cast = iface.createAdd(x_vector, y_vector);
+      return iface.createBitCast(cast, x->getType());
+
+    } else if (name == "sub_vec.0") {
+      // bits(W * N) sub_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
+      auto x_vector = iface.createBitCast(x, iface.getVecTy(targs[1], targs[0]));
+      auto y_vector = iface.createBitCast(y, iface.getVecTy(targs[1], targs[0]));
+      auto cast = iface.createSub(x_vector, y_vector);
+      return iface.createBitCast(cast, x->getType());
+
+    } else if (name == "mul_vec.0") {
+      // bits(W * N) mul_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
+      auto x_vector = iface.createBitCast(x, iface.getVecTy(targs[1], targs[0]));
+      auto y_vector = iface.createBitCast(y, iface.getVecTy(targs[1], targs[0]));
+      auto cast = iface.createMul(x_vector, y_vector);
+      return iface.createBitCast(cast, x->getType());
+
+    } else if (name == "scast_vec.0") {
+      // bits(NW * N) scast_vec (N, NW, W) (bits(W * N) x, integer N, integer NW)
+      auto x_vector = iface.createBitCast(x, iface.getVecTy(targs[2], targs[0]));
+      auto cast = iface.createSExt(x_vector, iface.getVecTy(targs[1], targs[0]));
+      return iface.createBitCast(cast, iface.getIntTy(targs[1] * targs[0]));
+
+    } else if (name == "zcast_vec.0") {
+      // bits(NW * N) zcast_vec (N, NW, W) (bits(W * N) x, integer N, integer NW)
+      auto x_vector = iface.createBitCast(x, iface.getVecTy(targs[2], targs[0]));
+      auto cast = iface.createZExt(x_vector, iface.getVecTy(targs[1], targs[0]));
+      return iface.createBitCast(cast, iface.getIntTy(targs[1] * targs[0]));
+
+    } else if (name == "trunc_vec.0") {
+      // bits(NW * N) trunc_vec (N, NW, W) (bits(W * N) x, integer N, integer NW)
+      auto x_vector = iface.createBitCast(args[0], iface.getVecTy(targs[2], targs[0]));
+      auto trunced = iface.createTrunc(x_vector, iface.getVecTy(targs[1], targs[0]));
+      return iface.createBitCast(trunced, iface.getIntTy(targs[1] * targs[0]));
+
+    // TODO: This is not sound due to large shifts
+    } else if (name == "asr_vec.0") {
+      // bits(W * N) asr_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
+      auto x_vector = iface.createBitCast(x, iface.getVecTy(targs[1], targs[0]));
+      auto y_vector = iface.createBitCast(y, iface.getVecTy(targs[1], targs[0]));
+      auto shift = iface.createRawAShr(x_vector, y_vector);
+      return iface.createBitCast(shift, iface.getIntTy(targs[1] * targs[0]));
+
+    // TODO: This is not sound due to large shifts
+    } else if (name == "lsr_vec.0") {
+      // bits(W * N) lsr_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
+      auto x_vector = iface.createBitCast(x, iface.getVecTy(targs[1], targs[0]));
+      auto y_vector = iface.createBitCast(y, iface.getVecTy(targs[1], targs[0]));
+      auto shift = iface.createRawLShr(x_vector, y_vector);
+      return iface.createBitCast(shift, iface.getIntTy(targs[1] * targs[0]));
+
+    // TODO: This is not sound due to large shifts
+    } else if (name == "lsl_vec.0") {
+      // bits(W * N) lsr_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
+      auto x_vector = iface.createBitCast(x, iface.getVecTy(targs[1], targs[0]));
+      auto y_vector = iface.createBitCast(y, iface.getVecTy(targs[1], targs[0]));
+      auto shift = iface.createRawShl(x_vector, y_vector);
+      return iface.createBitCast(shift, iface.getIntTy(targs[1] * targs[0]));
+
+    } else if (name == "sle_vec.0") {
+      // bits(N) sle_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
+      auto x_vector = iface.createBitCast(x, iface.getVecTy(targs[1], targs[0]));
+      auto y_vector = iface.createBitCast(y, iface.getVecTy(targs[1], targs[0]));
+      auto cmp = iface.createICmp(llvm::ICmpInst::Predicate::ICMP_SLE, x_vector, y_vector);
+      return iface.createBitCast(cmp, iface.getIntTy(targs[0]));
+
+    } else if (name == "slt_vec.0") {
+      // bits(N) slt_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
+      auto x_vector = iface.createBitCast(x, iface.getVecTy(targs[1], targs[0]));
+      auto y_vector = iface.createBitCast(y, iface.getVecTy(targs[1], targs[0]));
+      auto cmp = iface.createICmp(llvm::ICmpInst::Predicate::ICMP_SLT, x_vector, y_vector);
+      return iface.createBitCast(cmp, iface.getIntTy(targs[0]));
+
+    } else if (name == "eq_vec.0") {
+      // bits(N) eq_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
+      auto x_vector = iface.createBitCast(x, iface.getVecTy(targs[1], targs[0]));
+      auto y_vector = iface.createBitCast(y, iface.getVecTy(targs[1], targs[0]));
+      auto cmp = iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, x_vector, y_vector);
+      return iface.createBitCast(cmp, iface.getIntTy(targs[0]));
+
+    } else if (name == "shuffle_vec.0") {
+      // bits(W * N) shuffle_vec (M, N, W) (bits(W * M) x, bits(W * M) y, bits(32 * N) sel)
+      auto x_vector = iface.createBitCast(args[0], iface.getVecTy(targs[2], targs[0]));
+      auto y_vector = iface.createBitCast(args[1], iface.getVecTy(targs[2], targs[0]));
+      auto count = targs[1];
+      std::vector<int> mask(count);
+      auto sel = llvm::cast<llvm::ConstantInt>(z)->getValue();
+      for (unsigned i = 0; i < count; ++i) {
+        mask.at(i) = sel.extractBitsAsZExtValue(32, i * 32);
+      }
+      auto res = iface.createShuffleVector(y_vector, x_vector, {mask}) ;
+      return iface.createBitCast(res, iface.getIntTy(count * targs[2]));
 
     } else if ((name == "FPAdd.0" || name == "FPSub.0" || name == "FPMul.0") && args.size() == 3) {
       // bits(N) FPAdd(bits(N) op1, bits(N) op2, FPCRType fpcr)
@@ -524,10 +714,31 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
         op = llvm::BinaryOperator::BinaryOps::FMul;
       return static_cast<expr_t>(iface.createBinop(x, y, op));
 
+    } else if (name == "ite.0") {
+      // bits(W) ite_vec ( W ) (bits(1) c, bits(W) x, bits(W) y)
+      return iface.createSelect(args[0], args[1], args[2]);
+
     }
 
   } else if (args.size() == 4) {
-    if (name == "FPCompare.0") {
+    if (name == "Elem.set.0") {
+      // bits(N) Elem[bits(N) vector, integer e, integer size, bits(size) value]
+      auto bv_size = args[0]->getType()->getIntegerBitWidth();
+      auto elem_size = llvm::cast<llvm::ConstantInt>(args[2])->getSExtValue();
+      auto elems = bv_size / elem_size;
+      auto vector = iface.createBitCast(args[0], iface.getVecTy(elem_size, elems));
+      auto insert = iface.createInsertElement(vector, args[3], args[1]);
+      return iface.createBitCast(insert, iface.getIntTy(bv_size));
+
+    } else if (name == "ite_vec.0") {
+      // bits(W * N) ite_vec ( N , W ) (bits(N) c, bits(W * N) x, bits(W * N) y, integer N)
+      auto cond = iface.createBitCast(args[0], iface.getVecTy(1, targs[0]));
+      auto x_vec = iface.createBitCast(args[1], iface.getVecTy(targs[1], targs[0]));
+      auto y_vec = iface.createBitCast(args[2], iface.getVecTy(targs[1], targs[0]));
+      auto res = iface.createSelect(cond, x_vec, y_vec);
+      return iface.createBitCast(res, iface.getIntTy(targs[1] * targs[0]));
+
+    } else if (name == "FPCompare.0") {
       // bits(4) FPCompare(bits(N) op1, bits(N) op2, boolean signal_nans, FPCRType fpcr)
       
       // return value:
@@ -603,22 +814,26 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 std::any aslt_visitor::visitExprSlices(SemanticsParser::ExprSlicesContext *ctx) {
   log() << "visitExprSlices" << '\n';
   auto base = expr(ctx->expr());
-  auto basewd = base->getType()->getIntegerBitWidth();
   auto sl = slice(ctx->slice_expr());
+  // a slice is done by right shifting by the "low" value,
+  // then, truncating to the "width" value
+  auto lo = llvm::ConstantInt::get(base->getType(), sl.lo);
+  auto wdty = llvm::Type::getIntNTy(context, sl.wd);
+  auto vec_size = base->getType()->getIntegerBitWidth();
 
-  if (basewd % sl.wd == 0 && sl.lo % sl.wd == 0 && sl.wd > 1) {
-    // if slice is aligned and not a single bit, treat it as a vector.
-    auto elemty = llvm::IntegerType::get(context, sl.wd);
-    auto arrayty = llvm::VectorType::get(elemty, llvm::ElementCount::getFixed(basewd / sl.wd));
-    auto vec = iface.createBitCast(base, arrayty);
 
-    auto ret = iface.createExtractElement(vec, llvm::ConstantInt::get(base->getType(), sl.lo / sl.wd));
-    return static_cast<expr_t>(ret);
+  if (lo->isZeroValue()) {
+    // Just trunc
+    auto trunced = iface.createTrunc(base, wdty);
+    return static_cast<expr_t>(trunced);
+  } else if (sl.lo % sl.wd == 0 && vec_size % sl.wd == 0) {
+    // Vector access
+    auto elem_size = sl.wd;
+    auto elems = vec_size / elem_size;
+    auto vector = iface.createBitCast(base, iface.getVecTy(elem_size, elems));
+    auto pos = llvm::ConstantInt::get(base->getType(), sl.lo / sl.wd);
+    return iface.createExtractElement(vector, pos);
   } else {
-    // otherwise, a slice is done by right shifting by the "low" value,
-    // then, truncating to the "width" value
-    auto lo = llvm::ConstantInt::get(base->getType(), sl.lo);
-    auto wdty = llvm::Type::getIntNTy(context, sl.wd);
     // raw shift ok, since slice must be within bounds.
     auto shifted = !lo->isZeroValue() ? iface.createRawLShr(base, lo) : base;
     auto trunced = iface.createTrunc(shifted, wdty);

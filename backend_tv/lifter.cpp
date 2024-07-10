@@ -441,7 +441,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     return ConstantInt::get(Ctx, llvm::APInt(bits, val));
   }
 
-  VectorType *getVecTy(unsigned eltSize, unsigned numElts, bool isFP = false) {
+  VectorType *getVecTy(unsigned eltSize, unsigned numElts, bool isFP = false) override {
     Type *eTy;
     if (isFP) {
       eTy = getFPType(eltSize);
@@ -452,7 +452,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     return VectorType::get(eTy, ec);
   }
 
-  Constant *getUndefVec(unsigned numElts, unsigned eltSize) {
+  Constant *getUndefVec(unsigned numElts, unsigned eltSize) override {
     auto eTy = getIntTy(eltSize);
     auto ec = ElementCount::getFixed(numElts);
     return ConstantVector::getSplat(ec, UndefValue::get(eTy));
@@ -2185,6 +2185,11 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     return InsertElementInst::Create(vec, val, idxv, nextName(), LLVMBB);
   }
 
+  InsertElementInst *createInsertElement(Value *vec, Value *val, Value *idx) override {
+    return InsertElementInst::Create(vec, val, idx, nextName(), LLVMBB);
+  }
+
+
   ExtractElementInst *createExtractElement(Value *v, Value *idx) override {
     return ExtractElementInst::Create(v, idx, nextName(), LLVMBB);
   }
@@ -2200,6 +2205,10 @@ class arm2llvm : public aslp::lifter_interface_llvm {
 
   ShuffleVectorInst *createShuffleVector(Value *v, Value *mask) {
     return new ShuffleVectorInst(v, mask, nextName(), LLVMBB);
+  }
+
+  ShuffleVectorInst *createShuffleVector(Value *v, Value*x , ArrayRef<int> mask) override {
+    return new ShuffleVectorInst(v, x, mask, nextName(), LLVMBB);
   }
 
   Value *getIndexedElement(unsigned idx, unsigned eltSize, unsigned reg) override {
