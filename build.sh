@@ -7,7 +7,7 @@ export CXXFLAGS
 export CFLAGS
 cd "$(dirname "$0")"
 
-mkdir -p nix && cd nix
+mkdir -p build && cd build
 if ! [[ -f antlr-jar ]]; then
   nix build 'nixpkgs#antlr.src' -o antlr-jar
 fi
@@ -24,8 +24,8 @@ cd ..
 
   # -DCMAKE_BUILD_TYPE=Release \
 cmake -B build -DBUILD_TV=1 \
-  -DCMAKE_PREFIX_PATH=$(realpath nix/antlr-dev)';'$(realpath nix/llvm-dev) \
-  -DANTLR4_JAR_LOCATION=$(realpath nix/antlr-jar) \
+  -DCMAKE_PREFIX_PATH="$(pwd)/build/antlr-dev;$(pwd)/build/llvm-dev" \
+  -DANTLR4_JAR_LOCATION="$(pwd)/build/antlr-jar" \
   "$@"
   # -DLLVM_DIR=~/progs/llvm-regehr/llvm/build/lib/cmake/llvm/ \
   # -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp \

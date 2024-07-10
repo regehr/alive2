@@ -30,7 +30,7 @@ These instructions will install all of the required dependencies and build the b
    ```
 4. Start aslp-server and leave running:
    ```bash
-   ./nix/aslp/bin/aslp-server  # or otherwise, if already installed
+   ./build/aslp/bin/aslp-server  # or otherwise, if already installed
    ```
 5. Use backend-tv, for example:
    ```bash
