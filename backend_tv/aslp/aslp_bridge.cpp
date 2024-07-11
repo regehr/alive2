@@ -47,7 +47,11 @@ bool getenv_bool(const std::string& name, bool def = false) {
 
 aslp_connection make_conn() {
   auto config = aslp::bridge::config();
-  auto conn = aslp_connection{config.server_addr, static_cast<int>(config.server_port)};
+  static std::multimap<std::string, std::string> extra_params; // XXX sloppy use of static
+  if (config.vectors && !extra_params.contains("flags")) {
+    extra_params.insert({"flags", "+dis:vectors"});
+  }
+  auto conn = aslp_connection{config.server_addr, static_cast<int>(config.server_port), extra_params};
   conn.wait_active();
   return conn;
 }
@@ -71,6 +75,7 @@ const config_t& bridge::config() {
       config.enable = getenv_bool(var = "ASLP", true);
       config.debug = getenv_bool(var = "ASLP_DEBUG", false);
       config.fail_if_missing = getenv_bool(var = "ASLP_FAIL_MISSING", false);
+      config.vectors = getenv_bool(var = "ASLP_VECTORS", true);
 
       var = "ASLP_BANNED";
       const char* ban_env = std::getenv(var);

@@ -31,6 +31,7 @@ struct config_t {
   bool enable;
   bool debug;
   bool fail_if_missing;
+  bool vectors;
   std::vector<unsigned> mcinst_banned;
 
   std::string server_addr;

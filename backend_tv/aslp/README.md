@@ -68,7 +68,8 @@ The behaviour of the Aslp bridge can be configured by environment variables:
 - ASLP (default: true) enables or disables the entire Aslp functionality,
 - ASLP\_DEBUG (default: false) enables debug logging when traversing the Aslp syntax tree,
 - ASLP\_BANNED (default: "") is a comma-separated list of MCInst integer opcodes to prevent Aslp from processing,
-- ASLP\_SERVER (default: "localhost:8000") is the address and port where aslp-server is running,
+- ASLP\_SERVER (default: "localhost:8000") is the address and port where aslp-server is running, and
+- ASLP\_VECTORS (default: true) controls whether Aslp should provide vector operations where possible.
 
 To compare with the original ("classic") lifter, there is a script ./diff.sh in the repository.
 This takes a single test file as argument and runs both the Aslp and classic variants.
