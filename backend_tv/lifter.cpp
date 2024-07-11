@@ -70,7 +70,6 @@
 #include <utility>
 #include <vector>
 
-#define AARCH64_MAP_CHECK
 #define AARCH64_MAP_IMPL
 #include "aslp/aarch64_map.hpp"
 #include "aslp/aslp_bridge.hpp"
@@ -2399,11 +2398,11 @@ class arm2llvm : public aslp::lifter_interface_llvm {
   }
 
   ICmpInst *createICmp(ICmpInst::Predicate p, Value *a, Value *b) override {
-    return new ICmpInst(*LLVMBB, p, a, b, nextName());
+    return new ICmpInst(LLVMBB, p, a, b, nextName());
   }
 
   FCmpInst *createFCmp(FCmpInst::Predicate p, Value *a, Value *b) override {
-    return new FCmpInst(*LLVMBB, p, a, b, nextName());
+    return new FCmpInst(LLVMBB, p, a, b, nextName());
   }
 
   BinaryOperator *createBinop(Value *a, Value *b, Instruction::BinaryOps op) override {

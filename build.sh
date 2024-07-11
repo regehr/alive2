@@ -15,7 +15,7 @@ if ! [[ -d antlr-dev ]]; then
   nix build 'nixpkgs#antlr.runtime.cpp^dev' -o antlr
 fi
 if ! [[ -d llvm-dev ]]; then
-  nix build 'github:katrinafyi/pac-nix/16ade72b84a2135ea7276badfcf33b8c2787fccf#llvm-custom-git.libllvm^dev' -o llvm
+  nix build 'github:katrinafyi/pac-nix/f96c7e779ae95a4021f0336dd384ac57088701a3#llvm-custom-git.libllvm^dev' -o llvm
 fi
 if ! ( [[ -d aslp ]] || command -v aslp-server &>/dev/null ); then
   nix build 'github:katrinafyi/pac-nix#aslp' -o aslp
