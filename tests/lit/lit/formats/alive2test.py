@@ -4,12 +4,13 @@
 import lit.TestRunner
 import lit.util
 from .base import TestFormat
-import os, re, signal, string, subprocess
+import os, re, signal, shutil, string, subprocess
 
 ok_string = 'Transformation seems to be correct!'
 ok_interp = 'functions interpreted successfully'
 
 assert os.path.isfile('./backend-tv'), 'alive2 lit.py should be run from build directory.'
+assert (env_binary := shutil.which('env'))
 
 def executeCommand(command):
   p = subprocess.Popen(command,
@@ -51,6 +52,14 @@ def readFile(path):
   fd = open(path, 'r')
   return fd.read()
 
+class Alive2TestCase(lit.Test.Test):
+  def __init__(self, suite, path_in_suite, config, use_aslp, file_path = None):
+    super().__init__(suite, path_in_suite, config, file_path)
+    self.aslp = use_aslp
+
+  def getFullName(self):
+    t = 'aslp' if self.aslp else 'classic'
+    return super().getFullName() + f' ({t})'
 
 class Alive2Test(TestFormat):
   def __init__(self):
@@ -75,10 +84,14 @@ class Alive2Test(TestFormat):
            filename.endswith('.ident.ll') or filename.endswith('.aarch64.ll') or
            filename.endswith('.exec.ll') or filename.endswith('.asminput.ll') or
            filename.endswith('.ll')):
-        yield lit.Test.Test(testSuite, path_in_suite + (filename,), localConfig)
 
+        for aslp in [False, True]:
+          yield Alive2TestCase(testSuite, path_in_suite + (filename,), localConfig, aslp)
 
   def execute(self, test, litConfig):
+    testcase = test
+    if not isinstance(testcase, Alive2TestCase):
+      testcase.aslp = False
     test = test.getSourcePath()
 
     alive_tv_1 = test.endswith('.srctgt.ll')
@@ -168,6 +181,8 @@ class Alive2Test(TestFormat):
       cmd.append(test.replace('.src.ll', '.tgt.ll'))
     elif alive_tv_3:
       cmd.append(test)
+
+    cmd = [env_binary, f'ASLP={int(testcase.aslp)}'] + cmd
 
     out, err, exitCode = executeCommand(cmd)
     output = out + err
