@@ -91,15 +91,22 @@ sub wait_for_one() {
     $num_running--;
 }
 
-sub go($) {
-    (my $cmd) = @_;
+sub go($$) {
+    my ($cmd, $outfile) = @_;
     # print "$cmd\n";
     wait_for_one() unless $num_running < $NPROCS;
     die unless $num_running < $NPROCS;
     my $pid = fork();
     die unless $pid >= 0;
     if ($pid == 0) {
+        my $start = time();
         system($cmd);
+        my $runtime = time() - $start;
+
+        open(my $fh, '>>', $outfile) or die;
+        print $fh "\nruntime: $runtime\n";
+        close $fh;
+
         exit(0);
     }
     # make sure we're in the parent
@@ -141,9 +148,9 @@ foreach my $ref (@funcs) {
     my $outfile = "logs/${out}_${num}.log";
     my $outfile_aslp = "logs-aslp/${out}_${num}.log";
     my $cmd = "ASLP=false /usr/bin/timeout -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile 2>&1";
-    go($cmd);
+    go($cmd, $outfile);
     $cmd = "/usr/bin/timeout -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile_aslp 2>&1";
-    go($cmd);
+    go($cmd, $outfile_aslp);
     $count++;
     my $pctstr = sprintf("%.2f", $count * 100.0 / $total);
     if ($pctstr ne $opctstr) {
