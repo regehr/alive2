@@ -21,7 +21,7 @@
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Passes/PassBuilder.h"
-#include "llvm/Support/PrettyStackTrace.h"
+#include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/TargetParser/Triple.h"
@@ -69,6 +69,13 @@ llvm::cl::opt<bool> opt_skip_verification(
     llvm::cl::desc(
         "Perform lifting but skip the refinement check (default=false)"),
     llvm::cl::cat(alive_cmdargs), llvm::cl::init(false));
+
+llvm::cl::opt<bool> opt_use_debuginfo(
+    LLVM_ARGS_PREFIX "use-debug-info",
+    llvm::cl::desc(
+        "Try to improve results by using LLVM debuginfo to provide a mapping "
+        "between LLVM and ARM instructions (default=true)"),
+    llvm::cl::cat(alive_cmdargs), llvm::cl::init(true));
 
 // FIXME -- this needs to be turned off by default
 llvm::cl::opt<bool> opt_internalize(
@@ -160,6 +167,9 @@ void doit(llvm::Module *M1, llvm::Function *srcFn, Verifier &verifier,
   lifter::init();
   lifter::checkSupport(srcFn);
 
+  if (opt_use_debuginfo)
+    lifter::addDebugInfo(srcFn);
+
   auto AsmBuffer = (opt_asm_input != "")
                        ? ExitOnErr(llvm::errorOrToExpected(
                              llvm::MemoryBuffer::getFile(opt_asm_input)))
@@ -236,10 +246,8 @@ int main(int argc, char **argv) {
     cout << endl;
   }
 
-  llvm::sys::PrintStackTraceOnErrorSignal(argv[0]);
-  llvm::PrettyStackTraceProgram X(argc, argv);
+  llvm::InitLLVM X(argc, argv);
   llvm::EnableDebugBuffering = true;
-  llvm::llvm_shutdown_obj llvm_shutdown; // Call llvm_shutdown() on exit.
   llvm::LLVMContext Context;
 
   std::string Usage =
@@ -280,10 +288,10 @@ version )EOF";
   // frozen
   config::disable_poison_input = true;
 
-  // FIXME: For now, we're hardcoding these
+  // FIXME: we should avoid hard-coding these
   M1.get()->setTargetTriple("aarch64-linux-gnu");
   M1.get()->setDataLayout(
-      "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128");
+      "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32");
 
   lifter::out = out;
 

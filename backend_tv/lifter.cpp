@@ -58,6 +58,7 @@
 #include "Target/AArch64/AArch64GenRegisterInfo.inc"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <ranges>
@@ -207,7 +208,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
   LLVMContext &Ctx = LiftedModule->getContext();
   MCFunction &MF;
   Function &srcFn;
-  Function *liftedFn{nullptr};
+  Function *liftedFn{nullptr}, *myFree{nullptr};
   MCBasicBlock *MCBB{nullptr};
   BasicBlock *LLVMBB{nullptr};
   MCInstPrinter *instrPrinter{nullptr};
@@ -238,7 +239,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
   Constant *lazyAddGlobal(string newGlobal) {
     *out << "  lazyAddGlobal '" << newGlobal << "'\n";
 
-    // unmangle these
+    // these have been mangled opaquely to us, just hard code the mapping
     if (newGlobal == "memcpy")
       newGlobal = "llvm.memcpy.p0.p0.i64";
     if (newGlobal == "memset")
@@ -268,12 +269,17 @@ class arm2llvm : public aslp::lifter_interface_llvm {
                                    name, LiftedModule);
       if (f.hasFnAttribute(Attribute::NoReturn))
         newF->addFnAttr(Attribute::NoReturn);
+      if (f.hasFnAttribute(Attribute::WillReturn))
+        newF->addFnAttr(Attribute::WillReturn);
       if (f.hasRetAttribute(Attribute::NoAlias))
         newF->addRetAttr(Attribute::NoAlias);
       if (f.hasRetAttribute(Attribute::SExt))
         newF->addRetAttr(Attribute::SExt);
       if (f.hasRetAttribute(Attribute::ZExt))
         newF->addRetAttr(Attribute::ZExt);
+      auto attr = f.getFnAttribute(Attribute::Memory);
+      if (attr.hasAttribute(Attribute::Memory))
+        newF->addFnAttr(attr);
       return newF;
     }
 
@@ -536,7 +542,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::SUBSWrx, AArch64::SUBSXri, AArch64::SUBSXrs, AArch64::SUBSXrx,
       AArch64::ANDSWri, AArch64::ANDSWrr, AArch64::ANDSWrs, AArch64::ANDSXri,
       AArch64::ANDSXrr, AArch64::ANDSXrs, AArch64::BICSWrs, AArch64::BICSXrs,
-      AArch64::ADCSXr,  AArch64::ADCSWr,
+      AArch64::ADCSWr,  AArch64::ADCSXr,  AArch64::SBCSWr,  AArch64::SBCSXr,
   };
 
   const set<int> instrs_32 = {
@@ -553,6 +559,8 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::ADCWr,
       AArch64::ADCSWr,
       AArch64::ASRVWr,
+      AArch64::SBCSWr,
+      AArch64::SBCWr,
       AArch64::SUBWri,
       AArch64::SUBWrs,
       AArch64::SUBWrx,
@@ -749,6 +757,12 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::FRINTASr,
       AArch64::FRINTMSr,
       AArch64::FRINTPSr,
+      AArch64::UQXTNv1i8,
+      AArch64::UQXTNv1i16,
+      AArch64::UQXTNv1i32,
+      AArch64::SQXTNv1i8,
+      AArch64::SQXTNv1i16,
+      AArch64::SQXTNv1i32,
   };
 
   const set<int> instrs_64 = {
@@ -775,6 +789,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::SSHLv1i64,
       AArch64::SSHLv4i16,
       AArch64::SSHLv2i32,
+      AArch64::SUBv1i64,
       AArch64::SUBv2i32,
       AArch64::SUBv4i16,
       AArch64::SUBv8i8,
@@ -793,6 +808,8 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::ADCXr,
       AArch64::ADCSXr,
       AArch64::ASRVXr,
+      AArch64::SBCXr,
+      AArch64::SBCSXr,
       AArch64::SUBXri,
       AArch64::SUBXrs,
       AArch64::SUBXrx,
@@ -942,9 +959,23 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::USHLLv8i8_shift,
       AArch64::USHLLv2i32_shift,
       AArch64::USHLLv4i16_shift,
+      AArch64::SLIv8i8_shift,
+      AArch64::SLIv4i16_shift,
+      AArch64::SLIv2i32_shift,
+      AArch64::SLId,
+      AArch64::SRIv8i8_shift,
+      AArch64::SRIv4i16_shift,
+      AArch64::SRIv2i32_shift,
+      AArch64::SRId,
       AArch64::XTNv8i8,
       AArch64::XTNv4i16,
       AArch64::XTNv2i32,
+      AArch64::UQXTNv8i8,
+      AArch64::UQXTNv4i16,
+      AArch64::UQXTNv2i32,
+      AArch64::SQXTNv8i8,
+      AArch64::SQXTNv4i16,
+      AArch64::SQXTNv2i32,
       AArch64::MLSv2i32,
       AArch64::NEGv1i64,
       AArch64::NEGv4i16,
@@ -991,9 +1022,11 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::SHLv8i8_shift,
       AArch64::SHLv4i16_shift,
       AArch64::SHLv2i32_shift,
-      AArch64::SSHRv4i16_shift,
+      AArch64::SHLd,
       AArch64::SSHRv8i8_shift,
+      AArch64::SSHRv4i16_shift,
       AArch64::SSHRv2i32_shift,
+      AArch64::SSHRd,
       AArch64::SSRAv8i8_shift,
       AArch64::SSRAv4i16_shift,
       AArch64::SSRAv2i32_shift,
@@ -1047,6 +1080,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::USHRv8i8_shift,
       AArch64::USHRv4i16_shift,
       AArch64::USHRv2i32_shift,
+      AArch64::USHRd,
       AArch64::SMULLv8i8_v8i16,
       AArch64::SMULLv2i32_v2i64,
       AArch64::SMULLv4i16_v4i32,
@@ -1055,6 +1089,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::USRAv8i8_shift,
       AArch64::USRAv4i16_shift,
       AArch64::USRAv2i32_shift,
+      AArch64::USRAd,
       AArch64::SMINv8i8,
       AArch64::SMINv4i16,
       AArch64::SMINv2i32,
@@ -1067,6 +1102,18 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::UMAXv8i8,
       AArch64::UMAXv4i16,
       AArch64::UMAXv2i32,
+      AArch64::SMINPv8i8,
+      AArch64::SMINPv4i16,
+      AArch64::SMINPv2i32,
+      AArch64::SMAXPv8i8,
+      AArch64::SMAXPv4i16,
+      AArch64::SMAXPv2i32,
+      AArch64::UMINPv8i8,
+      AArch64::UMINPv4i16,
+      AArch64::UMINPv2i32,
+      AArch64::UMAXPv8i8,
+      AArch64::UMAXPv4i16,
+      AArch64::UMAXPv2i32,
       AArch64::UMULLv4i16_indexed,
       AArch64::UMULLv2i32_indexed,
       AArch64::UMULLv8i8_v8i16,
@@ -1202,6 +1249,16 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::FRINTADr,
       AArch64::FRINTMDr,
       AArch64::FRINTPDr,
+      AArch64::PRFMl,
+      AArch64::PRFMroW,
+      AArch64::PRFMroX,
+      AArch64::PRFMui,
+      AArch64::PRFUMi,
+      AArch64::PACIASP,
+      AArch64::PACIBSP,
+      AArch64::AUTIASP,
+      AArch64::AUTIBSP,
+      AArch64::HINT,
   };
 
   const set<int> instrs_128 = {
@@ -1404,10 +1461,22 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::UMAXv16i8,
       AArch64::UMAXv8i16,
       AArch64::UMAXv4i32,
+      AArch64::SMINPv16i8,
+      AArch64::SMINPv8i16,
+      AArch64::SMINPv4i32,
+      AArch64::SMAXPv16i8,
+      AArch64::SMAXPv8i16,
+      AArch64::SMAXPv4i32,
+      AArch64::UMINPv16i8,
+      AArch64::UMINPv8i16,
+      AArch64::UMINPv4i32,
+      AArch64::UMAXPv16i8,
+      AArch64::UMAXPv8i16,
+      AArch64::UMAXPv4i32,
       AArch64::USRAv16i8_shift,
       AArch64::USRAv8i16_shift,
-      AArch64::USRAv2i64_shift,
       AArch64::USRAv4i32_shift,
+      AArch64::USRAv2i64_shift,
       AArch64::SMULLv8i16_v4i32,
       AArch64::SMULLv16i8_v8i16,
       AArch64::SMULLv4i32_v2i64,
@@ -1461,6 +1530,14 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::USHLLv8i16_shift,
       AArch64::USHLLv16i8_shift,
       AArch64::USHLLv4i32_shift,
+      AArch64::SLIv16i8_shift,
+      AArch64::SLIv8i16_shift,
+      AArch64::SLIv4i32_shift,
+      AArch64::SLIv2i64_shift,
+      AArch64::SRIv16i8_shift,
+      AArch64::SRIv8i16_shift,
+      AArch64::SRIv4i32_shift,
+      AArch64::SRIv2i64_shift,
       AArch64::DUPi16,
       AArch64::DUPi64,
       AArch64::DUPi32,
@@ -1901,6 +1978,12 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::XTNv16i8,
       AArch64::XTNv8i16,
       AArch64::XTNv4i32,
+      AArch64::UQXTNv16i8,
+      AArch64::UQXTNv8i16,
+      AArch64::UQXTNv4i32,
+      AArch64::SQXTNv16i8,
+      AArch64::SQXTNv8i16,
+      AArch64::SQXTNv4i32,
       AArch64::FNEGv4f32,
       AArch64::FNEGv2f64,
   };
@@ -2209,6 +2292,10 @@ class arm2llvm : public aslp::lifter_interface_llvm {
 
   ShuffleVectorInst *createShuffleVector(Value *v, Value*x , ArrayRef<int> mask) override {
     return new ShuffleVectorInst(v, x, mask, nextName(), LLVMBB);
+  }
+
+  ShuffleVectorInst *createShuffleVector(Value *v1, Value *v2, Value *mask) {
+    return new ShuffleVectorInst(v1, v2, mask, nextName(), LLVMBB);
   }
 
   Value *getIndexedElement(unsigned idx, unsigned eltSize, unsigned reg) override {
@@ -3185,6 +3272,56 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     assertTrue(c);
   }
 
+  // Implemented library pseudocode for signed satuaration from A64 ISA manual
+  tuple<Value *, bool> SignedSatQ(Value *i, unsigned bitWidth) {
+    auto W = getBitWidth(i);
+    assert(bitWidth < W);
+    auto max = getIntConst((1 << (bitWidth - 1)) - 1, W);
+    auto min = getIntConst(-(1 << (bitWidth - 1)), W);
+    Value *max_bitWidth =
+        ConstantInt::get(Ctx, APInt::getSignedMaxValue(bitWidth));
+    Value *min_bitWidth =
+        ConstantInt::get(Ctx, APInt::getSignedMinValue(bitWidth));
+    Value *i_bitWidth = createTrunc(i, getIntTy(bitWidth));
+
+    auto sat = createOr(createICmp(ICmpInst::Predicate::ICMP_SGT, i, max),
+                        createICmp(ICmpInst::Predicate::ICMP_SLT, i, min));
+    auto max_or_min =
+        createSelect(createICmp(ICmpInst::Predicate::ICMP_SGT, i, max),
+                     max_bitWidth, min_bitWidth);
+
+    auto res = createSelect(sat, max_or_min, i_bitWidth);
+    return make_pair(res, sat);
+  }
+
+  // Implemented library pseudocode for unsigned satuaration from A64 ISA manual
+  tuple<Value *, bool> UnsignedSatQ(Value *i, unsigned bitWidth) {
+    auto W = getBitWidth(i);
+    assert(bitWidth < W);
+    auto max = getIntConst((1 << bitWidth) - 1, W);
+    auto min = getIntConst(0, W);
+    Value *max_bitWidth = ConstantInt::get(Ctx, APInt::getMaxValue(bitWidth));
+    Value *min_bitWidth = ConstantInt::get(Ctx, APInt::getMinValue(bitWidth));
+    Value *i_bitWidth = createTrunc(i, getIntTy(bitWidth));
+
+    auto sat = createOr(createICmp(ICmpInst::Predicate::ICMP_UGT, i, max),
+                        createICmp(ICmpInst::Predicate::ICMP_ULT, i, min));
+    auto max_or_min =
+        createSelect(createICmp(ICmpInst::Predicate::ICMP_UGT, i, max),
+                     max_bitWidth, min_bitWidth);
+
+    auto res = createSelect(sat, max_or_min, i_bitWidth);
+    return make_pair(res, sat);
+  }
+
+  // Implemented library pseudocode for satuaration from A64 ISA manual
+  tuple<Value *, bool> SatQ(Value *i, unsigned bitWidth, bool isSigned) {
+    auto [result, sat] =
+        isSigned ? SignedSatQ(i, bitWidth) : UnsignedSatQ(i, bitWidth);
+
+    return make_pair(result, sat);
+  }
+
   // From https://github.com/agustingianni/retools
   inline uint64_t Replicate(uint64_t bit, int N) {
     if (!bit)
@@ -3304,21 +3441,26 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     return imm64;
   }
 
-  vector<Value *> marshallArgs(Function *fn) {
-    if (fn->getReturnType()->isStructTy()) {
+  vector<Value *> marshallArgs(FunctionType *fTy) {
+    *out << "entering marshallArgs()\n";
+    assert(fTy);
+    if (fTy->getReturnType()->isStructTy()) {
       *out << "\nERROR: we don't support structures in return values yet\n\n";
       exit(-1);
     }
-    if (fn->getReturnType()->isArrayTy()) {
+    if (fTy->getReturnType()->isArrayTy()) {
       *out << "\nERROR: we don't support arrays in return values yet\n\n";
       exit(-1);
     }
     unsigned vecArgNum = 0;
     unsigned scalarArgNum = 0;
-    // unsigned stackSlot = 0;
+    unsigned stackSlot = 0;
     vector<Value *> args;
-    for (auto arg = fn->arg_begin(); arg != fn->arg_end(); ++arg) {
-      auto *argTy = arg->getType();
+    for (auto arg = fTy->param_begin(); arg != fTy->param_end(); ++arg) {
+      Type *argTy = *arg;
+      assert(argTy);
+      *out << "  vecArgNum = " << vecArgNum
+           << " scalarArgNum = " << scalarArgNum << "\n";
       if (argTy->isStructTy()) {
         *out << "\nERROR: we don't support structures in arguments yet\n\n";
         exit(-1);
@@ -3329,32 +3471,48 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       }
       Value *param{nullptr};
       if (argTy->isFloatingPointTy() || argTy->isVectorTy()) {
-        if (scalarArgNum < 8) {
+        if (vecArgNum < 8) {
           param = readFromReg(AArch64::Q0 + vecArgNum);
           if (getBitWidth(argTy) < 128)
             param = createTrunc(param, getIntTy(getBitWidth(argTy)));
           param = createBitCast(param, argTy);
           ++vecArgNum;
         } else {
-          // FIXME load from stack
-          assert(false);
+          auto sz = getBitWidth(argTy);
+          if (sz > 64 && ((stackSlot % 2) != 0)) {
+            ++stackSlot;
+            *out << "aligning stack slot for large vector parameter\n";
+          }
+          *out << "vector parameter going on stack with size = " << sz << "\n";
+          auto SP = readPtrFromReg(AArch64::SP);
+          auto addr = createGEP(getIntTy(64), SP, {getIntConst(stackSlot, 64)},
+                                nextName());
+          param = createBitCast(createLoad(getIntTy(sz), addr), argTy);
+          ++stackSlot;
+          if (sz > 64)
+            ++stackSlot;
         }
       } else if (argTy->isIntegerTy() || argTy->isPointerTy()) {
-        assert(getBitWidth(arg) <= 64);
         // FIXME check signext and zeroext
         if (scalarArgNum < 8) {
           param = readFromReg(AArch64::X0 + scalarArgNum);
           ++scalarArgNum;
         } else {
-          // FIXME load from stack
-          assert(false);
+          auto SP = readPtrFromReg(AArch64::SP);
+          auto addr = createGEP(getIntTy(64), SP, {getIntConst(stackSlot, 64)},
+                                nextName());
+          param = createLoad(getIntTy(64), addr);
+          ++stackSlot;
         }
         if (argTy->isPointerTy()) {
           param = new IntToPtrInst(param, PointerType::get(Ctx, 0), "", LLVMBB);
         } else {
-          if (getBitWidth(arg) < 64)
-            param = createTrunc(param, getIntTy(getBitWidth(arg)));
+          assert(argTy->getIntegerBitWidth() <= 64);
+          if (argTy->getIntegerBitWidth() < 64)
+            param = createTrunc(param, getIntTy(argTy->getIntegerBitWidth()));
         }
+      } else {
+        assert(false && "unknown arg type\n");
       }
       args.push_back(param);
     }
@@ -3362,26 +3520,19 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     return args;
   }
 
-  void doCall() {
-    auto &op0 = CurInst->getOperand(0);
-    assert(op0.isExpr());
-    auto [expr, _] = getExprVar(op0.getExpr());
-    assert(expr);
-    string calleeName = (string)expr->getName();
+  void doCall(FunctionCallee FC, CallInst *llvmCI, const string &calleeName) {
+    *out << "entering doCall()\n";
 
-    // yikes
-    if (calleeName == "__stack_chk_fail") {
-      createTrap();
-      return;
+    for (auto &arg : FC.getFunctionType()->params()) {
+      if (auto vTy = dyn_cast<VectorType>(arg))
+        checkVectorTy(vTy);
     }
+    if (auto RT = dyn_cast<VectorType>(FC.getFunctionType()->getReturnType()))
+      checkVectorTy(RT);
 
-    *out << "lifting a call, callee is: '" << calleeName << "'\n";
-    auto *callee = dyn_cast<Function>(expr);
-    assert(callee);
-    auto FC = FunctionCallee(callee);
-    auto args = marshallArgs(callee);
+    auto args = marshallArgs(FC.getFunctionType());
 
-    // yikes -- these functions have an LLVM "immediate" as their last
+    // ugh -- these functions have an LLVM "immediate" as their last
     // argument; this is not present in the assembly at all, we have
     // to provide it by hand
     if (calleeName == "llvm.memset.p0.i64")
@@ -3392,14 +3543,109 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       args[3] = getIntConst(0, 1);
 
     auto CI = CallInst::Create(FC, args, "", LLVMBB);
-    auto RV = enforceABIRules(CI, callee->hasRetAttribute(Attribute::SExt),
-                              callee->hasRetAttribute(Attribute::ZExt));
-    // FIXME invalidate machine state that needs invalidating
-    auto retTy = callee->getReturnType();
+
+    bool sext{false}, zext{false};
+
+    assert(llvmCI);
+    if (llvmCI->hasFnAttr(Attribute::NoReturn)) {
+      auto a = CI->getAttributes();
+      auto a2 = a.addFnAttribute(Ctx, Attribute::NoReturn);
+      CI->setAttributes(a2);
+    }
+    // NB we have to check for both function attributes and call site
+    // attributes
+    if (llvmCI->hasRetAttr(Attribute::SExt))
+      sext = true;
+    if (llvmCI->hasRetAttr(Attribute::ZExt))
+      zext = true;
+    auto calledFn = llvmCI->getCalledFunction();
+    if (calledFn) {
+      if (calledFn->hasRetAttribute(Attribute::SExt))
+	sext = true;
+      if (calledFn->hasRetAttribute(Attribute::ZExt))
+	zext = true;
+    }
+
+    auto RV = enforceSExtZExt(CI, sext, zext);
+
+    // invalidate machine state that is not guaranteed to be preserved across a
+    // call
+    invalidateReg(AArch64::N, 1);
+    invalidateReg(AArch64::Z, 1);
+    invalidateReg(AArch64::C, 1);
+    invalidateReg(AArch64::V, 1);
+    for (unsigned reg = 9; reg <= 15; ++reg)
+      invalidateReg(AArch64::X0 + reg, 64);
+
+    auto retTy = FC.getFunctionType()->getReturnType();
     if (retTy->isIntegerTy() || retTy->isPointerTy()) {
       updateReg(RV, AArch64::X0);
     } else if (retTy->isFloatingPointTy() || retTy->isVectorTy()) {
       updateReg(RV, AArch64::Q0);
+    } else {
+      assert(retTy->isVoidTy());
+    }
+  }
+
+  void doDirectCall() {
+    auto &op0 = CurInst->getOperand(0);
+    assert(op0.isExpr());
+    auto [expr, _] = getExprVar(op0.getExpr());
+    assert(expr);
+    string calleeName = (string)expr->getName();
+
+    if (calleeName == "__stack_chk_fail") {
+      createTrap();
+      return;
+    }
+
+    *out << "lifting a direct call, callee is: '" << calleeName << "'\n";
+    auto *callee = dyn_cast<Function>(expr);
+    assert(callee);
+
+    if (false && callee == liftedFn) {
+      *out << "Recursion currently not supported\n\n";
+      exit(-1);
+    }
+
+    auto llvmInst = getCurLLVMInst();
+    CallInst *llvmCI{nullptr};
+    if (!llvmInst) {
+      *out << "oops, no debuginfo mapping exists\n";
+    } else {
+      llvmCI = dyn_cast<CallInst>(llvmInst);
+      if (!llvmCI)
+        *out << "oops, debuginfo gave us something that's not a callinst\n";
+    }
+    if (!llvmCI) {
+      *out << "error: can't locate corresponding source-side call instruction\n";
+      exit(-1);
+    }
+
+    FunctionCallee FC{callee};
+    doCall(FC, llvmCI, calleeName);
+  }
+
+  void doIndirectCall() {
+    if (auto llvmInst = getCurLLVMInst()) {
+      if (auto CI = dyn_cast<CallInst>(llvmInst)) {
+        if (!CI->isIndirectCall()) {
+          *out << "OOPS: expected BR/BLR to map to an indirect call\n\n";
+          exit(-1);
+        }
+        auto reg = CurInst->getOperand(0).getReg();
+        auto fnPtr = readPtrFromReg(reg);
+        FunctionCallee FC(CI->getFunctionType(), fnPtr);
+        doCall(FC, CI, "");
+      } else {
+        *out << "OOPS: debuginfo gave us something that's not a callinst\n";
+        *out << "Can't process BR/BLR instruction\n\n";
+        exit(-1);
+      }
+    } else {
+      *out << "OOPS: no debuginfo mapping exists\n";
+      *out << "Can't process BR/BLR instruction\n\n";
+      exit(-1);
     }
   }
 
@@ -3421,6 +3667,8 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       for (unsigned r = 19; r <= 28; ++r)
         assertSame(initialReg[r], readFromReg(AArch64::X0 + r));
     }
+
+    CallInst::Create(myFree, {stackMem}, "", LLVMBB);
 
     auto *retTyp = srcFn.getReturnType();
     if (retTyp->isVoidTy()) {
@@ -3590,14 +3838,8 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     return make_pair(baseAddr, offset);
   }
 
-  Value *makeLoadWithOffset(Value *base, Value *offset, int size) override {
-    // Create a GEP instruction based on a byte addressing basis (8 bits)
-    // returning pointer to base + offset
-    assert(base);
-    auto ptr = createGEP(getIntTy(8), base, {offset}, "");
-
-    // Load Value val in the pointer returned by the GEP instruction
-    return createLoad(getIntTy(8 * size), ptr);
+  Instruction *getCurLLVMInst() {
+    return (Instruction *)(CurInst->getLoc().getPointer());
   }
 
   unsigned decodeRegSet(unsigned r) {
@@ -3957,19 +4199,40 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     return make_pair(baseAddr, op2.getImm());
   }
 
-  // Creates instructions to store val in memory pointed by base + offset
-  // offset and size are in bytes
-  Value *makeLoadWithOffset(Value *base, int offset, unsigned size) {
-    // Get offset as a 64-bit LLVM constant
-    auto offsetVal = getIntConst(offset, 64);
-
+  Value *makeLoadWithOffset(Value *base, Value *offset, int size) override {
     // Create a GEP instruction based on a byte addressing basis (8 bits)
     // returning pointer to base + offset
     assert(base);
-    auto ptr = createGEP(getIntTy(8), base, {offsetVal}, "");
+    auto ptr = createGEP(getIntTy(8), base, {offset}, "");
 
     // Load Value val in the pointer returned by the GEP instruction
-    return createLoad(getIntTy(8 * size), ptr);
+    Value *loaded = createLoad(getIntTy(8 * size), ptr);
+
+    *out << "[makeLoadWithOffset size = " << size << "]\n";
+
+    if (size == 1) {
+      *out << "[it's a 1-byte load]\n";
+      if (auto llvmInst = getCurLLVMInst()) {
+        if (auto LI = dyn_cast<LoadInst>(llvmInst)) {
+          if (LI->getType() == getIntTy(1)) {
+            *out << "[following ABI rules for i1]\n";
+            loaded = createAnd(loaded, getIntConst(1, 8));
+          } else {
+            *out << "[LLVM inst for this ARM load isn't a load i1]\n";
+          }
+        } else {
+          *out << "[LLVM inst for this ARM load is not a load]\n";
+        }
+      } else {
+        *out << "[can't find an LLVM inst for this ARM load]\n";
+      }
+    }
+
+    return loaded;
+  }
+
+  Value *makeLoadWithOffset(Value *base, int offset, unsigned size) {
+    return makeLoadWithOffset(base, getIntConst(offset, 64), size);
   }
 
   tuple<Value *, Value *, Value *> getParamsStoreReg() {
@@ -4227,6 +4490,20 @@ public:
 
     switch (opcode) {
 
+    case AArch64::PRFMl:
+    case AArch64::PRFMroW:
+    case AArch64::PRFMroX:
+    case AArch64::PRFMui:
+    case AArch64::PRFUMi:
+    case AArch64::PACIASP:
+    case AArch64::PACIBSP:
+    case AArch64::AUTIASP:
+    case AArch64::AUTIBSP:
+    case AArch64::HINT: {
+      // NO-OPS
+      break;
+    }
+
     // we're abusing this opcode -- better hope we don't run across these for
     // real
     case AArch64::SEH_Nop:
@@ -4238,7 +4515,7 @@ public:
     }
 
     case AArch64::BL: {
-      doCall();
+      doDirectCall();
       break;
     }
 
@@ -4258,20 +4535,21 @@ public:
         // ok, if we don't have a destination block then we left this
         // dangling on purpose, with the assumption that it's a tail
         // call
-        doCall();
+        doDirectCall();
         doReturn();
       }
       break;
     }
 
     case AArch64::BR: {
-      *out << "\nERROR: BR not supported\n\n";
-      exit(-1);
+      doIndirectCall();
+      doReturn();
+      break;
     }
 
     case AArch64::BLR: {
-      *out << "\nERROR: BLR not supported\n\n";
-      exit(-1);
+      doIndirectCall();
+      break;
     }
 
     case AArch64::RET:
@@ -4452,12 +4730,25 @@ public:
       break;
     }
 
-    case AArch64::ADCXr:
     case AArch64::ADCWr:
+    case AArch64::ADCXr:
+    case AArch64::ADCSWr:
     case AArch64::ADCSXr:
-    case AArch64::ADCSWr: {
+    case AArch64::SBCWr:
+    case AArch64::SBCXr:
+    case AArch64::SBCSWr:
+    case AArch64::SBCSXr: {
       auto a = readFromOperand(1);
       auto b = readFromOperand(2);
+
+      switch (opcode) {
+      case AArch64::SBCWr:
+      case AArch64::SBCXr:
+      case AArch64::SBCSWr:
+      case AArch64::SBCSXr:
+        b = createNot(b);
+        break;
+      }
 
       auto [res, flags] = addWithCarry(a, b, getC());
       updateOutputReg(res);
@@ -5451,6 +5742,7 @@ public:
 
       MCOperand &op2 = CurInst->getOperand(2);
       if (op2.isExpr()) {
+        *out << "[operand 2 is expr]\n";
         auto [globalVar, storePtr] = getExprVar(op2.getExpr());
         if (storePtr) {
           Value *ptrToInt = createPtrToInt(globalVar, getIntTy(size * 8));
@@ -5460,6 +5752,7 @@ public:
           updateOutputReg(loaded, sExt);
         }
       } else {
+        *out << "[operand 2 is not expr]\n";
         auto [base, imm] = getParamsLoadImmed();
         auto loaded = makeLoadWithOffset(base, imm * size, size);
         updateOutputReg(loaded, sExt);
@@ -6335,8 +6628,7 @@ public:
 
       // Deinterleave the loaded vector into nregs vectors and store them in the
       // registers
-      int mask[numElts];
-      ArrayRef<int> maskRef(mask, numElts);
+      vector<int> mask(numElts);
       Value *res;
 
       // Outer loop control for register to store into
@@ -6345,7 +6637,7 @@ public:
           assert(maskVal < nregs * numElts);
           mask[i] = maskVal;
         }
-        res = createShuffleVector(casted, maskRef);
+        res = createShuffleVector(casted, mask);
         updateReg(res, regCounter);
 
         regCounter++;
@@ -7099,8 +7391,7 @@ public:
       auto base = readPtrFromReg(baseReg);
       auto baseAddr = createPtrToInt(base, i64);
 
-      int mask[nregs * numElts];
-      ArrayRef<int> maskRef(mask, nregs * numElts);
+      vector<int> mask(nregs * numElts);
 
       Value *valueToStore = getUndefVec(nregs, numElts * eltSize);
       // Outer loop control for register to load from
@@ -7128,7 +7419,7 @@ public:
       // Shuffle the vector to interleave the nregs vectors
       auto casted =
           createBitCast(valueToStore, getVecTy(eltSize, nregs * numElts));
-      Value *res = createShuffleVector(casted, maskRef);
+      Value *res = createShuffleVector(casted, mask);
 
       storeToMemoryImmOffset(base, 0, nregs * numElts * (eltSize / 8), res);
 
@@ -7295,14 +7586,14 @@ public:
       }
 
       bool sExt = false;
-      switch(opcode) {
-        case AArch64::LDPSWpre:
-        case AArch64::LDPSWpost:
-          sExt = true;
-          break;
-        default:
-          sExt = false;
-          break;
+      switch (opcode) {
+      case AArch64::LDPSWpre:
+      case AArch64::LDPSWpost:
+        sExt = true;
+        break;
+      default:
+        sExt = false;
+        break;
       }
       unsigned size = pow(2, scale);
       auto &op0 = CurInst->getOperand(0);
@@ -7730,26 +8021,26 @@ public:
       auto md = MDString::get(Ctx, "fpexcept.strict");
       Value *converted;
       switch (opcode) {
-        case AArch64::FRINTASr:
-        case AArch64::FRINTADr: {
-                converted = createConstrainedRound(
-                readFromFPOperand(1, getRegSize(op1.getReg())), md);
-                break;
-                }
-        case AArch64::FRINTMSr:
-        case AArch64::FRINTMDr: {
-          converted = createConstrainedFloor(
-              readFromFPOperand(1, getRegSize(op1.getReg())), md);
-          break;
-        }
-        case AArch64::FRINTPSr:
-        case AArch64::FRINTPDr: {
-          converted = createConstrainedCeil(
-              readFromFPOperand(1, getRegSize(op1.getReg())), md);
-          break;
-        }
+      case AArch64::FRINTASr:
+      case AArch64::FRINTADr: {
+        converted = createConstrainedRound(
+            readFromFPOperand(1, getRegSize(op1.getReg())), md);
+        break;
+      }
+      case AArch64::FRINTMSr:
+      case AArch64::FRINTMDr: {
+        converted = createConstrainedFloor(
+            readFromFPOperand(1, getRegSize(op1.getReg())), md);
+        break;
+      }
+      case AArch64::FRINTPSr:
+      case AArch64::FRINTPDr: {
+        converted = createConstrainedCeil(
+            readFromFPOperand(1, getRegSize(op1.getReg())), md);
+        break;
+      }
       default:
-	assert(false);
+        assert(false);
       }
 
       updateOutputReg(converted);
@@ -9122,6 +9413,30 @@ public:
     case AArch64::UMAXv16i8:
     case AArch64::UMAXv8i16:
     case AArch64::UMAXv4i32:
+    case AArch64::SMINPv8i8:
+    case AArch64::SMINPv4i16:
+    case AArch64::SMINPv2i32:
+    case AArch64::SMINPv16i8:
+    case AArch64::SMINPv8i16:
+    case AArch64::SMINPv4i32:
+    case AArch64::SMAXPv8i8:
+    case AArch64::SMAXPv4i16:
+    case AArch64::SMAXPv2i32:
+    case AArch64::SMAXPv16i8:
+    case AArch64::SMAXPv8i16:
+    case AArch64::SMAXPv4i32:
+    case AArch64::UMINPv8i8:
+    case AArch64::UMINPv4i16:
+    case AArch64::UMINPv2i32:
+    case AArch64::UMINPv16i8:
+    case AArch64::UMINPv8i16:
+    case AArch64::UMINPv4i32:
+    case AArch64::UMAXPv8i8:
+    case AArch64::UMAXPv4i16:
+    case AArch64::UMAXPv2i32:
+    case AArch64::UMAXPv16i8:
+    case AArch64::UMAXPv8i16:
+    case AArch64::UMAXPv4i32:
     case AArch64::SMULLv8i8_v8i16:
     case AArch64::SMULLv2i32_v2i64:
     case AArch64::SMULLv4i16_v4i32:
@@ -9134,25 +9449,29 @@ public:
     case AArch64::USHRv16i8_shift:
     case AArch64::USHRv8i16_shift:
     case AArch64::USHRv4i32_shift:
+    case AArch64::USHRd:
+    case AArch64::USHRv2i64_shift:
     case AArch64::MULv2i32:
     case AArch64::MULv8i8:
     case AArch64::MULv4i16:
     case AArch64::MULv16i8:
     case AArch64::MULv8i16:
     case AArch64::MULv4i32:
-    case AArch64::SSHRv4i16_shift:
     case AArch64::SSHRv8i8_shift:
-    case AArch64::SSHRv2i32_shift:
     case AArch64::SSHRv16i8_shift:
-    case AArch64::SSHRv2i64_shift:
+    case AArch64::SSHRv4i16_shift:
     case AArch64::SSHRv8i16_shift:
+    case AArch64::SSHRv2i32_shift:
     case AArch64::SSHRv4i32_shift:
+    case AArch64::SSHRd:
+    case AArch64::SSHRv2i64_shift:
     case AArch64::SHLv16i8_shift:
     case AArch64::SHLv8i16_shift:
     case AArch64::SHLv4i32_shift:
     case AArch64::SHLv2i64_shift:
     case AArch64::SHLv8i8_shift:
     case AArch64::SHLv4i16_shift:
+    case AArch64::SHLd:
     case AArch64::SHLv2i32_shift:
     case AArch64::BICv4i16:
     case AArch64::BICv8i8:
@@ -9216,6 +9535,7 @@ public:
     case AArch64::SSUBWv8i16_v4i32:
     case AArch64::SSUBWv2i32_v2i64:
     case AArch64::SSUBWv4i32_v2i64:
+    case AArch64::SUBv1i64:
     case AArch64::SUBv2i32:
     case AArch64::SUBv2i64:
     case AArch64::SUBv4i16:
@@ -9266,8 +9586,7 @@ public:
     case AArch64::USHLLv8i16_shift:
     case AArch64::USHLLv16i8_shift:
     case AArch64::USHLLv4i16_shift:
-    case AArch64::USHLLv2i32_shift:
-    case AArch64::USHRv2i64_shift: {
+    case AArch64::USHLLv2i32_shift: {
       unsigned op1Size = 0;
       switch (opcode) {
       case AArch64::UADDWv8i8_v8i16:
@@ -9301,6 +9620,12 @@ public:
       case AArch64::SMINv16i8:
       case AArch64::SMINv8i16:
       case AArch64::SMINv4i32:
+      case AArch64::SMINPv8i8:
+      case AArch64::SMINPv4i16:
+      case AArch64::SMINPv2i32:
+      case AArch64::SMINPv16i8:
+      case AArch64::SMINPv8i16:
+      case AArch64::SMINPv4i32:
         op = [&](Value *a, Value *b) { return createSMin(a, b); };
         break;
       case AArch64::SMAXv8i8:
@@ -9309,6 +9634,12 @@ public:
       case AArch64::SMAXv16i8:
       case AArch64::SMAXv8i16:
       case AArch64::SMAXv4i32:
+      case AArch64::SMAXPv8i8:
+      case AArch64::SMAXPv4i16:
+      case AArch64::SMAXPv2i32:
+      case AArch64::SMAXPv16i8:
+      case AArch64::SMAXPv8i16:
+      case AArch64::SMAXPv4i32:
         op = [&](Value *a, Value *b) { return createSMax(a, b); };
         break;
       case AArch64::UMINv8i8:
@@ -9317,6 +9648,12 @@ public:
       case AArch64::UMINv16i8:
       case AArch64::UMINv8i16:
       case AArch64::UMINv4i32:
+      case AArch64::UMINPv8i8:
+      case AArch64::UMINPv4i16:
+      case AArch64::UMINPv2i32:
+      case AArch64::UMINPv16i8:
+      case AArch64::UMINPv8i16:
+      case AArch64::UMINPv4i32:
         op = [&](Value *a, Value *b) { return createUMin(a, b); };
         break;
       case AArch64::UMAXv8i8:
@@ -9325,6 +9662,12 @@ public:
       case AArch64::UMAXv16i8:
       case AArch64::UMAXv8i16:
       case AArch64::UMAXv4i32:
+      case AArch64::UMAXPv8i8:
+      case AArch64::UMAXPv4i16:
+      case AArch64::UMAXPv2i32:
+      case AArch64::UMAXPv16i8:
+      case AArch64::UMAXPv8i16:
+      case AArch64::UMAXPv4i32:
         op = [&](Value *a, Value *b) { return createUMax(a, b); };
         break;
       case AArch64::UMULLv16i8_v8i16:
@@ -9357,6 +9700,7 @@ public:
       case AArch64::USHRv16i8_shift:
       case AArch64::USHRv8i16_shift:
       case AArch64::USHRv4i32_shift:
+      case AArch64::USHRd:
         splatImm2 = true;
         op = [&](Value *a, Value *b) { return createMaskedLShr(a, b); };
         break;
@@ -9368,13 +9712,14 @@ public:
       case AArch64::MULv4i32:
         op = [&](Value *a, Value *b) { return createMul(a, b); };
         break;
-      case AArch64::SSHRv4i16_shift:
       case AArch64::SSHRv8i8_shift:
-      case AArch64::SSHRv2i32_shift:
       case AArch64::SSHRv16i8_shift:
-      case AArch64::SSHRv2i64_shift:
+      case AArch64::SSHRv4i16_shift:
       case AArch64::SSHRv8i16_shift:
+      case AArch64::SSHRv2i32_shift:
       case AArch64::SSHRv4i32_shift:
+      case AArch64::SSHRd:
+      case AArch64::SSHRv2i64_shift:
         splatImm2 = true;
         op = [&](Value *a, Value *b) { return createMaskedAShr(a, b); };
         break;
@@ -9384,6 +9729,7 @@ public:
       case AArch64::SHLv2i64_shift:
       case AArch64::SHLv8i8_shift:
       case AArch64::SHLv4i16_shift:
+      case AArch64::SHLd:
       case AArch64::SHLv2i32_shift:
         splatImm2 = true;
         op = [&](Value *a, Value *b) { return createMaskedShl(a, b); };
@@ -9520,6 +9866,7 @@ public:
         }
         op = [&](Value *a, Value *b) { return createSub(a, b); };
         break;
+      case AArch64::SUBv1i64:
       case AArch64::SUBv2i32:
       case AArch64::SUBv2i64:
       case AArch64::SUBv4i16:
@@ -9585,12 +9932,15 @@ public:
         assert(false && "missed a case");
       }
 
-      int eltSize;
-      int numElts;
+      unsigned eltSize, numElts;
       switch (opcode) {
       case AArch64::USHLv1i64:
+      case AArch64::USHRd:
+      case AArch64::SSHRd:
       case AArch64::SSHLv1i64:
+      case AArch64::SHLd:
       case AArch64::ADDv1i64:
+      case AArch64::SUBv1i64:
         numElts = 1;
         eltSize = 64;
         break;
@@ -9600,6 +9950,10 @@ public:
       case AArch64::SMAXv2i32:
       case AArch64::UMINv2i32:
       case AArch64::UMAXv2i32:
+      case AArch64::SMINPv2i32:
+      case AArch64::SMAXPv2i32:
+      case AArch64::UMINPv2i32:
+      case AArch64::UMAXPv2i32:
       case AArch64::SMULLv2i32_v2i64:
       case AArch64::USHRv2i32_shift:
       case AArch64::MULv2i32:
@@ -9629,9 +9983,6 @@ public:
       case AArch64::SUBv2i64:
       case AArch64::USHLv2i64:
       case AArch64::SSHLv2i64:
-        numElts = 2;
-        eltSize = 64;
-        break;
       case AArch64::USHRv2i64_shift:
         numElts = 2;
         eltSize = 64;
@@ -9642,6 +9993,10 @@ public:
       case AArch64::SMAXv4i16:
       case AArch64::UMINv4i16:
       case AArch64::UMAXv4i16:
+      case AArch64::SMINPv4i16:
+      case AArch64::SMAXPv4i16:
+      case AArch64::UMINPv4i16:
+      case AArch64::UMAXPv4i16:
       case AArch64::SMULLv4i16_v4i32:
       case AArch64::USHRv4i16_shift:
       case AArch64::SSHLLv4i16_shift:
@@ -9670,6 +10025,10 @@ public:
       case AArch64::SMAXv4i32:
       case AArch64::UMINv4i32:
       case AArch64::UMAXv4i32:
+      case AArch64::SMINPv4i32:
+      case AArch64::SMAXPv4i32:
+      case AArch64::UMINPv4i32:
+      case AArch64::UMAXPv4i32:
       case AArch64::SMULLv4i32_v2i64:
       case AArch64::USHRv4i32_shift:
       case AArch64::MULv4i32:
@@ -9700,6 +10059,10 @@ public:
       case AArch64::SMAXv8i8:
       case AArch64::UMINv8i8:
       case AArch64::UMAXv8i8:
+      case AArch64::SMINPv8i8:
+      case AArch64::SMAXPv8i8:
+      case AArch64::UMINPv8i8:
+      case AArch64::UMAXPv8i8:
       case AArch64::SMULLv8i8_v8i16:
       case AArch64::MULv8i8:
       case AArch64::SSHLLv8i8_shift:
@@ -9744,6 +10107,10 @@ public:
       case AArch64::SMAXv8i16:
       case AArch64::UMINv8i16:
       case AArch64::UMAXv8i16:
+      case AArch64::SMINPv8i16:
+      case AArch64::SMAXPv8i16:
+      case AArch64::UMINPv8i16:
+      case AArch64::UMAXPv8i16:
       case AArch64::UADDLv8i16_v4i32:
       case AArch64::UADDWv8i16_v4i32:
       case AArch64::SADDLv8i16_v4i32:
@@ -9761,6 +10128,10 @@ public:
       case AArch64::SMAXv16i8:
       case AArch64::UMINv16i8:
       case AArch64::UMAXv16i8:
+      case AArch64::SMINPv16i8:
+      case AArch64::SMAXPv16i8:
+      case AArch64::UMINPv16i8:
+      case AArch64::UMAXPv16i8:
       case AArch64::SMULLv16i8_v8i16:
       case AArch64::USHRv16i8_shift:
       case AArch64::MULv16i8:
@@ -9790,6 +10161,49 @@ public:
       default:
         assert(false && "missed case");
         break;
+      }
+
+      // Preprocessing the two operands
+      switch (opcode) {
+      case AArch64::SMINPv8i8:
+      case AArch64::SMINPv4i16:
+      case AArch64::SMINPv2i32:
+      case AArch64::SMINPv16i8:
+      case AArch64::SMINPv8i16:
+      case AArch64::SMINPv4i32:
+      case AArch64::SMAXPv8i8:
+      case AArch64::SMAXPv4i16:
+      case AArch64::SMAXPv2i32:
+      case AArch64::SMAXPv16i8:
+      case AArch64::SMAXPv8i16:
+      case AArch64::SMAXPv4i32:
+      case AArch64::UMINPv8i8:
+      case AArch64::UMINPv4i16:
+      case AArch64::UMINPv2i32:
+      case AArch64::UMINPv16i8:
+      case AArch64::UMINPv8i16:
+      case AArch64::UMINPv4i32:
+      case AArch64::UMAXPv8i8:
+      case AArch64::UMAXPv4i16:
+      case AArch64::UMAXPv2i32:
+      case AArch64::UMAXPv16i8:
+      case AArch64::UMAXPv8i16:
+      case AArch64::UMAXPv4i32: {
+        vector<int> mask1(numElts), mask2(numElts);
+        for (unsigned i = 0; i < numElts; i++) {
+          mask1[i] = 2 * i;
+          mask2[i] = 2 * i + 1;
+        }
+        auto vector_a = createBitCast(a, getVecTy(eltSize, numElts));
+        auto vector_b = createBitCast(b, getVecTy(eltSize, numElts));
+
+        auto new_a = createShuffleVector(vector_b, vector_a, mask1);
+        auto new_b = createShuffleVector(vector_b, vector_a, mask2);
+
+        a = createBitCast(new_a, getIntTy(eltSize * numElts));
+        b = createBitCast(new_b, getIntTy(eltSize * numElts));
+        break;
+      }
       }
 
       // Some instructions have first operand of a different type than the
@@ -10230,6 +10644,110 @@ public:
       }
 
       updateOutputReg(res);
+      break;
+    }
+
+    case AArch64::SLIv8i8_shift:
+    case AArch64::SLIv16i8_shift:
+    case AArch64::SLIv4i16_shift:
+    case AArch64::SLIv8i16_shift:
+    case AArch64::SLIv2i32_shift:
+    case AArch64::SLIv4i32_shift:
+    case AArch64::SLId:
+    case AArch64::SLIv2i64_shift:
+    case AArch64::SRIv8i8_shift:
+    case AArch64::SRIv16i8_shift:
+    case AArch64::SRIv4i16_shift:
+    case AArch64::SRIv8i16_shift:
+    case AArch64::SRIv2i32_shift:
+    case AArch64::SRIv4i32_shift:
+    case AArch64::SRId:
+    case AArch64::SRIv2i64_shift: {
+      unsigned numElts = -1, eltSize = -1;
+      switch (opcode) {
+      case AArch64::SLIv8i8_shift:
+      case AArch64::SRIv8i8_shift:
+        numElts = 8;
+        eltSize = 8;
+        break;
+      case AArch64::SLIv16i8_shift:
+      case AArch64::SRIv16i8_shift:
+        numElts = 16;
+        eltSize = 8;
+        break;
+      case AArch64::SLIv4i16_shift:
+      case AArch64::SRIv4i16_shift:
+        numElts = 4;
+        eltSize = 16;
+        break;
+      case AArch64::SLIv8i16_shift:
+      case AArch64::SRIv8i16_shift:
+        numElts = 8;
+        eltSize = 16;
+        break;
+      case AArch64::SLIv2i32_shift:
+      case AArch64::SRIv2i32_shift:
+        numElts = 2;
+        eltSize = 32;
+        break;
+      case AArch64::SLIv4i32_shift:
+      case AArch64::SRIv4i32_shift:
+        numElts = 4;
+        eltSize = 32;
+        break;
+      case AArch64::SLId:
+      case AArch64::SRId:
+        numElts = 1;
+        eltSize = 64;
+        break;
+      case AArch64::SLIv2i64_shift:
+      case AArch64::SRIv2i64_shift:
+        numElts = 2;
+        eltSize = 64;
+        break;
+      default:
+        assert(false && "Invalid opcode for SLI");
+        break;
+      }
+
+      auto shiftAmt = getImm(3);
+      auto a = readFromVecOperand(2, eltSize, numElts);
+      auto shiftVec = getElemSplat(numElts, eltSize, shiftAmt);
+      Value *shifted_a;
+      u_int64_t maskAmt;
+      switch (opcode) {
+      case AArch64::SLIv8i8_shift:
+      case AArch64::SLIv16i8_shift:
+      case AArch64::SLIv4i16_shift:
+      case AArch64::SLIv8i16_shift:
+      case AArch64::SLIv2i32_shift:
+      case AArch64::SLIv4i32_shift:
+      case AArch64::SLId:
+      case AArch64::SLIv2i64_shift:
+        shifted_a = createMaskedShl(a, shiftVec);
+        maskAmt = (1ULL << shiftAmt) - 1;
+        break;
+      case AArch64::SRIv8i8_shift:
+      case AArch64::SRIv16i8_shift:
+      case AArch64::SRIv4i16_shift:
+      case AArch64::SRIv8i16_shift:
+      case AArch64::SRIv2i32_shift:
+      case AArch64::SRIv4i32_shift:
+      case AArch64::SRId:
+      case AArch64::SRIv2i64_shift:
+        shifted_a = createMaskedLShr(a, shiftVec);
+        maskAmt = ((1ULL << shiftAmt) - 1) << (eltSize - shiftAmt);
+        break;
+      default:
+        assert(false && "Invalid opcode for SLI");
+        break;
+      }
+
+      auto res = readFromVecOperand(1, eltSize, numElts);
+      auto mask = getElemSplat(numElts, eltSize, maskAmt);
+      auto masked_res = createAnd(res, mask);
+
+      updateOutputReg(createOr(masked_res, shifted_a));
       break;
     }
 
@@ -10707,7 +11225,6 @@ public:
     }
 
 #define GET_SIZES7(INSN, SUFF)                                                 \
-  unsigned numElts, eltSize;                                                   \
   if (opcode == AArch64::INSN##v8i8##SUFF) {                                   \
     numElts = 8;                                                               \
     eltSize = 8;                                                               \
@@ -10729,8 +11246,6 @@ public:
   } else if (opcode == AArch64::INSN##v2i64##SUFF) {                           \
     numElts = 2;                                                               \
     eltSize = 64;                                                              \
-  } else {                                                                     \
-    assert(false);                                                             \
   }
 
     case AArch64::SSRAv8i8_shift:
@@ -10792,13 +11307,19 @@ public:
     }
 
     case AArch64::USRAv8i8_shift:
-    case AArch64::USRAv4i16_shift:
-    case AArch64::USRAv2i32_shift:
     case AArch64::USRAv16i8_shift:
+    case AArch64::USRAv4i16_shift:
     case AArch64::USRAv8i16_shift:
+    case AArch64::USRAv2i32_shift:
+    case AArch64::USRAv4i32_shift:
     case AArch64::USRAv2i64_shift:
-    case AArch64::USRAv4i32_shift: {
+    case AArch64::USRAd: {
+      unsigned numElts, eltSize;
       GET_SIZES7(USRA, _shift);
+      if (opcode == AArch64::USRAd) {
+        numElts = 1;
+        eltSize = 64;
+      }
       auto a = readFromVecOperand(1, eltSize, numElts);
       auto b = readFromVecOperand(2, eltSize, numElts);
       auto exp = getImm(3);
@@ -10821,6 +11342,7 @@ public:
     case AArch64::ZIP1v16i8:
     case AArch64::ZIP1v2i64:
     case AArch64::ZIP1v4i32: {
+      unsigned numElts = -1, eltSize = -1;
       GET_SIZES7(ZIP1, );
       auto a = readFromVecOperand(1, eltSize, numElts);
       auto b = readFromVecOperand(2, eltSize, numElts);
@@ -10842,6 +11364,7 @@ public:
     case AArch64::ZIP2v2i64:
     case AArch64::ZIP2v16i8:
     case AArch64::ZIP2v4i32: {
+      unsigned numElts = -1, eltSize = -1;
       GET_SIZES7(ZIP2, );
       auto a = readFromVecOperand(1, eltSize, numElts);
       auto b = readFromVecOperand(2, eltSize, numElts);
@@ -10863,6 +11386,7 @@ public:
     case AArch64::ADDPv4i32:
     case AArch64::ADDPv8i16:
     case AArch64::ADDPv2i64: {
+      unsigned numElts = -1, eltSize = -1;
       GET_SIZES7(ADDP, );
       auto x = readFromOperand(1);
       auto y = readFromOperand(2);
@@ -10993,59 +11517,65 @@ public:
     case AArch64::SMULLv8i16_indexed:
     case AArch64::SMULLv4i16_indexed:
     case AArch64::SMULLv2i32_indexed: {
-      int eltSize, numElts;
+      int eltSize, numElts1, numElts2;
       if (opcode == AArch64::SMULLv8i16_indexed ||
           opcode == AArch64::UMULLv8i16_indexed) {
-        numElts = 8;
+        numElts1 = 8;
+        numElts2 = 8;
         eltSize = 16;
       } else if (opcode == AArch64::SMULLv4i32_indexed ||
                  opcode == AArch64::UMULLv4i32_indexed) {
-        numElts = 4;
+        numElts1 = 4;
+        numElts2 = 4;
         eltSize = 32;
       } else if (opcode == AArch64::SMULLv2i32_indexed ||
                  opcode == AArch64::UMULLv2i32_indexed) {
-        numElts = 2;
+        numElts1 = 2;
+        numElts2 = 4;
         eltSize = 32;
       } else if (opcode == AArch64::SMULLv4i16_indexed ||
                  opcode == AArch64::UMULLv4i16_indexed) {
-        numElts = 4;
+        numElts1 = 4;
+        numElts2 = 8;
         eltSize = 16;
       } else {
         assert(false);
       }
-      auto vTy = getVecTy(eltSize, numElts);
-      auto vBigTy = getVecTy(2 * eltSize, numElts);
+      auto vTy1 = getVecTy(eltSize, numElts1);
+      auto vTy2 = getVecTy(eltSize, numElts2);
+      auto vBigTy1 = getVecTy(2 * eltSize, numElts1);
+      auto vBigTy2 = getVecTy(2 * eltSize, numElts2);
       Value *a, *b;
       switch (opcode) {
       case AArch64::UMULLv4i16_indexed:
       case AArch64::UMULLv2i32_indexed:
       case AArch64::UMULLv8i16_indexed:
       case AArch64::UMULLv4i32_indexed:
-        a = createZExt(createBitCast(readFromOperand(1), vTy), vBigTy);
-        b = createZExt(createBitCast(readFromOperand(2), vTy), vBigTy);
+        a = createZExt(createBitCast(readFromOperand(1), vTy1), vBigTy1);
+        b = createZExt(createBitCast(readFromOperand(2, 128), vTy2), vBigTy2);
         break;
       case AArch64::SMULLv4i32_indexed:
       case AArch64::SMULLv8i16_indexed:
       case AArch64::SMULLv4i16_indexed:
       case AArch64::SMULLv2i32_indexed:
-        a = createSExt(createBitCast(readFromOperand(1), vTy), vBigTy);
-        b = createSExt(createBitCast(readFromOperand(2), vTy), vBigTy);
+        a = createSExt(createBitCast(readFromOperand(1), vTy1), vBigTy1);
+        b = createSExt(createBitCast(readFromOperand(2, 128), vTy2), vBigTy2);
         break;
       default:
         assert(false);
       }
       auto idx = getImm(3);
-      Value *res = getUndefVec(numElts, 2 * eltSize);
+      Value *res = getUndefVec(numElts1, 2 * eltSize);
       // offset is nonzero when we're dealing with SMULL2/UMULL2
       int offset = (opcode == AArch64::SMULLv4i32_indexed ||
                     opcode == AArch64::SMULLv8i16_indexed ||
                     opcode == AArch64::UMULLv4i32_indexed ||
                     opcode == AArch64::UMULLv8i16_indexed)
-                       ? (numElts / 2)
+                       ? (numElts1 / 2)
                        : 0;
-      for (int i = 0; i < numElts; ++i) {
+      auto e2 = createExtractElement(b, idx);
+      for (int i = 0; i < numElts1; ++i) {
         auto e1 = createExtractElement(a, i + offset);
-        auto e2 = createExtractElement(b, idx);
         res = createInsertElement(res, createMul(e1, e2), i);
       }
       updateOutputReg(res);
@@ -11212,7 +11742,6 @@ public:
       assert(getBitWidth(src) == 128 &&
              "Source value is not a vector with 128 bits");
 
-      // eltSize is in bits
       u_int64_t eltSize, numElts, part;
       part = opcode == AArch64::XTNv2i32 || opcode == AArch64::XTNv4i16 ||
                      opcode == AArch64::XTNv8i8
@@ -11249,7 +11778,7 @@ public:
 
       Value *final_vector = narrowed_vector;
       // For XTN2 - insertion to upper half
-      if (part == 1) {
+      if (part) {
         // Preserve the lower 64 bits so, read from destination register
         // and insert to the upper 64 bits
         Value *dest = readFromReg(op0.getReg());
@@ -11262,6 +11791,152 @@ public:
 
       // Write 64 bits for XTN or 128 bits XTN2 to output register
       updateOutputReg(final_vector);
+      break;
+    }
+
+      //    case AArch64::UQXTNv1i8:
+      //    case AArch64::UQXTNv1i16:
+      //    case AArch64::UQXTNv1i32:
+    case AArch64::UQXTNv8i8:
+    case AArch64::UQXTNv4i16:
+    case AArch64::UQXTNv2i32:
+    case AArch64::UQXTNv16i8:
+    case AArch64::UQXTNv8i16:
+    case AArch64::UQXTNv4i32:
+      //    case AArch64::SQXTNv1i8:
+      //    case AArch64::SQXTNv1i16:
+      //    case AArch64::SQXTNv1i32:
+    case AArch64::SQXTNv8i8:
+    case AArch64::SQXTNv4i16:
+    case AArch64::SQXTNv2i32:
+    case AArch64::SQXTNv16i8:
+    case AArch64::SQXTNv8i16:
+    case AArch64::SQXTNv4i32: {
+      auto &op0 = CurInst->getOperand(0);
+
+      u_int64_t srcReg, part;
+      switch (opcode) {
+      case AArch64::UQXTNv1i8:
+      case AArch64::UQXTNv1i16:
+      case AArch64::UQXTNv1i32:
+      case AArch64::UQXTNv8i8:
+      case AArch64::UQXTNv4i16:
+      case AArch64::UQXTNv2i32:
+      case AArch64::SQXTNv1i8:
+      case AArch64::SQXTNv1i16:
+      case AArch64::SQXTNv1i32:
+      case AArch64::SQXTNv8i8:
+      case AArch64::SQXTNv4i16:
+      case AArch64::SQXTNv2i32:
+        srcReg = 1;
+        part = 0;
+        break;
+      case AArch64::UQXTNv16i8:
+      case AArch64::UQXTNv8i16:
+      case AArch64::UQXTNv4i32:
+      case AArch64::SQXTNv16i8:
+      case AArch64::SQXTNv8i16:
+      case AArch64::SQXTNv4i32:
+        srcReg = 2;
+        part = 1;
+        break;
+      default:
+        *out << "\nError Unknown opcode\n";
+        visitError();
+        break;
+      }
+
+      auto &op1 = CurInst->getOperand(srcReg);
+      assert(isSIMDandFPRegOperand(op0) && isSIMDandFPRegOperand(op0));
+
+      Value *src = readFromReg(op1.getReg());
+      assert(getBitWidth(src) == 128 &&
+             "Source value is not a vector with 128 bits");
+
+      u_int64_t eltSize, numElts;
+      switch (opcode) {
+      case AArch64::UQXTNv1i8:
+      case AArch64::UQXTNv16i8:
+      case AArch64::UQXTNv8i8:
+      case AArch64::SQXTNv1i8:
+      case AArch64::SQXTNv16i8:
+      case AArch64::SQXTNv8i8:
+        numElts = 8;
+        eltSize = 8;
+        break;
+      case AArch64::UQXTNv1i16:
+      case AArch64::UQXTNv8i16:
+      case AArch64::UQXTNv4i16:
+      case AArch64::SQXTNv1i16:
+      case AArch64::SQXTNv8i16:
+      case AArch64::SQXTNv4i16:
+        numElts = 4;
+        eltSize = 16;
+        break;
+      case AArch64::UQXTNv1i32:
+      case AArch64::UQXTNv4i32:
+      case AArch64::UQXTNv2i32:
+      case AArch64::SQXTNv1i32:
+      case AArch64::SQXTNv2i32:
+      case AArch64::SQXTNv4i32:
+        numElts = 2;
+        eltSize = 32;
+        break;
+      default:
+        *out << "\nError Unknown opcode\n";
+        visitError();
+        break;
+      }
+
+      if (opcode == AArch64::UQXTNv1i8 || opcode == AArch64::UQXTNv1i16 ||
+          opcode == AArch64::UQXTNv1i32 || opcode == AArch64::SQXTNv1i8 ||
+          opcode == AArch64::SQXTNv1i16 || opcode == AArch64::SQXTNv1i32) {
+        numElts = 1;
+      }
+
+      bool isSigned = false;
+      switch (opcode) {
+      case AArch64::SQXTNv1i8:
+      case AArch64::SQXTNv1i16:
+      case AArch64::SQXTNv1i32:
+      case AArch64::SQXTNv8i8:
+      case AArch64::SQXTNv4i16:
+      case AArch64::SQXTNv2i32:
+      case AArch64::SQXTNv16i8:
+      case AArch64::SQXTNv8i16:
+      case AArch64::SQXTNv4i32:
+        isSigned = true;
+        break;
+      }
+
+      // BitCast src to a vector of numElts x (2*eltSize) for narrowing
+      assert(numElts * (2 * eltSize) == 128 && "BitCasting to wrong type");
+      Value *src_vector = createBitCast(src, getVecTy(2 * eltSize, numElts));
+
+      Value *final_vector = getUndefVec(numElts, eltSize);
+      // Perform element-wise saturating narrow using SatQ
+      for (unsigned i = 0; i < numElts; ++i) {
+        auto element = createExtractElement(src_vector, i);
+        auto [narrowed_element, sat] = SatQ(element, eltSize, isSigned);
+        final_vector = createInsertElement(final_vector, narrowed_element, i);
+      }
+
+      // For UQXTN2, SQXTN2 - insertion to upper half
+      if (part) {
+        // Preserve the lower 64 bits so, read from destination register
+        // and insert to the upper 64 bits
+        Value *dest = readFromReg(op0.getReg());
+        Value *original_dest_vector = createBitCast(dest, getVecTy(64, 2));
+
+        Value *element = createBitCast(final_vector, i64);
+
+        final_vector = createInsertElement(original_dest_vector, element, 1);
+      }
+
+      // Write 64 bits for UQXTN, SQXTN or 128 bits for UQXTN2, SQXTN2 to output
+      // register
+      updateOutputReg(final_vector);
+
       break;
     }
 
@@ -11605,6 +12280,11 @@ public:
     }
   }
 
+  void invalidateReg(unsigned Reg, unsigned Width) {
+    auto F = createFreeze(PoisonValue::get(getIntTy(Width)));
+    createStore(F, RegFile[Reg]);
+  }
+
   // create the actual storage associated with a register -- all of its
   // asm-level aliases will get redirected here
   void createRegStorage(unsigned Reg, unsigned Width, const string &Name) {
@@ -11630,7 +12310,7 @@ public:
    * 128 bits, which seemed (as of Nov 2023) to be the only ones with
    * a stable ABI
    */
-  Value *enforceABIRules(Value *V, bool isSExt, bool isZExt) {
+  Value *enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
     auto i8 = getIntTy(8);
     auto i32 = getIntTy(32);
     auto argTy = V->getType();
@@ -11722,7 +12402,7 @@ public:
 
   Function *run() {
     auto i8 = getIntTy(8);
-    auto i32 = getIntTy(32);
+    // auto i32 = getIntTy(32);
     auto i64 = getIntTy(64);
 
     // create a fresh function
@@ -11741,25 +12421,37 @@ public:
     // default to adding instructions to the entry block
     LLVMBB = BBs[0].first;
 
-    // number of 8-byte stack slots for paramters
+    // number of 8-byte stack slots for parameters
     const int numStackSlots = 32;
-    // amount of stack available for use by the lifted function, in bytes
-    const int localFrame = 1024;
 
     auto *allocTy =
-        FunctionType::get(PointerType::get(Ctx, 0), {i32, i32}, false);
+        FunctionType::get(PointerType::get(Ctx, 0), {i64, i64}, false);
     auto *myAlloc = Function::Create(allocTy, GlobalValue::ExternalLinkage, 0,
                                      "myalloc", LiftedModule);
     myAlloc->addRetAttr(Attribute::NonNull);
-    AttrBuilder B(Ctx);
-    B.addAllocKindAttr(AllocFnKind::Alloc);
-    B.addAllocSizeAttr(0, {});
-    myAlloc->addFnAttrs(B);
+    AttrBuilder B1(Ctx);
+    B1.addAllocKindAttr(AllocFnKind::Alloc);
+    B1.addAllocSizeAttr(0, {});
+    B1.addAttribute(Attribute::WillReturn);
+    myAlloc->addFnAttrs(B1);
     myAlloc->addParamAttr(1, Attribute::AllocAlign);
+    myAlloc->addFnAttr("alloc-family", "arm-tv-alloc");
+
+    auto *freeTy = FunctionType::get(Type::getVoidTy(Ctx),
+                                     {PointerType::get(Ctx, 0)}, false);
+    myFree = Function::Create(freeTy, GlobalValue::ExternalLinkage, 0, "myfree",
+                              LiftedModule);
+    AttrBuilder B2(Ctx);
+    B2.addAllocKindAttr(AllocFnKind::Free);
+    B2.addAttribute(Attribute::WillReturn);
+    myFree->addFnAttrs(B2);
+    myFree->addParamAttr(0, Attribute::AllocatedPointer);
+    myFree->addFnAttr("alloc-family", "arm-tv-alloc");
+
     stackMem =
         CallInst::Create(myAlloc,
-                         {getIntConst(localFrame + (8 * numStackSlots), 32),
-                          getIntConst(16, 32)},
+                         {getIntConst(stackBytes + (8 * numStackSlots), 64),
+                          getIntConst(16, 64)},
                          "stack", LLVMBB);
 
     // allocate storage for the main register file
@@ -11782,7 +12474,7 @@ public:
     // load the base address for the stack memory; FIXME: this works
     // for accessing parameters but it doesn't support the general
     // case
-    auto paramBase = createGEP(i8, stackMem, {getIntConst(localFrame, 64)}, "");
+    auto paramBase = createGEP(i8, stackMem, {getIntConst(stackBytes, 64)}, "");
     createStore(paramBase, RegFile[AArch64::SP]);
     initialSP = readFromReg(AArch64::SP);
 
@@ -11822,7 +12514,7 @@ public:
            << ", stackSlot = " << stackSlot;
       auto *argTy = arg->getType();
       auto *val =
-          enforceABIRules(arg, srcArg->hasSExtAttr(), srcArg->hasZExtAttr());
+          enforceSExtZExt(arg, srcArg->hasSExtAttr(), srcArg->hasZExtAttr());
 
       // first 8 integer parameters go in the first 8 integer registers
       if ((argTy->isIntegerTy() || argTy->isPointerTy()) && scalarArgNum < 8) {
@@ -11877,10 +12569,9 @@ public:
     auto initFP = createGEP(i64, paramBase, {getIntConst(stackSlot, 64)}, "");
     createStore(initFP, RegFile[AArch64::FP]);
 
-    *out << "about to lift the instructions\n";
+    *out << "\n\nabout to lift the instructions\n";
 
     for (auto &[llvm_bb, mc_bb] : BBs) {
-      *out << "visiting bb: " << mc_bb->getName() << "\n";
       LLVMBB = llvm_bb;
       MCBB = mc_bb;
       auto &mc_instrs = mc_bb->getInstrs();
@@ -11913,6 +12604,7 @@ public:
       *out << enc << '=' << count << ',';
     }
     *out << '\n';
+    // liftedFn->dump();
     return liftedFn;
   }
 };
@@ -11926,15 +12618,13 @@ class MCStreamerWrapper final : public MCStreamer {
 
 private:
   MCInstrAnalysis *IA;
-  MCInstPrinter *IP;
-  MCRegisterInfo *MRI;
-
   MCBasicBlock *curBB{nullptr};
   unsigned prev_line{0};
   Align curAlign;
   string curSym;
   string curSec;
   bool FunctionEnded = false;
+  unsigned curDebugLine = 0;
 
   vector<RODataItem> curROData;
 
@@ -11944,7 +12634,7 @@ public:
 
   MCStreamerWrapper(MCContext &Context, MCInstrAnalysis *IA, MCInstPrinter *IP,
                     MCRegisterInfo *MRI)
-      : MCStreamer(Context), IA(IA), IP(IP), MRI(MRI) {
+      : MCStreamer(Context), IA(IA) {
     MF.IA = IA;
     MF.IP = IP;
     MF.MRI = MRI;
@@ -11973,14 +12663,18 @@ public:
 
     if (prev_line == ASMLine::terminator)
       curBB = MF.addBlock(MF.getLabel());
-    MCInst curInst(Inst);
-    curBB->addInst(curInst);
+
+    Instruction *LLVMInst = lineMap[curDebugLine];
+    SMLoc Loc = SMLoc::getFromPointer((char *)LLVMInst);
+    MCInst i(Inst);
+    i.setLoc(Loc);
+    curBB->addInst(i);
 
     prev_line =
         IA->isTerminator(Inst) ? ASMLine::terminator : ASMLine::non_term_instr;
-    auto num_operands = curInst.getNumOperands();
-    for (unsigned i = 0; i < num_operands; ++i) {
-      auto op = curInst.getOperand(i);
+    auto num_operands = i.getNumOperands();
+    for (unsigned idx = 0; idx < num_operands; ++idx) {
+      auto op = i.getOperand(idx);
       if (op.isExpr()) {
         auto expr = op.getExpr();
         if (expr->getKind() == MCExpr::ExprKind::SymbolRef) {
@@ -11996,7 +12690,7 @@ public:
     *out << cnt++ << "  : ";
     std::string sss;
     llvm::raw_string_ostream ss(sss);
-    Inst.dump_pretty(ss, IP, " ", MRI);
+    // Inst.dump_pretty(ss, IP, " ", MRI);
     *out << sss;
     if (IA->isBranch(Inst))
       *out << ": branch ";
@@ -12101,6 +12795,10 @@ public:
   // MCExprs here
   virtual void emitValueImpl(const MCExpr *Value, unsigned Size,
                              SMLoc Loc = SMLoc()) override {
+    if (curSec.starts_with(".debug")) {
+      *out << "skipping emitValue in debug section\n";
+      return;
+    }
     if (auto SR = dyn_cast<MCSymbolRefExpr>(Value)) {
       const MCSymbol &Sym = SR->getSymbol();
       string name{Sym.getName()};
@@ -12143,21 +12841,35 @@ public:
     *out << "[emitAssignment]\n";
   }
 
+  virtual void emitDwarfLocDirective(unsigned FileNo, unsigned Line,
+                                     unsigned Column, unsigned Flags,
+                                     unsigned Isa, unsigned Discriminator,
+                                     StringRef FileName) override {
+    *out << "[dwarf loc directive: line = " << Line << "]\n";
+    curDebugLine = Line;
+  }
+
   virtual void emitLabel(MCSymbol *Symbol, SMLoc Loc) override {
     auto sp = getCurrentSection();
-    string Lab = Symbol->getName().str();
-    *out << "[emitLabel '" << Lab << "' in section '"
-         << (string)(sp.first->getName()) << "']\n";
+    string secName = sp.first->getName().str();
+    string lab = Symbol->getName().str();
+    *out << "[emitLabel '" << lab << "' in section '" << secName << "']\n";
+
+    if (secName.starts_with(".debug")) {
+      *out << "  skipping debug stuff\n";
+      curSec = (string)sp.first->getName();
+      return;
+    }
 
     addConstant();
 
     curSym = Symbol->getName().str();
     curSec = (string)sp.first->getName();
 
-    if (Lab == ".Lfunc_end0")
+    if (lab == ".Lfunc_end0")
       FunctionEnded = true;
     if (!FunctionEnded) {
-      curBB = MF.addBlock(Lab);
+      curBB = MF.addBlock(lab);
       MCInst nop;
       // subsequent logic can be a bit simpler if we assume each BB
       // contains at least one instruction. might need to revisit this

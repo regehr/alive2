@@ -12,8 +12,9 @@
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InlineAsm.h"
-#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/InstVisitor.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/ModRef.h"
 #include <sstream>
@@ -87,12 +88,7 @@ bool hit_limits;
 unsigned constexpr_idx;
 unsigned copy_idx;
 unsigned alignopbundle_idx;
-
-#if 0
-string_view s(llvm::StringRef str) {
-  return { str.data(), str.size() };
-}
-#endif
+unsigned metadata_idx;
 
 #define PARSE_UNOP()                       \
   auto ty = llvm_type2alive(i.getType());  \
@@ -115,14 +111,7 @@ string_view s(llvm::StringRef str) {
   if (!ty || !a || !b || !c)              \
     return error(i)
 
-#define RETURN_IDENTIFIER(op)      \
-  do {                             \
-    auto ret = op;                 \
-    add_identifier(i, *ret.get()); \
-    return ret;                    \
-  } while (0)
-
-#define RETURN_IDENTIFIER_FNATTRS(op, attrs)                 \
+#define RETURN_FNATTRS(op, attrs)                            \
   do {                                                       \
     auto ret = op;                                           \
     add_identifier(i, *ret.get());                           \
@@ -144,7 +133,7 @@ class llvm2alive_ : public llvm::InstVisitor<llvm2alive_, unique_ptr<Instr>> {
   /// function.
   bool IsSrc;
   vector<llvm::Instruction*> i_constexprs;
-  const vector<string_view> &gvnamesInSrc;
+  const vector<GlobalVariable*> &gvsInSrc;
   vector<pair<Phi*, llvm::PHINode*>> todo_phis;
   const Instr *insert_constexpr_before = nullptr;
   ostream *out;
@@ -213,14 +202,17 @@ class llvm2alive_ : public llvm::InstVisitor<llvm2alive_, unique_ptr<Instr>> {
   RetTy NOP(llvm::Instruction &i) {
     // some NOP instruction
     assert(i.getType()->isVoidTy());
-    auto true_val = get_operand(llvm::ConstantInt::getTrue(i.getContext()));
-    return make_unique<Assume>(*true_val, Assume::AndNonPoison);
+    return make_unique<Assume>(*make_intconst(0, 1), Assume::WellDefined);
+  }
+
+  RetTy mkUnreach() {
+    return make_unique<Assume>(*make_intconst(0, 1), Assume::AndNonPoison);
   }
 
 public:
   llvm2alive_(llvm::Function &f, const llvm::TargetLibraryInfo &TLI, bool IsSrc,
-              const vector<string_view> &gvnamesInSrc)
-      : f(f), TLI(TLI), IsSrc(IsSrc), gvnamesInSrc(gvnamesInSrc),
+              const vector<GlobalVariable*> &gvsInSrc)
+      : f(f), TLI(TLI), IsSrc(IsSrc), gvsInSrc(gvsInSrc),
         out(&get_outs()) {}
 
   ~llvm2alive_() {
@@ -238,8 +230,7 @@ public:
     default:
       return error(i);
     }
-    RETURN_IDENTIFIER(
-      make_unique<FpUnaryOp>(*ty, value_name(i), *val, op, parse_fmath(i)));
+    return make_unique<FpUnaryOp>(*ty, value_name(i), *val, op, parse_fmath(i));
   }
 
   RetTy visitBinaryOperator(llvm::BinaryOperator &i) {
@@ -271,8 +262,8 @@ public:
     }
 
     if (is_fp)
-      RETURN_IDENTIFIER(make_unique<FpBinOp>(*ty, value_name(i), *a, *b, fp_op,
-                                             parse_fmath(i)));
+      return
+        make_unique<FpBinOp>(*ty, value_name(i), *a, *b, fp_op, parse_fmath(i));
 
     unsigned flags = BinOp::None;
     if (isa<llvm::OverflowingBinaryOperator>(i) && i.hasNoSignedWrap())
@@ -285,8 +276,7 @@ public:
       if (PDI->isDisjoint())
         flags |= BinOp::Disjoint;
     }
-    RETURN_IDENTIFIER(make_unique<BinOp>(*ty, value_name(i), *a, *b, alive_op,
-                                         flags));
+    return make_unique<BinOp>(*ty, value_name(i), *a, *b, alive_op, flags);
   }
 
   RetTy visitCastInst(llvm::CastInst &i) {
@@ -308,13 +298,22 @@ public:
         if (const auto *NNI = dyn_cast<llvm::PossiblyNonNegInst>(&i)) {
           if (NNI->hasNonNeg())
             flags |= ConversionOp::NNEG;
+        } else if (const auto *TI = dyn_cast<llvm::TruncInst>(&i)) {
+          if (TI->hasNoUnsignedWrap())
+            flags |= ConversionOp::NUW;
+          if (TI->hasNoSignedWrap())
+            flags |= ConversionOp::NSW;
         }
-        RETURN_IDENTIFIER(
-          make_unique<ConversionOp>(*ty, value_name(i), *val, op, flags));
+        return make_unique<ConversionOp>(*ty, value_name(i), *val, op, flags);
       }
     }
 
     FpConversionOp::Op op;
+    unsigned flags = 0;
+    if (const auto *NNI = dyn_cast<llvm::PossiblyNonNegInst>(&i)) {
+      if (NNI->hasNonNeg())
+        flags |= FpConversionOp::NNEG;
+    }
     switch (i.getOpcode()) {
     case llvm::Instruction::SIToFP:  op = FpConversionOp::SIntToFP; break;
     case llvm::Instruction::UIToFP:  op = FpConversionOp::UIntToFP; break;
@@ -325,13 +324,14 @@ public:
     default:
       return error(i);
     }
-    RETURN_IDENTIFIER(
-      make_unique<FpConversionOp>(*ty, value_name(i), *val, op));
+    return make_unique<FpConversionOp>(*ty, value_name(i), *val, op,
+                                       FpRoundingMode{}, FpExceptionMode{},
+                                       flags);
   }
 
   RetTy visitFreezeInst(llvm::FreezeInst &i) {
     PARSE_UNOP();
-    RETURN_IDENTIFIER(make_unique<Freeze>(*ty, value_name(i), *val));
+    return make_unique<Freeze>(*ty, value_name(i), *val);
   }
 
   RetTy visitCallInst(llvm::CallInst &i, bool approx = false) {
@@ -354,6 +354,12 @@ public:
         attrs.set(FnAttrs::NNaN);
     }
 
+    auto ty = llvm_type2alive(i.getType());
+    if (!ty)
+      return error(i);
+
+    unsigned vararg_idx = -1u;
+
     // record fn decl in case there are indirect calls to this function
     // elsewhere
     auto fn_decl = fn;
@@ -373,14 +379,29 @@ public:
         assert(fn->getFunctionType() ==
                llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
                                        { llvm::Type::getInt1Ty(ctx) }, false));
-        return make_unique<Assume>(*args[0], Assume::AndNonPoison);
+        return make_unique<Assume>(*args.at(0), Assume::AndNonPoison);
       }
 
       Function::FnDecl decl;
       decl.name  = '@' + fn_decl->getName().str();
       decl.attrs = attrs;
+      decl.is_varargs = fn_decl->isVarArg();
       if (!(decl.output = llvm_type2alive(fn_decl->getReturnType())))
         return error(i);
+
+      if (fn_decl->isVarArg())
+        vararg_idx = fn_decl->arg_size();
+
+      // it's UB if there's a mismatch in the number of function arguments
+      if (( fn_decl->isVarArg() && i.arg_size() < fn_decl->arg_size()) ||
+          (!fn_decl->isVarArg() && i.arg_size() != fn_decl->arg_size())) {
+        auto unreach = mkUnreach();
+        if (ty->isVoid())
+          return unreach;
+        BB->addInstr(std::move(unreach));
+        return make_unique<UnaryOp>(*ty, value_name(i), *get_poison(*ty),
+                                    UnaryOp::Copy);
+      }
 
       auto attrs_fndef = fn_decl->getAttributes();
       for (uint64_t idx = 0, nargs = fn_decl->arg_size(); idx < nargs; ++idx) {
@@ -389,8 +410,10 @@ public:
           return error(i);
 
         unsigned attr_argidx = llvm::AttributeList::FirstArgIndex + idx;
+        auto &arg = args.at(idx);
         ParamAttrs pattr;
-        handleParamAttrs(attrs_fndef.getAttributes(attr_argidx), pattr, true);
+        handleParamAttrs(attrs_fndef.getAttributes(attr_argidx), pattr,
+                         *arg, arg, true);
         decl.inputs.emplace_back(ty, std::move(pattr));
       }
       alive_fn->addFnDecl(std::move(decl));
@@ -403,12 +426,8 @@ public:
         = known_call(i, TLI, *BB, args, std::move(attrs), param_attrs);
       approx = approx0;
       if (known)
-        RETURN_IDENTIFIER(std::move(known));
+        return std::move(known);
     }
-
-    auto ty = llvm_type2alive(i.getType());
-    if (!ty)
-      return error(i);
 
     unique_ptr<FnCall> call;
     Value *fnptr = nullptr;
@@ -429,7 +448,7 @@ public:
 
       call = make_unique<FnCall>(*ty, value_name(i),
                                  fn ? '@' + fn->getName().str() : string(),
-                                 std::move(attrs), fnptr);
+                                 std::move(attrs), fnptr, vararg_idx);
     }
 
     auto attrs_callsite = i.getAttributes();
@@ -438,16 +457,16 @@ public:
     unique_ptr<Instr> ret_val;
 
     for (uint64_t argidx = 0, nargs = i.arg_size(); argidx < nargs; ++argidx) {
-      auto *arg = args[argidx];
+      auto &arg = args.at(argidx);
       ParamAttrs pattr = argidx < param_attrs.size() ? param_attrs[argidx]
                                                      : ParamAttrs();
 
       unsigned attr_argidx = llvm::AttributeList::FirstArgIndex + argidx;
       approx |= !handleParamAttrs(attrs_callsite.getAttributes(attr_argidx),
-                                  pattr, true);
+                                  pattr, *arg, arg, true);
       if (fn && argidx < fn->arg_size())
         approx |= !handleParamAttrs(attrs_fndef.getAttributes(attr_argidx),
-                                    pattr, true);
+                                    pattr, *arg, arg, true);
 
       if (i.paramHasAttr(argidx, llvm::Attribute::NoUndef)) {
         if (i.getArgOperand(argidx)->getType()->isAggregateType())
@@ -459,7 +478,20 @@ public:
     }
 
     call->setApproximated(approx);
-    RETURN_IDENTIFIER(std::move(call));
+
+    unique_ptr<Instr> val = std::move(call);
+    auto range_check = [&](const auto &attr) {
+      auto *ptr = val.get();
+      BB->addInstr(std::move(val));
+      val = handleRangeAttrNoInsert(attr, *ptr);
+    };
+
+    if (fn_decl && fn_decl->hasRetAttribute(llvm::Attribute::Range))
+      range_check(fn_decl->getRetAttribute(llvm::Attribute::Range));
+    if (i.hasRetAttr(llvm::Attribute::Range))
+      range_check(i.getRetAttr(llvm::Attribute::Range));
+
+    return val;
   }
 
   RetTy visitMemSetInst(llvm::MemSetInst &i) {
@@ -470,8 +502,8 @@ public:
     if (!ptr || !val || !bytes)
       return error(i);
 
-    RETURN_IDENTIFIER(make_unique<Memset>(*ptr, *val, *bytes,
-                                          i.getDestAlign().valueOrOne().value()));
+    return make_unique<Memset>(*ptr, *val, *bytes,
+                               i.getDestAlign().valueOrOne().value());
   }
 
   RetTy visitMemTransferInst(llvm::MemTransferInst &i) {
@@ -482,10 +514,10 @@ public:
     if (!dst || !src || !bytes)
       return error(i);
 
-    RETURN_IDENTIFIER(make_unique<Memcpy>(*dst, *src, *bytes,
-                                          i.getDestAlign().valueOrOne().value(),
-                                          i.getSourceAlign().valueOrOne().value(),
-                                          isa<llvm::MemMoveInst>(&i)));
+    return make_unique<Memcpy>(*dst, *src, *bytes,
+                               i.getDestAlign().valueOrOne().value(),
+                               i.getSourceAlign().valueOrOne().value(),
+                               isa<llvm::MemMoveInst>(&i));
   }
 
   RetTy visitICmpInst(llvm::ICmpInst &i) {
@@ -505,20 +537,18 @@ public:
     default:
       UNREACHABLE();
     }
-    RETURN_IDENTIFIER(make_unique<ICmp>(*ty, value_name(i), cond, *a, *b));
+    return make_unique<ICmp>(*ty, value_name(i), cond, *a, *b);
   }
 
   RetTy visitFCmpInst(llvm::FCmpInst &i) {
     PARSE_BINOP();
     auto cond = parse_fcmp_cond(i.getPredicate());
-    RETURN_IDENTIFIER(make_unique<FCmp>(*ty, value_name(i), cond, *a, *b,
-                                        parse_fmath(i)));
+    return make_unique<FCmp>(*ty, value_name(i), cond, *a, *b, parse_fmath(i));
   }
 
   RetTy visitSelectInst(llvm::SelectInst &i) {
     PARSE_TRIOP();
-    RETURN_IDENTIFIER(make_unique<Select>(*ty, value_name(i), *a, *b, *c,
-                                          parse_fmath(i)));
+    return make_unique<Select>(*ty, value_name(i), *a, *b, *c, parse_fmath(i));
   }
 
   RetTy visitExtractValueInst(llvm::ExtractValueInst &i) {
@@ -537,7 +567,7 @@ public:
       valty = &aty->getChild(idx_with_paddings);
     }
 
-    RETURN_IDENTIFIER(std::move(inst));
+    return inst;
   }
 
   RetTy visitInsertValueInst(llvm::InsertValueInst &i) {
@@ -556,7 +586,7 @@ public:
       ty = &aty->getChild(idx_with_paddings);
     }
 
-    RETURN_IDENTIFIER(std::move(inst));
+    return inst;
   }
 
   RetTy visitAllocaInst(llvm::AllocaInst &i) {
@@ -578,7 +608,7 @@ public:
     auto alloc = make_unique<Alloc>(*ty, value_name(i), *size, mul,
                       pref_alignment(i, i.getAllocatedType()));
     allocs.emplace(&i, make_pair(alloc.get(), /*has lifetime.start?*/ false));
-    RETURN_IDENTIFIER(std::move(alloc));
+    return alloc;
   }
 
   RetTy visitGetElementPtrInst(llvm::GetElementPtrInst &i) {
@@ -587,7 +617,9 @@ public:
     if (!ty || !ptr)
       return error(i);
 
-    auto gep = make_unique<GEP>(*ty, value_name(i), *ptr, i.isInBounds());
+    auto gep =
+        make_unique<GEP>(*ty, value_name(i), *ptr, i.isInBounds(),
+                         i.hasNoUnsignedSignedWrap(), i.hasNoUnsignedWrap());
     auto gep_struct_ofs = [&i, this](llvm::StructType *sty, llvm::Value *ofs) {
       llvm::Value *vals[] = { llvm::ConstantInt::getFalse(i.getContext()), ofs };
       return this->DL().getIndexedOffsetInType(sty, { vals, 2 });
@@ -635,7 +667,7 @@ public:
 
       gep->addIdx(I.getSequentialElementStride(DL()).getKnownMinValue(), *op);
     }
-    RETURN_IDENTIFIER(std::move(gep));
+    return gep;
   }
 
   RetTy visitLoadInst(llvm::LoadInst &i) {
@@ -643,8 +675,8 @@ public:
     if (!i.isSimple())
       return error(i);
     PARSE_UNOP();
-    RETURN_IDENTIFIER(make_unique<Load>(*ty, value_name(i), *val,
-                                        alignment(i, i.getType())));
+    return
+      make_unique<Load>(*ty, value_name(i), *val, alignment(i, i.getType()));
   }
 
   RetTy visitStoreInst(llvm::StoreInst &i) {
@@ -655,8 +687,8 @@ public:
     auto ptr = get_operand(i.getPointerOperand());
     if (!val || !ptr)
       return error(i);
-    RETURN_IDENTIFIER(make_unique<Store>(*ptr, *val,
-                        alignment(i, i.getValueOperand()->getType())));
+    return make_unique<Store>(*ptr, *val,
+                              alignment(i, i.getValueOperand()->getType()));
   }
 
   RetTy visitPHINode(llvm::PHINode &i) {
@@ -666,7 +698,7 @@ public:
 
     auto phi = make_unique<Phi>(*ty, value_name(i), parse_fmath(i));
     todo_phis.emplace_back(phi.get(), &i);
-    RETURN_IDENTIFIER(std::move(phi));
+    return phi;
   }
 
   RetTy visitBranchInst(llvm::BranchInst &i) {
@@ -705,12 +737,15 @@ public:
     if (!ty || !val)
       return error(i);
 
+    auto *Fn = i.getFunction();
+    if (Fn->hasRetAttribute(llvm::Attribute::Range))
+      val = handleRangeAttr(Fn->getRetAttribute(llvm::Attribute::Range), *val);
+
     return make_unique<Return>(*ty, *val);
   }
 
   RetTy visitUnreachableInst(llvm::UnreachableInst &i) {
-    auto fals = get_operand(llvm::ConstantInt::getFalse(i.getContext()));
-    return make_unique<Assume>(*fals, Assume::AndNonPoison);
+    return mkUnreach();
   }
 
   enum LifetimeKind {
@@ -814,8 +849,7 @@ public:
             if (!av)
               return error(i);
 
-            BB->addInstr(
-              make_unique<Assume>(*av, Assume::WellDefined));
+            BB->addInstr(make_unique<Assume>(*av, Assume::WellDefined));
           }
         } else if (name == "align") {
           llvm::Value *ptr = bundle.Inputs[0].get();
@@ -828,8 +862,8 @@ public:
             assert(bundle.Inputs.size() == 3);
             auto gep = make_unique<GEP>(
                 aptr->getType(),
-                "#align_adjustedptr" + to_string(alignopbundle_idx++),
-                *aptr, false);
+                "%#align_adjustedptr" + to_string(alignopbundle_idx++),
+                *aptr, false, false, false);
             gep->addIdx(-1ull, *get_operand(bundle.Inputs[2].get()));
 
             aptr = gep.get();
@@ -844,8 +878,7 @@ public:
           if (!aptr)
             return error(i);
 
-          BB->addInstr(
-            make_unique<Assume>(*aptr, Assume::NonNull));
+          BB->addInstr(make_unique<Assume>(*aptr, Assume::NonNull));
         } else {
           return error(i);
         }
@@ -872,7 +905,8 @@ public:
     case llvm::Intrinsic::smin:
     case llvm::Intrinsic::smax:
     case llvm::Intrinsic::abs:
-    {
+    case llvm::Intrinsic::ucmp:
+    case llvm::Intrinsic::scmp: {
       PARSE_BINOP();
       BinOp::Op op;
       switch (i.getIntrinsicID()) {
@@ -895,12 +929,13 @@ public:
       case llvm::Intrinsic::smin:     op = BinOp::SMin; break;
       case llvm::Intrinsic::smax:     op = BinOp::SMax; break;
       case llvm::Intrinsic::abs:      op = BinOp::Abs; break;
+      case llvm::Intrinsic::ucmp:     op = BinOp::UCmp; break;
+      case llvm::Intrinsic::scmp:     op = BinOp::SCmp; break;
       default: UNREACHABLE();
       }
       FnAttrs attrs;
       parse_fn_attrs(i, attrs);
-      RETURN_IDENTIFIER_FNATTRS(
-        make_unique<BinOp>(*ty, value_name(i), *a, *b, op), attrs);
+      RETURN_FNATTRS(make_unique<BinOp>(*ty, value_name(i), *a, *b, op), attrs);
     }
     case llvm::Intrinsic::bitreverse:
     case llvm::Intrinsic::bswap:
@@ -922,7 +957,7 @@ public:
       case llvm::Intrinsic::is_constant: op = UnaryOp::IsConstant; break;
       default: UNREACHABLE();
       }
-      RETURN_IDENTIFIER(make_unique<UnaryOp>(*ty, value_name(i), *val, op));
+      return make_unique<UnaryOp>(*ty, value_name(i), *val, op);
     }
     case llvm::Intrinsic::vector_reduce_add:
     case llvm::Intrinsic::vector_reduce_mul:
@@ -947,8 +982,7 @@ public:
       case llvm::Intrinsic::vector_reduce_umin: op = UnaryReductionOp::UMin; break;
       default: UNREACHABLE();
       }
-      RETURN_IDENTIFIER(
-        make_unique<UnaryReductionOp>(*ty, value_name(i), *val, op));
+      return make_unique<UnaryReductionOp>(*ty, value_name(i), *val, op);
     }
     case llvm::Intrinsic::fshl:
     case llvm::Intrinsic::fshr:
@@ -968,8 +1002,7 @@ public:
       case llvm::Intrinsic::umul_fix_sat: op = TernaryOp::UMulFixSat; break;
       default: UNREACHABLE();
       }
-      RETURN_IDENTIFIER(
-        make_unique<TernaryOp>(*ty, value_name(i), *a, *b, *c, op));
+      return make_unique<TernaryOp>(*ty, value_name(i), *a, *b, *c, op);
     }
     case llvm::Intrinsic::fma:
     case llvm::Intrinsic::fmuladd:
@@ -985,10 +1018,9 @@ public:
       case llvm::Intrinsic::experimental_constrained_fmuladd: op = FpTernaryOp::MulAdd; break;
       default: UNREACHABLE();
       }
-      RETURN_IDENTIFIER(
-        make_unique<FpTernaryOp>(*ty, value_name(i), *a, *b, *c, op,
-                                 parse_fmath(i), parse_rounding(i),
-                                 parse_exceptions(i)));
+      return make_unique<FpTernaryOp>(*ty, value_name(i), *a, *b, *c, op,
+                                      parse_fmath(i), parse_rounding(i),
+                                      parse_exceptions(i));
     }
     case llvm::Intrinsic::copysign:
     case llvm::Intrinsic::minnum:
@@ -1022,9 +1054,9 @@ public:
       case llvm::Intrinsic::experimental_constrained_fdiv:    op = FpBinOp::FDiv; break;
       default: UNREACHABLE();
       }
-      RETURN_IDENTIFIER(
+      return
         make_unique<FpBinOp>(*ty, value_name(i), *a, *b, op, parse_fmath(i),
-                             parse_rounding(i), parse_exceptions(i)));
+                             parse_rounding(i), parse_exceptions(i));
     }
     case llvm::Intrinsic::canonicalize:
     case llvm::Intrinsic::fabs:
@@ -1068,9 +1100,9 @@ public:
       case llvm::Intrinsic::experimental_constrained_trunc:     op = FpUnaryOp::Trunc; break;
       default: UNREACHABLE();
       }
-      RETURN_IDENTIFIER(
+      return
         make_unique<FpUnaryOp>(*ty, value_name(i), *val, op, parse_fmath(i),
-                               parse_rounding(i), parse_exceptions(i)));
+                               parse_rounding(i), parse_exceptions(i));
     }
     case llvm::Intrinsic::experimental_constrained_sitofp:
     case llvm::Intrinsic::experimental_constrained_uitofp:
@@ -1110,7 +1142,7 @@ public:
       }
       FnAttrs attrs;
       parse_fn_attrs(i, attrs);
-      RETURN_IDENTIFIER_FNATTRS(
+      RETURN_FNATTRS(
         make_unique<FpConversionOp>(*ty, value_name(i), *val, op,
                                     parse_rounding(i), parse_exceptions(i)),
         attrs);
@@ -1121,9 +1153,9 @@ public:
       PARSE_BINOP();
       auto *fcmp = cast<llvm::ConstrainedFPCmpIntrinsic>(&i);
       auto cond = parse_fcmp_cond(fcmp->getPredicate());
-      RETURN_IDENTIFIER(
+      return
         make_unique<FCmp>(*ty, value_name(i), cond, *a, *b, FastMathFlags(),
-                          parse_exceptions(i), fcmp->isSignaling()));
+                          parse_exceptions(i), fcmp->isSignaling());
     }
     case llvm::Intrinsic::is_fpclass:
     {
@@ -1133,7 +1165,7 @@ public:
       case llvm::Intrinsic::is_fpclass: op = TestOp::Is_FPClass; break;
       default: UNREACHABLE();
       }
-      RETURN_IDENTIFIER(make_unique<TestOp>(*ty, value_name(i), *a, *b, op));
+      return make_unique<TestOp>(*ty, value_name(i), *a, *b, op);
     }
     case llvm::Intrinsic::lifetime_start:
     case llvm::Intrinsic::lifetime_end:
@@ -1141,14 +1173,14 @@ public:
       PARSE_BINOP();
       switch (getLifetimeKind(i)) {
       case LIFETIME_START:
-        RETURN_IDENTIFIER(make_unique<StartLifetime>(*b));
+        return make_unique<StartLifetime>(*b);
       case LIFETIME_START_FILLPOISON:
         BB->addInstr(make_unique<StartLifetime>(*b));
-        RETURN_IDENTIFIER(make_unique<FillPoison>(*b));
+        return make_unique<FillPoison>(*b);
       case LIFETIME_FREE:
-        RETURN_IDENTIFIER(make_unique<EndLifetime>(*b));
+        return make_unique<EndLifetime>(*b);
       case LIFETIME_FILLPOISON:
-        RETURN_IDENTIFIER(make_unique<FillPoison>(*b));
+        return make_unique<FillPoison>(*b);
       case LIFETIME_NOP:
         return NOP(i);
       case LIFETIME_UNKNOWN:
@@ -1158,7 +1190,7 @@ public:
     case llvm::Intrinsic::ptrmask:
     {
       PARSE_BINOP();
-      RETURN_IDENTIFIER(make_unique<PtrMask>(*ty, value_name(i), *a, *b));
+      return make_unique<PtrMask>(*ty, value_name(i), *a, *b);
     }
     case llvm::Intrinsic::sideeffect: {
       FnAttrs attrs;
@@ -1208,13 +1240,12 @@ public:
 
   RetTy visitExtractElementInst(llvm::ExtractElementInst &i) {
     PARSE_BINOP();
-    RETURN_IDENTIFIER(make_unique<ExtractElement>(*ty, value_name(i), *a, *b));
+    return make_unique<ExtractElement>(*ty, value_name(i), *a, *b);
   }
 
   RetTy visitInsertElementInst(llvm::InsertElementInst &i) {
     PARSE_TRIOP();
-    RETURN_IDENTIFIER(make_unique<InsertElement>(*ty, value_name(i), *a, *b,
-                                                 *c));
+    return make_unique<InsertElement>(*ty, value_name(i), *a, *b, *c);
   }
 
   RetTy visitShuffleVectorInst(llvm::ShuffleVectorInst &i) {
@@ -1222,13 +1253,13 @@ public:
     vector<unsigned> mask;
     for (auto m : i.getShuffleMask())
       mask.push_back(m);
-    RETURN_IDENTIFIER(make_unique<ShuffleVector>(*ty, value_name(i), *a, *b,
-                                                 std::move(mask)));
+    return
+      make_unique<ShuffleVector>(*ty, value_name(i), *a, *b, std::move(mask));
   }
 
   RetTy visitVAArg(llvm::VAArgInst &i) {
     PARSE_UNOP();
-    RETURN_IDENTIFIER(make_unique<VaArg>(*ty, value_name(i), *val));
+    return make_unique<VaArg>(*ty, value_name(i), *val);
   }
 
   RetTy visitInstruction(llvm::Instruction &i) { return error(i); }
@@ -1296,14 +1327,53 @@ public:
         BB->addInstr(make_unique<Assume>(*i, Assume::WellDefined));
         break;
 
+      case LLVMContext::MD_callees: {
+        auto *fn_call = dynamic_cast<FnCall*>(i);
+        assert(fn_call);
+        auto &i1_type = get_int_type(1);
+        Value *last_value = nullptr;
+
+        for (auto &Op : Node->operands()) {
+          auto *callee =
+            get_operand(llvm::mdconst::dyn_extract_or_null<llvm::Function>(Op));
+
+          if (!callee) {
+            *out << "ERROR: Unsupported !callee metadata\n";
+            return false;
+          }
+
+          auto icmp = make_unique<ICmp>(i1_type,
+                                        "%#cmp#" + to_string(metadata_idx),
+                                        ICmp::EQ, *fn_call->getFnPtr(),
+                                        *callee);
+          auto *icmp_ptr = icmp.get();
+          BB->addInstrAt(std::move(icmp), fn_call, true);
+
+          if (last_value) {
+            auto or_i
+              = make_unique<BinOp>(i1_type,
+                                   "%#or#" + to_string(metadata_idx),
+                                   *last_value, *icmp_ptr, BinOp::Or);
+            last_value = or_i.get();
+            BB->addInstrAt(std::move(or_i), fn_call, true);
+          } else {
+            last_value = icmp_ptr;
+          }
+          ++metadata_idx;
+        }
+        auto val = last_value ? last_value : make_intconst(0, 1);
+        BB->addInstrAt(make_unique<Assume>(*val, Assume::AndNonPoison),
+                       fn_call, true);
+        break;
+      }
+
       case LLVMContext::MD_dereferenceable:
       case LLVMContext::MD_dereferenceable_or_null: {
         auto kind = ID == LLVMContext::MD_dereferenceable
                       ? Assume::Dereferenceable : Assume::DereferenceableOrNull;
         auto bytes = get_operand(
           llvm::mdconst::extract<llvm::ConstantInt>(Node->getOperand(0)));
-        BB->addInstr(
-          make_unique<Assume>(vector<Value*>{i, bytes}, kind));
+        BB->addInstr(make_unique<Assume>(vector<Value*>{i, bytes}, kind));
         break;
       }
 
@@ -1330,27 +1400,37 @@ public:
     return true;
   }
 
+  unique_ptr<Instr>
+  handleRangeAttrNoInsert(const llvm::Attribute &attr, Value &val,
+                          bool is_welldefined = false) {
+    auto CR = attr.getValueAsConstantRange();
+    vector<Value*> bounds{ make_intconst(CR.getLower()),
+                           make_intconst(CR.getUpper()) };
+    return
+      make_unique<AssumeVal>(val.getType(), "%#range_" + val.getName(), val,
+                             std::move(bounds), AssumeVal::Range,
+                             is_welldefined);
+  }
+
+  Value* handleRangeAttr(const llvm::Attribute &attr, Value &val,
+                         bool is_welldefined = false) {
+    auto assume = handleRangeAttrNoInsert(attr, val, is_welldefined);
+    auto ret = assume.get();
+    BB->addInstr(std::move(assume));
+    return ret;
+  }
+
   // If is_callsite is true, encode attributes at call sites' params
   // Otherwise, encode attributes at function definition's arguments
   // TODO: Once attributes at a call site are fully supported, we should
   // remove is_callsite flag
   bool handleParamAttrs(const llvm::AttributeSet &aset, ParamAttrs &attrs,
-                        bool is_callsite) {
+                        Value &val, Value* &newval, bool is_callsite) {
     bool precise = true;
     for (const llvm::Attribute &llvmattr : aset) {
-      // To call getKindAsEnum, llvmattr should be enum or int attribute
-      // llvm/include/llvm/IR/Attributes.td has attribute types
-      if (!llvmattr.isEnumAttribute() && // e.g. nonnull
-          !llvmattr.isIntAttribute() &&  // e.g. dereferenceable
-          !llvmattr.isTypeAttribute())   // e.g. byval
-        continue;
-
       switch (llvmattr.getKindAsEnum()) {
-
-        // TODO: SignExt, ZeroExt, and InReg are not important for IR
-        // verification, but we should check that they don't change
-
       case llvm::Attribute::InReg:
+        attrs.set(ParamAttrs::InReg);
         break;
 
       case llvm::Attribute::SExt:
@@ -1406,6 +1486,10 @@ public:
                                      llvmattr.getDereferenceableOrNullBytes());
         break;
 
+      case llvm::Attribute::Writable:
+        attrs.set(ParamAttrs::Writable);
+        break;
+
       case llvm::Attribute::Alignment:
         attrs.set(ParamAttrs::Align);
         attrs.align = max(attrs.align, llvmattr.getAlignment()->value());
@@ -1413,6 +1497,11 @@ public:
 
       case llvm::Attribute::NoUndef:
         attrs.set(ParamAttrs::NoUndef);
+        break;
+
+      case llvm::Attribute::Range:
+        newval = handleRangeAttr(llvmattr, val,
+                                 aset.hasAttribute(llvm::Attribute::NoUndef));
         break;
 
       case llvm::Attribute::NoFPClass:
@@ -1430,6 +1519,10 @@ public:
 
       case llvm::Attribute::AllocAlign:
         attrs.set(ParamAttrs::AllocAlign);
+        break;
+
+      case llvm::Attribute::DeadOnUnwind:
+        attrs.set(ParamAttrs::DeadOnUnwind);
         break;
 
       default:
@@ -1620,6 +1713,7 @@ public:
     constexpr_idx = 0;
     copy_idx = 0;
     alignopbundle_idx = 0;
+    metadata_idx = 0;
 
     // don't even bother if number of BBs or instructions is huge..
     if (distance(f.begin(), f.end()) > 5000 ||
@@ -1638,6 +1732,7 @@ public:
     reset_state(Fn);
 
     alive_fn = &Fn;
+    BB = &Fn.getBB("#init", true);
 
     auto &attrs = Fn.getFnAttrs();
     vector<ParamAttrs> param_attrs;
@@ -1650,15 +1745,18 @@ public:
 
       auto ty = llvm_type2alive(arg.getType());
       ParamAttrs attrs;
-      if (!ty || !handleParamAttrs(argattr, attrs, false))
+      auto val = make_unique<Input>(*ty, value_name(arg));
+      Value *newval = val.get();
+
+      if (!ty || !handleParamAttrs(argattr, attrs, *val, newval, false))
         return {};
-      auto val = make_unique<Input>(*ty, value_name(arg), std::move(attrs));
-      add_identifier(arg, *val.get());
+      val->setAttributes(std::move(attrs));
+      add_identifier(arg, *newval);
 
       if (arg.hasReturnedAttr()) {
         // Cache this to avoid linear lookup at return
         assert(Fn.getReturnedInput() == nullptr);
-        Fn.setReturnedInput(val.get());
+        Fn.setReturnedInput(newval);
       }
       Fn.addInput(std::move(val));
     }
@@ -1721,6 +1819,12 @@ public:
           auto alive_i = I.get();
           BB->addInstr(std::move(I));
 
+          if (!alive_i->isVoid()) {
+            add_identifier(i, *alive_i);
+          } else if (auto *ptr = static_cast<Instr*>(get_identifier(i))) {
+            alive_i = ptr;
+          }
+
           if (i.hasMetadataOtherThanDebugLoc() &&
               !handleMetadata(Fn, i, alive_i))
             return {};
@@ -1744,14 +1848,13 @@ public:
     }
 
     auto getGlobalVariable =
-      [this](const string &name) -> llvm::GlobalVariable* {
+      [this](const string_view name) -> llvm::GlobalVariable* {
       auto M = f.getParent();
       // If name is a numeric value, the result should be manually found
       const char *chrs = name.data();
       char *end_ptr;
       auto numeric_id = strtoul(chrs, &end_ptr, 10);
-
-      if ((unsigned)(end_ptr - chrs) != (unsigned)name.size())
+      if (end_ptr != name.end())
         return M->getGlobalVariable(name, true);
       else {
         auto itr = M->global_begin(), end = M->global_end();
@@ -1767,14 +1870,19 @@ public:
     };
 
     // If there is a global variable with initializer, put them at init block.
-    auto &entry_name = Fn.getFirstBB().getName();
+    auto &entry_name = Fn.getBB(1).getName();
     BB = &Fn.getBB("#init", true);
     insert_constexpr_before = nullptr;
 
     // Ensure all src globals exist in target as well
-    for (auto &gvname : gvnamesInSrc) {
-      if (auto gv = getGlobalVariable(string(gvname)))
-        get_operand(gv);
+    for (auto *gv : gvsInSrc) {
+      if (Fn.getGlobalVar(gv->getName())) {
+        // do nothing
+      } else {
+        // import from src
+        // FIXME: this is wrong for IPO
+        Fn.addConstant(make_unique<GlobalVariable>(*gv));
+      }
     }
 
     map<string, unique_ptr<Store>> stores;
@@ -1784,7 +1892,7 @@ public:
       auto GV = dynamic_cast<GlobalVariable *>(&Fn.getConstant(i));
       if (!GV)
         continue;
-      auto gv = getGlobalVariable(GV->getName().substr(1));
+      auto gv = getGlobalVariable(string_view(GV->getName()).substr(1));
       if (!gv || !gv->isConstant() || !gv->hasDefinitiveInitializer())
         continue;
 
@@ -1825,10 +1933,9 @@ initializer::initializer(ostream &os, const llvm::DataLayout &DL) {
   init_llvm_utils(os, DL);
 }
 
-optional<IR::Function> llvm2alive(llvm::Function &F,
-                                  const llvm::TargetLibraryInfo &TLI,
-                                  bool IsSrc,
-                                  const vector<string_view> &gvnamesInSrc) {
-  return llvm2alive_(F, TLI, IsSrc, gvnamesInSrc).run();
+optional<IR::Function>
+llvm2alive(llvm::Function &F, const llvm::TargetLibraryInfo &TLI, bool IsSrc,
+           const vector<GlobalVariable*> &gvsInSrc) {
+  return llvm2alive_(F, TLI, IsSrc, gvsInSrc).run();
 }
 }

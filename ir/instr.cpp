@@ -10,6 +10,7 @@
 #include "smt/solver.h"
 #include "util/compiler.h"
 #include "util/config.h"
+#include <algorithm>
 #include <functional>
 #include <numeric>
 #include <sstream>
@@ -183,6 +184,8 @@ void BinOp::print(ostream &os) const {
   case SMin:          str = "smin "; break;
   case SMax:          str = "smax "; break;
   case Abs:           str = "abs "; break;
+  case UCmp:          str = "ucmp "; break;
+  case SCmp:          str = "scmp "; break;
   }
 
   os << getName() << " = " << str;
@@ -195,6 +198,9 @@ void BinOp::print(ostream &os) const {
     os << "exact ";
   if (flags & Disjoint)
     os << "disjoint ";
+
+  if (op == UCmp || op == SCmp)
+    os << getType() << ' ';
   os << *lhs << ", " << rhs->getName();
 }
 
@@ -452,6 +458,21 @@ StateValue BinOp::toSMT(State &s) const {
       return { a.abs(), ap && bp && (b == 0 || a != expr::IntSMin(a.bits())) };
     };
     break;
+
+  case UCmp:
+  case SCmp:
+    fn = [&](auto &a, auto &ap, auto &b, auto &bp) -> StateValue {
+      auto &ty = getType();
+      uint32_t resBits =
+          (ty.isVectorType() ? ty.getAsAggregateType()->getChild(0) : ty)
+              .bits();
+      return {expr::mkIf(a == b, expr::mkUInt(0, resBits),
+                         expr::mkIf(op == UCmp ? a.ult(b) : a.slt(b),
+                                    expr::mkInt(-1, resBits),
+                                    expr::mkInt(1, resBits))),
+              ap && bp};
+    };
+    break;
   }
 
   function<pair<StateValue,StateValue>(const expr&, const expr&, const expr&,
@@ -497,8 +518,9 @@ StateValue BinOp::toSMT(State &s) const {
       vals.emplace_back(val2ty->aggregateVals(vals2));
     } else {
       StateValue tmp;
-      for (unsigned i = 0, e = retty->numElementsConst(); i != e; ++i) {
-        auto ai = retty->extract(a, i);
+      auto opty = lhs->getType().getAsAggregateType();
+      for (unsigned i = 0, e = opty->numElementsConst(); i != e; ++i) {
+        auto ai = opty->extract(a, i);
         const StateValue *bi;
         switch (op) {
         case Abs:
@@ -507,7 +529,7 @@ StateValue BinOp::toSMT(State &s) const {
           bi = &b;
           break;
         default:
-          tmp = retty->extract(b, i);
+          tmp = opty->extract(b, i);
           bi = &tmp;
           break;
         }
@@ -555,6 +577,14 @@ expr BinOp::getTypeConstraints(const Function &f) const {
     instrconstr = getType().enforceIntOrVectorType() &&
                   getType() == lhs->getType() &&
                   rhs->getType().enforceIntType(1);
+    break;
+  case UCmp:
+  case SCmp:
+    instrconstr = getType().enforceScalarOrVectorType([&](auto &ty) {
+      return ty.enforceIntType() && ty.sizeVar() >= 2;
+    }) && getType().enforceVectorTypeEquiv(lhs->getType()) &&
+                  lhs->getType().enforceIntOrVectorType() &&
+                  lhs->getType() == rhs->getType();
     break;
   default:
     instrconstr = getType().enforceIntOrVectorType() &&
@@ -919,7 +949,16 @@ vector<Value*> UnaryOp::operands() const {
 }
 
 bool UnaryOp::propagatesPoison() const {
-  return true;
+  switch (op) {
+  case Copy:
+  case BitReverse:
+  case BSwap:
+  case Ctpop:
+  case FFS:
+    return true;
+  case IsConstant: return false;
+  }
+  UNREACHABLE();
 }
 
 bool UnaryOp::hasSideEffects() const {
@@ -1507,6 +1546,21 @@ unique_ptr<Instr> TestOp::dup(Function &f, const string &suffix) const {
   return make_unique<TestOp>(getType(), getName() + suffix, *lhs, *rhs, op);
 }
 
+ConversionOp::ConversionOp(Type &type, std::string &&name, Value &val, Op op,
+                           unsigned flags)
+    : Instr(type, std::move(name)), val(&val), op(op), flags(flags) {
+  switch (op) {
+  case ZExt:
+    assert((flags & NNEG) == flags);
+    break;
+  case Trunc:
+    assert((flags & (NSW | NUW)) == flags);
+    break;
+  default:
+    assert(flags == 0);
+    break;
+  }
+}
 
 vector<Value*> ConversionOp::operands() const {
   return { val };
@@ -1538,6 +1592,10 @@ void ConversionOp::print(ostream &os) const {
   os << getName() << " = " << str;
   if (flags & NNEG)
     os << "nneg ";
+  if (flags & NSW)
+    os << "nsw ";
+  if (flags & NUW)
+    os << "nuw ";
   os << *val << print_type(getType(), " to ", "");
 }
 
@@ -1558,8 +1616,16 @@ StateValue ConversionOp::toSMT(State &s) const {
     };
     break;
   case Trunc:
-    fn = [](auto &&val, auto &to_type) -> StateValue {
-      return {val.trunc(to_type.bits()), true};
+    fn = [this](auto &&val, auto &to_type) -> StateValue {
+      AndExpr non_poison;
+      unsigned orig_bits = val.bits();
+      unsigned trunc_bits = to_type.bits();
+      expr val_truncated = val.trunc(trunc_bits);
+      if (flags & NUW)
+        non_poison.add(val.extract(orig_bits-1, trunc_bits) == 0);
+      if (flags & NSW)
+        non_poison.add(val_truncated.sext(orig_bits - trunc_bits) == val);
+      return {std::move(val_truncated), non_poison()};
     };
     break;
   case BitCast:
@@ -1644,6 +1710,20 @@ unique_ptr<Instr> ConversionOp::dup(Function &f, const string &suffix) const {
     make_unique<ConversionOp>(getType(), getName() + suffix, *val, op, flags);
 }
 
+FpConversionOp::FpConversionOp(Type &type, std::string &&name, Value &val,
+                               Op op, FpRoundingMode rm, FpExceptionMode ex,
+                               unsigned flags)
+    : Instr(type, std::move(name)), val(&val), op(op), rm(rm), ex(ex),
+      flags(flags) {
+  switch (op) {
+  case UIntToFP:
+    assert((flags & NNEG) == flags);
+    break;
+  default:
+    assert(flags == 0);
+    break;
+  }
+}
 
 vector<Value*> FpConversionOp::operands() const {
   return { val };
@@ -1674,7 +1754,10 @@ void FpConversionOp::print(ostream &os) const {
   case LRound:   str = "lround "; break;
   }
 
-  os << getName() << " = " << str << *val << print_type(getType(), " to ", "");
+  os << getName() << " = " << str;
+  if (flags & NNEG)
+    os << "nneg ";
+  os << *val << print_type(getType(), " to ", "");
   if (!rm.isDefault())
     os << ", rounding=" << rm;
   if (!ex.ignore())
@@ -1693,9 +1776,9 @@ StateValue FpConversionOp::toSMT(State &s) const {
     };
     break;
   case UIntToFP:
-    fn = [](auto &val, auto &to_type, auto &rm) -> StateValue {
-      return { val.uint2fp(to_type.getAsFloatType()->getDummyFloat(), rm),
-               true };
+    fn = [&](auto &val, auto &to_type, auto &rm) -> StateValue {
+      return {val.uint2fp(to_type.getAsFloatType()->getDummyFloat(), rm),
+              (flags & NNEG) ? !val.isNegative() : true};
     };
     break;
   case FPToSInt:
@@ -2058,9 +2141,9 @@ unique_ptr<Instr> InsertValue::dup(Function &f, const string &suffix) const {
 DEFINE_AS_RETZERO(FnCall, getMaxGEPOffset);
 
 FnCall::FnCall(Type &type, string &&name, string &&fnName, FnAttrs &&attrs,
-               Value *fnptr)
+               Value *fnptr, unsigned var_arg_idx)
   : MemInstr(type, std::move(name)), fnName(std::move(fnName)), fnptr(fnptr),
-    attrs(std::move(attrs)) {
+    attrs(std::move(attrs)), var_arg_idx(var_arg_idx) {
   if (config::disallow_ub_exploitation)
     this->attrs.set(FnAttrs::NoUndef);
   assert(!fnptr || this->fnName.empty());
@@ -2181,8 +2264,7 @@ vector<Value*> FnCall::operands() const {
   vector<Value*> output;
   if (fnptr)
     output.emplace_back(fnptr);
-  transform(args.begin(), args.end(), back_inserter(output),
-            [](auto &p){ return p.first; });
+  ranges::transform(args, back_inserter(output), [](auto &p){ return p.first;});
   return output;
 }
 
@@ -2205,7 +2287,11 @@ void FnCall::print(ostream &os) const {
      << (fnptr ? fnptr->getName() : fnName) << '(';
 
   bool first = true;
+  unsigned idx = 0;
   for (auto &[arg, attrs] : args) {
+    if (idx++ == var_arg_idx)
+      os << "...";
+
     if (!first)
       os << ", ";
 
@@ -2325,27 +2411,35 @@ StateValue FnCall::toSMT(State &s) const {
   vector<StateValue> inputs;
   vector<Memory::PtrInput> ptr_inputs;
 
+  unsigned indirect_hash = 0;
   auto ptr = fnptr;
   // This is a direct call, but check if there are indirect calls elsewhere
   // to this function. If so, call it indirectly to match the other calls.
-  if (!ptr)
-    ptr = s.getFn().getGlobalVar(string_view(fnName).substr(1));
+  if (!ptr && has_indirect_fncalls)
+    ptr = s.getFn().getGlobalVar(fnName);
 
   ostringstream fnName_mangled;
   if (ptr) {
     fnName_mangled << "#indirect_call";
 
     Pointer p(s.getMemory(), s.getAndAddPoisonUB(*ptr, true).value);
-    inputs.emplace_back(p.reprWithoutAttrs(), true);
+    auto bid = p.getShortBid();
+    inputs.emplace_back(expr(bid), true);
     s.addUB(p.isDereferenceable(1, 1, false));
 
     Function::FnDecl decl;
     decl.output = &getType();
+    unsigned idx = 0;
     for (auto &[arg, params] : args) {
+      if (idx++ == var_arg_idx)
+        break;
       decl.inputs.emplace_back(&arg->getType(), params);
     }
-    s.addUB(expr::mkUF("#fndeclty", { inputs[0].value }, expr::mkUInt(0, 32)) ==
-            decl.hash());
+    decl.is_varargs = var_arg_idx != -1u;
+    s.addUB(!p.isLocal());
+    s.addUB(p.getOffset() == 0);
+    s.addUB(expr::mkUF("#fndeclty", { std::move(bid) }, expr::mkUInt(0, 32)) ==
+            (indirect_hash = decl.hash()));
   } else {
     fnName_mangled << fnName;
   }
@@ -2469,7 +2563,7 @@ StateValue FnCall::toSMT(State &s) const {
 
   auto ret = s.addFnCall(std::move(fnName_mangled).str(), std::move(inputs),
                          std::move(ptr_inputs), getType(), std::move(ret_val),
-                         ret_arg_ty, std::move(ret_vals), attrs);
+                         ret_arg_ty, std::move(ret_vals), attrs, indirect_hash);
 
   return isVoid() ? StateValue()
                   : pack_return(s, getType(), std::move(ret), attrs, args);
@@ -2485,7 +2579,7 @@ expr FnCall::getTypeConstraints(const Function &f) const {
 
 unique_ptr<Instr> FnCall::dup(Function &f, const string &suffix) const {
   auto r = make_unique<FnCall>(getType(), getName() + suffix, string(fnName),
-                               FnAttrs(attrs), fnptr);
+                               FnAttrs(attrs), fnptr, var_arg_idx);
   r->args = args;
   r->approx = approx;
   return r;
@@ -3083,8 +3177,8 @@ void Return::print(ostream &os) const {
 }
 
 static StateValue
-check_ret_attributes(State &s, StateValue &&sv, const Type &t,
-                     const FnAttrs &attrs,
+check_ret_attributes(State &s, StateValue &&sv, const StateValue &returned_arg,
+                     const Type &t, const FnAttrs &attrs,
                      const vector<pair<Value*, ParamAttrs>> &args) {
   if (auto agg = t.getAsAggregateType()) {
     vector<StateValue> vals;
@@ -3092,6 +3186,7 @@ check_ret_attributes(State &s, StateValue &&sv, const Type &t,
       if (agg->isPadding(i))
         continue;
       vals.emplace_back(check_ret_attributes(s, agg->extract(sv, i),
+                                             agg->extract(returned_arg, i),
                                              agg->getChild(i), attrs, args));
     }
     return agg->aggregateVals(vals);
@@ -3103,30 +3198,15 @@ check_ret_attributes(State &s, StateValue &&sv, const Type &t,
     sv.non_poison &= !p.isNocapture();
   }
 
-  return check_return_value(s, std::move(sv), t, attrs, args);
-}
-
-static void eq_val_rec(State &s, const Type &t, const StateValue &a,
-                       const StateValue &b) {
-  if (auto agg = t.getAsAggregateType()) {
-    for (unsigned i = 0, e = agg->numElementsConst(); i != e; ++i) {
-      if (agg->isPadding(i))
-        continue;
-      eq_val_rec(s, agg->getChild(i), agg->extract(a, i), agg->extract(b, i));
-    }
-    return;
-  }
-  s.addGuardableUB(a == b);
+  auto newsv = check_return_value(s, std::move(sv), t, attrs, args);
+  if (returned_arg.isValid())
+    newsv.non_poison &= newsv.value == returned_arg.value;
+  return newsv;
 }
 
 StateValue Return::toSMT(State &s) const {
-  StateValue retval;
-
   auto &attrs = s.getFn().getFnAttrs();
-  if (attrs.poisonImpliesUB())
-    retval = s.getAndAddPoisonUB(*val, true);
-  else
-    retval = s[*val];
+  StateValue retval = s.getMaybeUB(*val, attrs.poisonImpliesUB());
 
   s.addGuardableUB(s.getMemory().checkNocapture());
 
@@ -3135,15 +3215,12 @@ StateValue Return::toSMT(State &s) const {
     args.emplace_back(const_cast<Value*>(&arg), ParamAttrs());
   }
 
-  retval = check_ret_attributes(s, std::move(retval), getType(), attrs, args);
-
   if (attrs.has(FnAttrs::NoReturn))
     s.addGuardableUB(expr(false));
 
-  if (auto &val_returned = s.getReturnedInput())
-    eq_val_rec(s, getType(), retval, *val_returned);
-
-  s.addReturn(std::move(retval));
+  s.addReturn(check_ret_attributes(s, std::move(retval),
+                                   s.getReturnedInput().value_or(StateValue()),
+                                   getType(), attrs, args));
   return {};
 }
 
@@ -3189,6 +3266,17 @@ bool Assume::propagatesPoison() const {
 }
 
 bool Assume::hasSideEffects() const {
+  switch (kind) {
+  // assume(true) is NOP
+  case AndNonPoison:
+  case WellDefined:
+    if (auto *c = dynamic_cast<IntConst*>(args[0]))
+      if (auto n = c->getInt())
+        return *n != 1;
+    break;
+  default:
+    break;
+  }
   return true;
 }
 
@@ -3279,9 +3367,9 @@ unique_ptr<Instr> Assume::dup(Function &f, const string &suffix) const {
 
 
 AssumeVal::AssumeVal(Type &type, string &&name, Value &val,
-                     vector<Value *> &&args0, Kind kind)
+                     vector<Value *> &&args0, Kind kind, bool is_welldefined)
     : Instr(type, std::move(name)), val(&val), args(std::move(args0)),
-      kind(kind) {
+      kind(kind), is_welldefined(is_welldefined) {
   switch (kind) {
   case Align:
     assert(args.size() == 1);
@@ -3328,6 +3416,9 @@ void AssumeVal::print(ostream &os) const {
   for (auto &arg: args) {
     os << ", " << *arg;
   }
+
+  if (is_welldefined)
+    os << ", welldefined";
 }
 
 StateValue AssumeVal::toSMT(State &s) const {
@@ -3369,7 +3460,7 @@ StateValue AssumeVal::toSMT(State &s) const {
     break;
   }
 
-  auto &v = s[*val];
+  auto &v = s.getMaybeUB(*val, is_welldefined);
   if (auto agg = getType().getAsAggregateType()) {
     vector<StateValue> vals;
     for (unsigned i = 0, e = agg->numElementsConst(); i != e; ++i) {
@@ -3383,6 +3474,11 @@ StateValue AssumeVal::toSMT(State &s) const {
 
   if (config::disallow_ub_exploitation)
     s.addGuardableUB(expr(np));
+
+  if (is_welldefined) {
+    s.addUB(std::move(np));
+    np = true;
+  }
 
   return { expr(v.value), v.non_poison && np };
 }
@@ -3409,7 +3505,7 @@ expr AssumeVal::getTypeConstraints(const Function &f) const {
 
 unique_ptr<Instr> AssumeVal::dup(Function &f, const string &suffix) const {
   return make_unique<AssumeVal>(getType(), getName() + suffix, *val,
-                                vector<Value*>(args), kind);
+                                vector<Value*>(args), kind, is_welldefined);
 }
 
 
@@ -3438,11 +3534,13 @@ MemInstr::ByteAccessInfo::get(const Type &t, bool store, unsigned align) {
   info.doesPtrStore     = ptr_access && store;
   info.doesPtrLoad      = ptr_access && !store;
   info.byteSize         = gcd(align, getCommonAccessSize(t));
+  if (auto intTy = t.getAsIntType())
+    info.subByteAccess  = intTy->maxSubBitAccess();
   return info;
 }
 
 MemInstr::ByteAccessInfo MemInstr::ByteAccessInfo::full(unsigned byteSize) {
-  return { true, true, true, true, byteSize };
+  return { true, true, true, true, byteSize, 0 };
 }
 
 
@@ -3623,7 +3721,7 @@ uint64_t GEP::getMaxGEPOffset() const {
       return UINT64_MAX;
 
     if (auto n = getInt(*v)) {
-      off = add_saturate(off, abs((int64_t)mul * *n));
+      off = add_saturate(off, (int64_t)mul * *n);
       continue;
     }
 
@@ -3661,6 +3759,10 @@ void GEP::print(ostream &os) const {
   os << getName() << " = gep ";
   if (inbounds)
     os << "inbounds ";
+  else if (nusw)
+    os << "nusw ";
+  if (nuw)
+    os << "nuw ";
   os << *ptr;
 
   for (auto &[sz, idx] : idxs) {
@@ -3679,19 +3781,32 @@ StateValue GEP::toSMT(State &s) const {
     if (inbounds)
       inbounds_np.add(ptr.inbounds());
 
+    expr offset_sum = expr::mkUInt(0, bits_for_offset);
     for (auto &[sz, idx] : offsets) {
       auto &[v, np] = idx;
       auto multiplier = expr::mkUInt(sz, bits_for_offset);
       auto val = v.sextOrTrunc(bits_for_offset);
       auto inc = multiplier * val;
 
-      if (inbounds) {
-        if (sz != 0) {
-          idx_all_zeros.add(v == 0);
-          non_poison.add(val.sextOrTrunc(v.bits()) == v);
-        }
+      if (inbounds && sz != 0)
+        idx_all_zeros.add(v == 0);
+
+      if (nusw) {
+        non_poison.add(val.sextOrTrunc(v.bits()) == v);
         non_poison.add(multiplier.mul_no_soverflow(val));
-        non_poison.add(ptr.addNoOverflow(inc));
+        non_poison.add(ptr.addNoUSOverflow(inc, inbounds));
+        if (!inbounds) {
+          // For non-inbounds gep, we have to explicitly check that adding the
+          // offsets without the base address also doesn't wrap.
+          non_poison.add(offset_sum.add_no_soverflow(inc));
+          offset_sum = offset_sum + inc;
+        }
+      }
+
+      if (nuw) {
+        non_poison.add(val.zextOrTrunc(v.bits()) == v);
+        non_poison.add(multiplier.mul_no_uoverflow(val));
+        non_poison.add(ptr.addNoUOverflow(inc, inbounds));
       }
 
 #ifndef NDEBUG
@@ -3761,7 +3876,8 @@ expr GEP::getTypeConstraints(const Function &f) const {
 }
 
 unique_ptr<Instr> GEP::dup(Function &f, const string &suffix) const {
-  auto dup = make_unique<GEP>(getType(), getName() + suffix, *ptr, inbounds);
+  auto dup = make_unique<GEP>(getType(), getName() + suffix, *ptr, inbounds,
+                              nusw, nuw);
   for (auto &[sz, idx] : idxs) {
     dup->addIdx(sz, *idx);
   }
@@ -3849,7 +3965,7 @@ DEFINE_AS_RETZEROALIGN(Load, getMaxAllocSize);
 DEFINE_AS_RETZERO(Load, getMaxGEPOffset);
 
 uint64_t Load::getMaxAccessSize() const {
-  return Memory::getStoreByteSize(getType());
+  return round_up(Memory::getStoreByteSize(getType()), align);
 }
 
 MemInstr::ByteAccessInfo Load::getByteAccessInfo() const {
@@ -3895,7 +4011,7 @@ DEFINE_AS_RETZEROALIGN(Store, getMaxAllocSize);
 DEFINE_AS_RETZERO(Store, getMaxGEPOffset);
 
 uint64_t Store::getMaxAccessSize() const {
-  return Memory::getStoreByteSize(val->getType());
+  return round_up(Memory::getStoreByteSize(val->getType()), align);
 }
 
 MemInstr::ByteAccessInfo Store::getByteAccessInfo() const {

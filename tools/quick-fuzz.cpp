@@ -22,7 +22,7 @@
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Passes/PassBuilder.h"
-#include "llvm/Support/PrettyStackTrace.h"
+#include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/TargetParser/Triple.h"
@@ -216,7 +216,7 @@ public:
     case 0: {
       auto *LHS = getVal(Ty);
       auto *RHS = getVal(Ty);
-      Val = new ICmpInst(*BB, randomPred(), LHS, RHS);
+      Val = new ICmpInst(BB, randomPred(), LHS, RHS);
     } break;
     case 1: {
       auto *LHS = getVal(Ty);
@@ -860,7 +860,7 @@ void BBFuzzer::go() {
                         ? new LoadInst(IntTy, Counters[C.choose(NumCounters)],
                                        "", BBs[i])
                         : (Value *)ConstantInt::get(IntTy, C.choose(20));
-        Cond = new ICmpInst(*BBs[i], VG.randomPred(), LHS, RHS);
+        Cond = new ICmpInst(BBs[i], VG.randomPred(), LHS, RHS);
       }
       BranchInst::Create(Dest1, Dest2, Cond, BBs[i]);
     } break;
@@ -926,9 +926,8 @@ void doit(llvm::Module *M1, llvm::Function *srcFn, Verifier &verifier) {
 
 int main(int argc, char **argv) {
   sys::PrintStackTraceOnErrorSignal(argv[0]);
-  PrettyStackTraceProgram X(argc, argv);
+  llvm::InitLLVM X(argc, argv);
   EnableDebugBuffering = true;
-  llvm_shutdown_obj llvm_shutdown; // Call llvm_shutdown() on exit.
   LLVMContext Context;
 
   string Usage =

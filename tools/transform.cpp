@@ -64,6 +64,15 @@ static void print_single_varval(ostream &os, const State &st, const Model &m,
 
   type.printVal(os, st, m.eval(val.value, true));
 
+  if (dynamic_cast<const PtrType*>(&type)) {
+    auto addr = Pointer(st.getMemory(), m.eval(val.value, true)).getAddress();
+    addr = m.eval(addr);
+    if (addr.isConst()) {
+      os << " / Address=";
+      addr.printHexadecimal(os);
+    }
+  }
+
   // undef variables may not have a model since each read uses a copy
   // TODO: add intervals of possible values for ints at least?
   if (!partial.isConst()) {
@@ -688,11 +697,22 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
   qvars.insert(mem_undef.begin(), mem_undef.end());
 
   auto print_ptr_load = [&](ostream &s, const Model &m) {
+    Pointer p1(src_mem, m[ptr_refinement()]);
+    Pointer p2(tgt_mem, m[ptr_refinement()]);
+
+    expr alive1 = m[p1.isBlockAlive()];
+    expr alive2 = m[p2.isBlockAlive()];
+    if (alive1.isConst() && alive2.isConst() && !alive1.eq(alive2)) {
+      auto p = [](const expr &a) { return a.isTrue() ? "alive" : "dead"; };
+      s << "\nMismatch is liveness of blocks. Source: " << p(alive1)
+        << " / Target: " << p(alive2);
+      return;
+    }
+
     set<expr> undef;
-    Pointer p(src_mem, m[ptr_refinement()]);
-    s << "\nMismatch in " << p
-      << "\nSource value: " << Byte(src_mem, m[src_mem.raw_load(p, undef)()])
-      << "\nTarget value: " << Byte(tgt_mem, m[tgt_mem.raw_load(p, undef)()]);
+    s << "\nMismatch in " << p1
+      << "\nSource value: " << Byte(src_mem, m[src_mem.raw_load(p1, undef)()])
+      << "\nTarget value: " << Byte(tgt_mem, m[tgt_mem.raw_load(p2, undef)()]);
   };
 
   CHECK(dom && !(memory_cnstr0.isTrue() ? memory_cnstr0
@@ -979,6 +999,7 @@ static void calculateAndInitConstants(Transform &t) {
   bool does_any_byte_access = false;
   has_indirect_fncalls = false;
   has_ptr_arg = false;
+  num_sub_byte_bits = 0;
 
   set<string> inaccessiblememonly_fns;
   num_inaccessiblememonly_fns = 0;
@@ -1051,21 +1072,29 @@ static void calculateAndInitConstants(Transform &t) {
 
       update_min_vect_sz(i.getType());
 
-      if (auto fn = dynamic_cast<const FnCall*>(&i)) {
+      if (auto call = dynamic_cast<const FnCall*>(&i)) {
         has_fncall |= true;
-        has_indirect_fncalls |= fn->isIndirect();
-        if (!fn->getAttributes().isAlloc()) {
-          if (fn->getAttributes().mem.canOnlyWrite(MemoryAccess::Inaccessible)) {
-            if (inaccessiblememonly_fns.emplace(fn->getName()).second)
+        auto &attrs = call->getAttributes();
+        if (!attrs.isAlloc()) {
+          if (attrs.mem.canOnlyWrite(MemoryAccess::Inaccessible)) {
+            if (inaccessiblememonly_fns.emplace(call->getName()).second)
               ++num_inaccessiblememonly_fns;
           } else {
-            if (fn->getAttributes().mem
-                                   .canOnlyRead(MemoryAccess::Inaccessible)) {
-              if (inaccessiblememonly_fns.emplace(fn->getName()).second)
+            if (attrs.mem.canOnlyRead(MemoryAccess::Inaccessible)) {
+              if (inaccessiblememonly_fns.emplace(call->getName()).second)
                 ++num_inaccessiblememonly_fns;
             }
-            has_write_fncall |= fn->getAttributes().mem.canWriteSomething();
+            has_write_fncall |= attrs.mem.canWriteSomething();
           }
+          // we do an indirect call if the fn is address taken
+          if (!call->isIndirect() &&
+              fn->getGlobalVar(string_view(call->getFnName()).substr(1)) &&
+              inaccessiblememonly_fns.emplace(call->getName()).second)
+            ++num_inaccessiblememonly_fns;
+        }
+        if (call->isIndirect()) {
+          has_indirect_fncalls = true;
+          num_inaccessiblememonly_fns += is_src;
         }
       }
 
@@ -1084,6 +1113,8 @@ static void calculateAndInitConstants(Transform &t) {
         does_mem_access      |= info.doesMemAccess();
         observes_addresses   |= info.observesAddresses;
         min_access_size       = gcd(min_access_size, info.byteSize);
+        num_sub_byte_bits     = max(num_sub_byte_bits,
+                                    (unsigned)bit_width(info.subByteAccess));
         if (info.doesMemAccess() && !info.hasIntByteAccess &&
             !info.doesPtrLoad && !info.doesPtrStore)
           does_any_byte_access = true;
@@ -1215,11 +1246,15 @@ static void calculateAndInitConstants(Transform &t) {
   // as an (unsound) optimization, we fix the first bit of the addr for
   // local/non-local if both exist (to reduce axiom fml size)
   bool has_local_bit = (num_locals_src || num_locals_tgt) && num_nonlocals;
-  bits_ptr_address = min(max(bits_size_t, bits_ptr_address) + has_local_bit,
+  bits_ptr_address = min(max(max(bits_for_offset, bits_size_t),
+                             bits_ptr_address) + has_local_bit,
                          bits_program_pointer);
 
   if (config::tgt_is_asm)
     bits_ptr_address = bits_program_pointer;
+
+  // TODO: this is only needed if some program pointer is observable
+  bits_for_offset = max(bits_ptr_address, bits_for_offset);
 
   bits_byte = 8 * (does_mem_access ?  (unsigned)min_access_size : 1);
 
@@ -1262,6 +1297,7 @@ static void calculateAndInitConstants(Transform &t) {
                   << "\ndoes_mem_access: " << does_mem_access
                   << "\ndoes_ptr_mem_access: " << does_ptr_mem_access
                   << "\ndoes_int_mem_access: " << does_int_mem_access
+                  << "\nnum_sub_byte_bits: " << num_sub_byte_bits
                   << "\nhas_ptr_arg: " << has_ptr_arg
                   << '\n';
 }
@@ -1627,52 +1663,20 @@ void Transform::preprocess() {
   if (config::tgt_is_asm) {
     tgt.getFnAttrs().set(FnAttrs::Asm);
 
-    // all memory blocks are considered to have a size multiple of alignment
-    // since asm memory accesses won't trap as it won't cross the page boundary
-    vector<pair<const Instr*, unique_ptr<Instr>>> to_add;
+    // there are no #side-effect things in assembly
     vector<Instr*> to_remove;
     for (auto &bb : src.getBBs()) {
       for (auto &i : bb->instrs()) {
-        if (auto *load = dynamic_cast<const Load*>(&i)) {
-          auto align = load->getAlign();
-          auto size  = load->getMaxAccessSize();
-          if (size % align) {
-            static IntType i64("i64", 64);
-            auto bytes = make_unique<IntConst>(i64, round_up(size, align));
-            to_add.emplace_back(load, make_unique<Assume>(
-              vector<Value*>{&load->getPtr(), bytes.get()},
-              Assume::Dereferenceable));
-            src.addConstant(std::move(bytes));
-          }
-        } else if (auto *call = dynamic_cast<const FnCall*>(&i)) {
+        if (auto *call = dynamic_cast<const FnCall*>(&i)) {
           if (call->getFnName() == "#sideeffect") {
             to_remove.emplace_back(const_cast<Instr*>(&i));
           }
         }
       }
-      for (auto &[i, assume] : to_add) {
-        bb->addInstrAt(std::move(assume), i, false);
-      }
       for (auto &i : to_remove) {
         bb->delInstr(i);
       }
-      to_add.clear();
       to_remove.clear();
-    }
-
-    // increase size of global variables to be a multiple of alignment
-    for (auto gv : tgt.getGlobalVars()) {
-      if (gv->isArbitrarySize())
-        continue;
-      auto align = gv->getAlignment();
-      auto sz = gv->size();
-      auto newsize = round_up(sz, align);
-      if (newsize != sz) {
-        gv->increaseSize(newsize);
-        if (auto src_gv = dynamic_cast<GlobalVariable*>(
-            src.getGlobalVar(gv->getName())))
-          src_gv->increaseSize(newsize);
-      }
     }
   }
 

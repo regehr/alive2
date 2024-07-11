@@ -16,7 +16,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
-#include "llvm/Support/PrettyStackTrace.h"
+#include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/TargetParser/Triple.h"
 
@@ -89,17 +89,12 @@ optional<StateValue> exec(llvm::Function &F,
     sym_exec_init(state);
 
     const BasicBlock *curr_bb = &Func->getFirstBB();
-    state.startBB(*curr_bb);
 
-    // initialize global variables
+    // #init block has been executed already by sym_exec_init
     if (curr_bb->getName() == "#init") {
-      for (auto &i : curr_bb->instrs()) {
-        state.exec(i);
-      }
-      curr_bb = Func->getBBs()[1];
-      state.startBB(*curr_bb);
+      curr_bb = &Func->getBB(1);
     }
-    state.finishInitializer();
+    state.startBB(*curr_bb);
 
     auto It = curr_bb->instrs().begin();
     Solver solver(true);
@@ -198,9 +193,8 @@ unique_ptr<Cache> cache;
 
 int main(int argc, char **argv) {
   llvm::sys::PrintStackTraceOnErrorSignal(argv[0]);
-  llvm::PrettyStackTraceProgram X(argc, argv);
+  llvm::InitLLVM X(argc, argv);
   llvm::EnableDebugBuffering = true;
-  llvm::llvm_shutdown_obj llvm_shutdown; // Call llvm_shutdown() on exit.
   llvm::LLVMContext Context;
 
   std::string Usage =

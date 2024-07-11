@@ -114,6 +114,10 @@ bool Type::isAggregateType() const {
   return isArrayType() || isStructType() || isVectorType();
 }
 
+bool Type::isVoid() const {
+  return this == &voidTy;
+}
+
 expr Type::enforceIntType(unsigned bits) const {
   return false;
 }
@@ -198,6 +202,10 @@ expr Type::enforceFloatOrVectorType() const {
 expr Type::enforcePtrOrVectorType() const {
   return enforceScalarOrVectorType(
            [&](auto &ty) { return ty.enforcePtrType(); });
+}
+
+const IntType* Type::getAsIntType() const {
+  return nullptr;
 }
 
 const FloatType* Type::getAsFloatType() const {
@@ -317,6 +325,14 @@ void VoidType::print(ostream &os) const {
 }
 
 
+unsigned IntType::maxSubBitAccess() const {
+  if (!defined)
+    return 63;
+  if (bitwidth % 8)
+    return bitwidth;
+  return 0;
+}
+
 unsigned IntType::bits() const {
   return bitwidth;
 }
@@ -353,6 +369,10 @@ bool IntType::isIntType() const {
 
 expr IntType::enforceIntType(unsigned bits) const {
   return bits ? sizeVar() == bits : true;
+}
+
+const IntType* IntType::getAsIntType() const {
+  return this;
 }
 
 pair<expr, expr>
@@ -434,10 +454,9 @@ expr FloatType::fromFloat(State &s, const expr &fp, const Type &from_type0,
     return val;
 
   unsigned fraction_bits = fractionBits();
-  unsigned var_bits = fraction_bits-1 + 1 /* sign */;
 
   // sign bit, exponent (-1), qnan bit (1) or snan (0), rest of fraction
-  expr var = s.getFreshNondetVar("#NaN", expr::mkUInt(0, var_bits));
+  expr var = s.getFreshNondetVar("#NaN", expr::mkUInt(0, 2));
 
   ChoiceExpr<expr> exprs;
 
@@ -450,16 +469,19 @@ expr FloatType::fromFloat(State &s, const expr &fp, const Type &from_type0,
 
   auto add_maybe_quiet = [&](const expr &e) {
     // account for fpext/fptruc
-    expr fraction = e.trunc(min(from_type->fractionBits(), fraction_bits));
-    if (fraction.bits() < fraction_bits)
+    auto orig_bw = from_type->fractionBits();
+    expr fraction = e.trunc(orig_bw);
+    expr truncated_is_nan = true;
+
+    if (orig_bw > fraction_bits) {
+      fraction = fraction.extract(orig_bw-1, orig_bw - fraction_bits);
+      truncated_is_nan = fraction.trunc(fraction_bits - 1) != 0;
+    } else if (orig_bw < fraction_bits) {
       fraction = fraction.concat_zeros(fraction_bits - fraction.bits());
+    }
     assert(!fraction.isValid() || fraction.bits() == fraction_bits);
 
-    expr truncated_is_nan = true;
-    if (from_type->fractionBits() > fraction_bits)
-      truncated_is_nan = fraction != 0;
-
-    expr qnan = fraction.extract(fraction_bits - 1, fraction_bits - 1);
+    expr qnan = fraction.sign();
     expr quieted = var.extract(0, 0);
     qnan = expr::mkIf(truncated_is_nan, qnan | quieted, expr::mkUInt(1, 1));
     exprs.add(qnan.concat(fraction.trunc(fraction_bits - 1)),
@@ -476,8 +498,9 @@ expr FloatType::fromFloat(State &s, const expr &fp, const Type &from_type0,
 
   // 4) target specific preferred QNaN (a set, possibly empty)
   // approximated by adding just one more value
-  exprs.add(expr::mkUInt(1, 1).concat(var.extract(fraction_bits - 2, 0)),
-            expr(true));
+  auto preferred_qnan_fraction
+    = expr::mkVar("#preferred_qnan", expr::mkUInt(0, fraction_bits - 1));
+  exprs.add(expr::mkUInt(1, 1).concat(preferred_qnan_fraction), expr(true));
 
   auto [fraction, domain, choice_var, pre] = std::move(exprs)();
   assert(!domain.isValid() || domain.isTrue());
@@ -524,8 +547,7 @@ bool FloatType::isNaNInt(const expr &e) const {
   if (!e.isValid())
     return false;
 
-  // unsigned var_bits = fraction_bits-1 + 1 /* sign */;
-  // expr var = s.getFreshNondetVar("#NaN", expr::mkUInt(0, var_bits));
+  // expr var = s.getFreshNondetVar("#NaN", expr::mkUInt(0, 2));
   // var.sign().concat(expr::mkInt(-1, exp_bits)).concat(fraction)
   auto bw = bits();
 
@@ -536,7 +558,7 @@ bool FloatType::isNaNInt(const expr &e) const {
   unsigned h, l;
   return exponent.isAllOnes() &&
          e.sign().isExtract(nan, h, l) &&
-         h == l && h == fractionBits() - 1 &&
+         h == 1 && h == 1 &&
          nan.fn_name().starts_with("#NaN");
 }
 
@@ -1352,6 +1374,10 @@ expr SymbolicType::enforceFloatType() const {
 expr SymbolicType::enforceVectorType(
     const function<expr(const Type&)> &enforceElem) const {
   return v ? (isVector() && v->enforceVectorType(enforceElem)) : false;
+}
+
+const IntType* SymbolicType::getAsIntType() const {
+  return &*i;
 }
 
 const FloatType* SymbolicType::getAsFloatType() const {

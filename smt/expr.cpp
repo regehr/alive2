@@ -854,6 +854,13 @@ expr expr::add_no_uoverflow(const expr &rhs) const {
   return (zext(1) + rhs.zext(1)).sign() == 0;
 }
 
+expr expr::add_no_usoverflow(const expr &rhs) const {
+  if (min_leading_zeros() >= 1 && rhs.min_leading_zeros() >= 1)
+    return true;
+
+  return (zext(1) + rhs.sext(1)).sign() == 0;
+}
+
 expr expr::sub_no_soverflow(const expr &rhs) const {
   if (min_leading_zeros() >= 1 && rhs.min_leading_zeros() >= 1)
     return true;
@@ -1115,6 +1122,11 @@ expr expr::abs() const {
   C();
   auto s = sort();
   return mkIf(sge(mkUInt(0, s)), *this, mkInt(-1, s) * *this);
+}
+
+expr expr::round_up(const expr &power_of_two) const {
+  expr minus_1 = power_of_two - mkUInt(1, power_of_two);
+  return (*this + minus_1) & ~minus_1;
 }
 
 #define fold_fp_neg(fn)                                  \
@@ -2042,7 +2054,7 @@ expr expr::mkIf(const expr &cond, const expr &then, const expr &els) {
   if (cond.isFalse())
     return els;
 
-  if (then.isTrue())
+  if (then.isTrue() || cond.eq(then))
     return cond || els;
   if (then.isFalse())
     return !cond && els;

@@ -32,7 +32,7 @@ public:
   auto bits() const { return type.bits(); }
   auto& getName() const { return name; }
   auto& getType() const { return type; }
-  bool isVoid() const;
+  bool isVoid() const { return type.isVoid(); }
 
   virtual void rauw(const Value &what, Value &with);
   virtual void print(std::ostream &os) const = 0;
@@ -119,7 +119,8 @@ class Input final : public Value {
   std::string getSMTName(unsigned child) const;
   StateValue mkInput(State &s, const Type &ty, unsigned child) const;
 public:
-  Input(Type &type, std::string &&name, ParamAttrs &&attrs = ParamAttrs::None);
+  Input(Type &type, std::string &&name);
+  void setAttributes(ParamAttrs &&new_attrs);
   void copySMTName(const Input &other);
   void print(std::ostream &os) const override;
   bool hasAttribute(ParamAttrs::Attribute a) const { return attrs.has(a); }

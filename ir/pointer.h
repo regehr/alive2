@@ -88,7 +88,8 @@ public:
 
   Pointer maskOffset(const smt::expr &mask) const;
 
-  smt::expr addNoOverflow(const smt::expr &offset) const;
+  smt::expr addNoUSOverflow(const smt::expr &offset, bool offset_only) const;
+  smt::expr addNoUOverflow(const smt::expr &offset, bool offset_only) const;
 
   smt::expr operator==(const Pointer &rhs) const;
   smt::expr operator!=(const Pointer &rhs) const;
@@ -102,10 +103,12 @@ public:
   smt::expr isAligned(const smt::expr &align);
   std::pair<smt::AndExpr, smt::expr>
   isDereferenceable(uint64_t bytes, uint64_t align, bool iswrite = false,
-                    bool ignore_accessability = false);
+                    bool ignore_accessability = false,
+                    bool round_size_to_align = true);
   std::pair<smt::AndExpr, smt::expr>
   isDereferenceable(const smt::expr &bytes, uint64_t align, bool iswrite,
-                    bool ignore_accessability = false);
+                    bool ignore_accessability = false,
+                    bool round_size_to_align = true);
 
   void isDisjointOrEqual(const smt::expr &len1, const Pointer &ptr2,
                          const smt::expr &len2) const;
@@ -127,6 +130,9 @@ public:
   smt::expr isNoWrite() const;
   smt::expr isBasedOnArg() const;
 
+  Pointer setAttrs(const ParamAttrs &attr) const;
+  Pointer setIsBasedOnArg() const;
+
   smt::expr refined(const Pointer &other) const;
   smt::expr fninputRefined(const Pointer &other, std::set<smt::expr> &undef,
                            const smt::expr &byval_bytes) const;
@@ -135,6 +141,8 @@ public:
 
   static Pointer mkNullPointer(const Memory &m);
   smt::expr isNull() const;
+
+  bool isBlkSingleByte() const;
 
   static Pointer mkIf(const smt::expr &cond, const Pointer &then,
                       const Pointer &els);

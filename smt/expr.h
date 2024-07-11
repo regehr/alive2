@@ -178,6 +178,7 @@ public:
 
   expr add_no_soverflow(const expr &rhs) const;
   expr add_no_uoverflow(const expr &rhs) const;
+  expr add_no_usoverflow(const expr &rhs) const;
   expr sub_no_soverflow(const expr &rhs) const;
   expr sub_no_uoverflow(const expr &rhs) const;
   expr mul_no_soverflow(const expr &rhs) const;
@@ -217,6 +218,8 @@ public:
   expr smax(const expr &rhs) const;
 
   expr abs() const;
+
+  expr round_up(const expr &power_of_two) const;
 
   expr isNaN() const;
   expr isInf() const;
@@ -393,15 +396,15 @@ public:
 
 
 #define mkIf_fold(c, a, b) \
-  mkIf_fold_fn(c, [&]() { return a; }, [&]() { return b; })
+  mkIf_fold_fn<decltype(a)>(c, [&]() { return a; }, [&]() { return b; })
 
-template <typename T1, typename T2>
-static expr mkIf_fold_fn(const expr &cond, T1 &&a, T2 &&b) {
+template <typename RetTy, typename T1, typename T2>
+static RetTy mkIf_fold_fn(const expr &cond, T1 &&a, T2 &&b) {
   if (cond.isTrue())
     return a();
   if (cond.isFalse())
     return b();
-  return expr::mkIf(cond, a(), b());
+  return RetTy::mkIf(cond, a(), b());
 }
 
 }

@@ -12,9 +12,16 @@
 namespace llvm {
 class Function;
 class Module;
+class VectorType;
 } // namespace llvm
 
 namespace lifter {
+
+// amount of stack available for use by the lifted function, in bytes
+const int stackBytes = 1024;
+
+void checkArguments(llvm::CallInst *ci, llvm::Value *val);
+void checkVectorTy(llvm::VectorType *Ty);
 
 extern std::ostream *out;
 
@@ -39,13 +46,16 @@ extern unsigned origRetWidth;
 extern bool has_ret_attr;
 extern const llvm::Target *Targ;
 
-// TODO -- make expose these to the command line, probably
+// TODO -- expose these to the command line
 inline const char *TripleName = "aarch64-unknown-linux-gnu";
 inline const char *CPU = "generic";
+
+extern std::unordered_map<unsigned, llvm::Instruction *> lineMap;
 
 void init();
 
 llvm::Function *adjustSrcReturn(llvm::Function *srcFn);
+void addDebugInfo(llvm::Function *srcFn);
 void checkSupport(llvm::Function *srcFn);
 
 std::unique_ptr<llvm::MemoryBuffer> generateAsm(llvm::Module &OrigModule);

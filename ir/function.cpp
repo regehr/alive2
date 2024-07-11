@@ -7,6 +7,7 @@
 #include "util/hash.h"
 #include "util/sort.h"
 #include "util/unionfind.h"
+#include <algorithm>
 #include <fstream>
 #include <set>
 #include <unordered_set>
@@ -141,6 +142,7 @@ unsigned Function::FnDecl::hash() const {
     hash_ty(*ty);
   }
   hash_ty(*output);
+  hash.add(is_varargs * 32);
   return hash();
 }
 
@@ -244,9 +246,9 @@ vector<GlobalVariable *> Function::getGlobalVars() const {
 
 vector<string_view> Function::getGlobalVarNames() const {
   vector<string_view> gvnames;
-  auto gvs = getGlobalVars();
-  transform(gvs.begin(), gvs.end(), back_inserter(gvnames),
-            [](auto &itm) { return string_view(itm->getName()).substr(1); });
+  ranges::transform(
+    getGlobalVars(), back_inserter(gvnames),
+    [](auto &itm) { return string_view(itm->getName()).substr(1); });
   return gvnames;
 }
 
@@ -847,6 +849,9 @@ void Function::print(ostream &os, bool print_header) const {
           os << ", ";
         os << input.second << *input.first;
         first = false;
+      }
+      if (decl.is_varargs) {
+        os << (first ? "..." : ", ...");
       }
       os << ')' << decl.attrs << '\n';
     }

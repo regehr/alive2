@@ -42,10 +42,16 @@ ostream& operator<<(ostream &os, const ParamAttrs &attr) {
     os << "zeroext ";
   if (attr.has(ParamAttrs::SignExt))
     os << "signext ";
+  if (attr.has(ParamAttrs::InReg))
+    os << "inreg ";
   if (attr.has(ParamAttrs::AllocPtr))
     os << "allocptr ";
   if (attr.has(ParamAttrs::AllocAlign))
     os << "allocalign ";
+  if (attr.has(ParamAttrs::DeadOnUnwind))
+    os << "dead_on_unwind ";
+  if (attr.has(ParamAttrs::Writable))
+    os << "writable ";
   return os;
 }
 
@@ -291,12 +297,22 @@ bool ParamAttrs::refinedBy(const ParamAttrs &other) const {
   unsigned attrs =
     ByVal |
     Dereferenceable |
+    DereferenceableOrNull |
     NoUndef |
-    DereferenceableOrNull
+    Writable
   ;
 
   auto other_params = (other.bits & attrs);
   if ((bits & other_params) != other_params)
+    return false;
+
+  // check attributes that cannot change
+  attrs =
+    SignExt |
+    ZeroExt |
+    InReg
+  ;
+  if ((bits & attrs) != (other.bits & attrs))
     return false;
 
   return derefBytes == other.derefBytes &&
@@ -306,8 +322,11 @@ bool ParamAttrs::refinedBy(const ParamAttrs &other) const {
 }
 
 bool ParamAttrs::poisonImpliesUB() const {
-  return has(Dereferenceable) || has(NoUndef) || has(ByVal) ||
-         has(DereferenceableOrNull);
+  return has(ByVal) ||
+         has(Dereferenceable) ||
+         has(DereferenceableOrNull) ||
+         has(NoUndef) ||
+         has(Writable);
 }
 
 uint64_t ParamAttrs::getDerefBytes() const {
@@ -331,7 +350,8 @@ void ParamAttrs::merge(const ParamAttrs &other) {
 static expr
 encodePtrAttrs(State &s, const expr &ptrvalue, uint64_t derefBytes,
                uint64_t derefOrNullBytes, uint64_t align, bool nonnull,
-               bool nocapture, const expr &allocsize, Value *allocalign) {
+               bool nocapture, bool writable, const expr &allocsize,
+               Value *allocalign) {
   auto &m = s.getMemory();
   Pointer p(m, ptrvalue);
   expr non_poison(true);
@@ -345,15 +365,16 @@ encodePtrAttrs(State &s, const expr &ptrvalue, uint64_t derefBytes,
     // dereferenceable, byval (ParamAttrs), dereferenceable_or_null
     if (derefBytes)
       s.addUB(merge(Pointer(m, ptrvalue)
-                      .isDereferenceable(derefBytes, align, false, true)));
+                      .isDereferenceable(derefBytes, align, writable, true)));
     if (derefOrNullBytes)
       s.addUB(p.isNull() ||
               merge(Pointer(m, ptrvalue)
-                      .isDereferenceable(derefOrNullBytes, align, false,true)));
+                      .isDereferenceable(derefOrNullBytes, align, writable,
+                                         true)));
     if (allocsize.isValid())
       s.addUB(p.isNull() ||
               merge(Pointer(m, ptrvalue)
-                      .isDereferenceable(allocsize, align, false, true)));
+                      .isDereferenceable(allocsize, align, writable, true)));
   } else if (align != 1)
     non_poison &= Pointer(m, ptrvalue).isAligned(align);
 
@@ -380,7 +401,7 @@ StateValue ParamAttrs::encode(State &s, StateValue &&val, const Type &ty) const{
   if (ty.isPtrType())
     val.non_poison &=
       encodePtrAttrs(s, val.value, getDerefBytes(), derefOrNullBytes, align,
-                     has(NonNull), has(NoCapture), {}, nullptr);
+                     has(NonNull), has(NoCapture), has(Writable), {}, nullptr);
 
   if (poisonImpliesUB()) {
     s.addUB(std::move(val.non_poison));
@@ -483,7 +504,7 @@ StateValue FnAttrs::encode(State &s, StateValue &&val, const Type &ty,
   if (ty.isPtrType())
     val.non_poison &=
       encodePtrAttrs(s, val.value, derefBytes, derefOrNullBytes, align,
-                     has(NonNull), false, allocsize, allocalign);
+                     has(NonNull), false, false, allocsize, allocalign);
 
   if (poisonImpliesUB()) {
     s.addUB(std::move(val.non_poison));
@@ -495,6 +516,9 @@ StateValue FnAttrs::encode(State &s, StateValue &&val, const Type &ty,
 
 
 expr isfpclass(const expr &v, const Type &ty, uint16_t mask) {
+  if (mask == 1023)
+    return true;
+
   auto *fpty = ty.getAsFloatType();
   auto a = fpty->getFloat(v);
   OrExpr result;
@@ -502,22 +526,29 @@ expr isfpclass(const expr &v, const Type &ty, uint16_t mask) {
     result.add(fpty->isNaN(v, true));
   if (mask & (1 << 1))
     result.add(fpty->isNaN(v, false));
-  if (mask & (1 << 2))
-    result.add(a.isFPNegative() && a.isInf());
-  if (mask & (1 << 3))
-    result.add(a.isFPNegative() && a.isFPNormal());
-  if (mask & (1 << 4))
-    result.add(a.isFPNegative() && a.isFPSubNormal());
-  if (mask & (1 << 5))
-    result.add(a.isFPNegZero());
-  if (mask & (1 << 6))
-    result.add(a.isFPZero() && !a.isFPNegative());
-  if (mask & (1 << 7))
-    result.add(!a.isFPNegative() && a.isFPSubNormal());
-  if (mask & (1 << 8))
-    result.add(!a.isFPNegative() && a.isFPNormal());
-  if (mask & (1 << 9))
-    result.add(!a.isFPNegative() && a.isInf());
+
+  auto check = [&](unsigned idx_neg, unsigned idx_pos, auto test) {
+    unsigned mask_neg  = 1u << idx_neg;
+    unsigned mask_pos  = 1u << idx_pos;
+    unsigned mask_both = mask_neg | mask_pos;
+
+    if ((mask & mask_both) == mask_both) {
+      result.add(test());
+    } else if (mask & mask_neg) {
+      result.add(a.isFPNegative() && test());
+    } else if (mask & mask_pos) {
+      result.add(!a.isFPNegative() && test());
+    }
+  };
+#define CHECK(neg, pos, fn) check(neg, pos, [&a]() { return a.fn(); })
+
+  CHECK(5, 6, isFPZero);
+  CHECK(4, 7, isFPSubNormal);
+  CHECK(3, 8, isFPNormal);
+  CHECK(2, 9, isInf);
+
+#undef CHECK
+
   return std::move(result)();
 }
 

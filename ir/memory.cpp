@@ -9,6 +9,7 @@
 #include "smt/solver.h"
 #include "util/compiler.h"
 #include "util/config.h"
+#include <algorithm>
 #include <array>
 #include <numeric>
 #include <string>
@@ -18,22 +19,22 @@ using namespace smt;
 using namespace std;
 using namespace util;
 
-  // Non-local block ids (assuming that no block is optimized out):
-  // 1. null block: has_null_block
-  // 2. global vars in source:
-  //      + num_consts_src    (constant globals)
-  //      + num_globals_src   (all globals incl constant)
-  // 3. pointer argument inputs:
-  //      has_null_block + num_globals_src + num_ptrinputs
-  // 4. nonlocal blocks returned by loads/calls:
-  //      has_null_block + num_globals_src + num_ptrinputs + 1 -> ...
-  // 5. a block reserved for encoding the memory touched by calls:
-  //      num_nonlocals_src - num_inaccessiblememonly_fns - has_write_fncall
-  // 6. 1 block per inaccessiblememonly
-  //      + num_inaccessiblememonly_fns ~ num_nonlocals_src - 1
-  // 7. constant global vars in target only:
-  //      num_nonlocals_src ~ num_nonlocals - 1
-  //            (constant globals in target only)
+// Non-local block ids (assuming that no block is optimized out):
+// 1. null block: has_null_block
+// 2. global vars in source:
+//      + num_consts_src    (constant globals)
+//      + num_globals_src   (all globals incl constant)
+// 3. pointer argument inputs:
+//      has_null_block + num_globals_src + num_ptrinputs
+// 4. nonlocal blocks returned by loads/calls:
+//      has_null_block + num_globals_src + num_ptrinputs + 1 -> ...
+// 5. a block reserved for encoding the memory touched by calls:
+//      num_nonlocals_src - num_inaccessiblememonly_fns - has_write_fncall
+// 6. 1 block per inaccessiblememonly
+//      + num_inaccessiblememonly_fns ~ num_nonlocals_src - 1
+// 7. constant global vars in target only:
+//      num_nonlocals_src ~ num_nonlocals - 1
+//            (constant globals in target only)
 
 //--- Functions for non-local block analysis based on bid ---//
 
@@ -102,11 +103,41 @@ static bool always_nowrite(unsigned bid, bool src_only = false,
   return always_noread(bid, is_fncall_accessible) || is_constglb(bid, src_only);
 }
 
+static expr mk_block_if(const expr &cond, expr then, expr els) {
+  if (cond.isTrue())
+    return then;
+  if (cond.isFalse())
+    return els;
+
+  bool is_bv1 = then.isBV();
+  bool is_bv2 = els.isBV();
+  if (is_bv1 != is_bv2) {
+    expr offset = expr::mkUInt(0, Pointer::bitsShortOffset());
+    if (is_bv1)
+      then = expr::mkConstArray(offset, then);
+    else
+      els  = expr::mkConstArray(offset, els);
+  }
+  return expr::mkIf(cond, then, els);
+}
+
 
 static unsigned next_local_bid;
 static unsigned next_const_bid;
 static unsigned next_global_bid;
 static unsigned next_ptr_input;
+
+
+static unsigned size_byte_number() {
+  if (!num_sub_byte_bits)
+    return 0;
+  return
+    max(ilog2_ceil(divide_up(1 << num_sub_byte_bits, bits_byte), false), 1u);
+}
+
+static unsigned sub_byte_bits() {
+  return num_sub_byte_bits + size_byte_number();
+}
 
 static bool byte_has_ptr_bit() {
   return true;
@@ -124,7 +155,8 @@ static unsigned padding_ptr_byte() {
 
 static unsigned padding_nonptr_byte() {
   return
-    Byte::bitsByte() - byte_has_ptr_bit() - bits_byte - bits_poison_per_byte;
+    Byte::bitsByte() - byte_has_ptr_bit() - bits_byte - bits_poison_per_byte
+                     - num_sub_byte_bits - size_byte_number();
 }
 
 static expr concat_if(const expr &ifvalid, expr &&e) {
@@ -216,7 +248,9 @@ Byte::Byte(const Memory &m, const StateValue &ptr, unsigned i) : m(m) {
   assert(!ptr.isValid() || p.bits() == bitsByte());
 }
 
-Byte::Byte(const Memory &m, const StateValue &v) : m(m) {
+Byte::Byte(const Memory &m, const StateValue &v, unsigned bits_read,
+           unsigned byte_number)
+  : m(m) {
   assert(!v.isValid() || v.value.bits() == bits_byte);
   assert(!v.isValid() || v.non_poison.isBool() ||
          v.non_poison.bits() == bits_poison_per_byte);
@@ -233,12 +267,19 @@ Byte::Byte(const Memory &m, const StateValue &v) : m(m) {
                            expr::mkInt(-1, bits_poison_per_byte),
                            expr::mkUInt(0, bits_poison_per_byte))
               : v.non_poison;
-  p = concat_if(p, np.concat(v.value).concat_zeros(padding_nonptr_byte()));
+  p = concat_if(p, np.concat(v.value));
+  if (num_sub_byte_bits) {
+    if ((bits_read % 8) == 0)
+      bits_read = 0;
+    p = p.concat(expr::mkUInt(bits_read, num_sub_byte_bits)
+                   .concat(expr::mkUInt(byte_number, size_byte_number())));
+  }
+  p = p.concat_zeros(padding_nonptr_byte());
   assert(!p.isValid() || p.bits() == bitsByte());
 }
 
 Byte Byte::mkPoisonByte(const Memory &m) {
-  return { m, StateValue(expr::mkUInt(0, bits_byte), false) };
+  return { m, StateValue(expr::mkUInt(0, bits_byte), false), 0, true };
 }
 
 expr Byte::isPtr() const {
@@ -247,7 +288,7 @@ expr Byte::isPtr() const {
 
 expr Byte::ptrNonpoison() const {
   auto bit = p.bits() - 1 - byte_has_ptr_bit();
-  return p.extract(bit, bit) == 1;
+  return isAsmMode() ? expr(true) : p.extract(bit, bit) == 1;
 }
 
 Pointer Byte::ptr() const {
@@ -275,7 +316,10 @@ expr Byte::ptrByteoffset() const {
 expr Byte::nonptrNonpoison() const {
   if (!does_int_mem_access)
     return expr::mkUInt(0, 1);
-  unsigned start = padding_nonptr_byte() + bits_byte;
+  if (isAsmMode())
+    return expr::mkInt(-1, bits_poison_per_byte);
+
+  unsigned start = padding_nonptr_byte() + bits_byte + sub_byte_bits();
   return p.extract(start + bits_poison_per_byte - 1, start);
 }
 
@@ -287,13 +331,25 @@ expr Byte::boolNonptrNonpoison() const {
 expr Byte::nonptrValue() const {
   if (!does_int_mem_access)
     return expr::mkUInt(0, bits_byte);
-  unsigned start = padding_nonptr_byte();
+  unsigned start = padding_nonptr_byte() + sub_byte_bits();
   return p.extract(start + bits_byte - 1, start);
+}
+
+expr Byte::numStoredBits() const {
+  unsigned start = padding_nonptr_byte() + size_byte_number();
+  return p.extract(start + num_sub_byte_bits - 1, start);
+}
+
+expr Byte::byteNumber() const {
+  unsigned start = padding_nonptr_byte();
+  return p.extract(start + size_byte_number() - 1, start);
 }
 
 expr Byte::isPoison() const {
   if (!does_int_mem_access)
     return  does_ptr_mem_access ? !ptrNonpoison() : true;
+  if (isAsmMode())
+    return false;
 
   expr np = nonptrNonpoison();
   if (byte_has_ptr_bit() && bits_poison_per_byte == 1) {
@@ -304,6 +360,8 @@ expr Byte::isPoison() const {
 }
 
 expr Byte::nonPoison() const {
+  if (isAsmMode())
+    return expr::mkInt(-1, bits_poison_per_byte);
   if (!does_int_mem_access)
     return ptrNonpoison();
 
@@ -320,6 +378,10 @@ expr Byte::nonPoison() const {
 
 expr Byte::isZero() const {
   return expr::mkIf(isPtr(), ptr().isNull(), nonptrValue() == 0);
+}
+
+bool Byte::isAsmMode() const {
+  return m.isAsmMode();
 }
 
 expr Byte::castPtrToInt() const {
@@ -402,7 +464,8 @@ expr Byte::refined(const Byte &other) const {
 unsigned Byte::bitsByte() {
   unsigned ptr_bits = does_ptr_mem_access *
                         (1 + Pointer::totalBits() + bits_ptr_byte_offset());
-  unsigned int_bits = does_int_mem_access * (bits_byte + bits_poison_per_byte);
+  unsigned int_bits = does_int_mem_access * (bits_byte + bits_poison_per_byte)
+                        + sub_byte_bits();
   // allow at least 1 bit if there's no memory access
   return max(1u, byte_has_ptr_bit() + max(ptr_bits, int_bits));
 }
@@ -418,10 +481,11 @@ ostream& operator<<(ostream &os, const Byte &byte) {
   } else {
     auto np = byte.nonptrNonpoison();
     auto val = byte.nonptrValue();
+    if (np.isZero())
+      return os << "poison";
+
     if (np.isAllOnes()) {
       val.printHexadecimal(os);
-    } else if (np.isZero()) {
-      os << "poison";
     } else {
       os << "#b";
       for (unsigned i = 0; i < bits_poison_per_byte; ++i) {
@@ -430,6 +494,14 @@ ostream& operator<<(ostream &os, const Byte &byte) {
         auto v = val.extract(idx, idx).isAllOnes();
         os << (is_poison ? 'p' : (v ? '1' : '0'));
       }
+    }
+
+    uint64_t num_bits;
+    if (num_sub_byte_bits &&
+        byte.numStoredBits().isUInt(num_bits) && num_bits != 0) {
+      os << " / written with " << num_bits << " bits";
+      if (byte.byteNumber().isUInt(num_bits))
+        os << " / byte #" << num_bits;
     }
   }
   return os;
@@ -483,30 +555,32 @@ static void pad(StateValue &v, unsigned amount, State &s) {
 }
 
 static vector<Byte> valueToBytes(const StateValue &val, const Type &fromType,
-                                 const Memory &mem, State *s) {
+                                 const Memory &mem, State &s) {
   vector<Byte> bytes;
   if (fromType.isPtrType()) {
     Pointer p(mem, val.value);
     unsigned bytesize = bits_program_pointer / bits_byte;
 
     // constant global can't store pointers that alias with local blocks
-    if (s->isInitializationPhase() && !p.isLocal().isFalse()) {
+    if (s.isInitializationPhase() && !p.isLocal().isFalse()) {
       expr bid  = expr::mkUInt(0, 1).concat(p.getShortBid());
-      expr off  = p.getOffset();
-      expr attr = p.getAttrs();
-      p.~Pointer();
-      new (&p) Pointer(mem, bid, off, attr);
+      p = Pointer(mem, bid, p.getOffset(), p.getAttrs());
     }
 
     for (unsigned i = 0; i < bytesize; ++i)
       bytes.emplace_back(mem, StateValue(expr(p()), expr(val.non_poison)), i);
   } else {
     assert(!fromType.isAggregateType() || isNonPtrVector(fromType));
-    StateValue bvval = fromType.toInt(*s, val);
+    StateValue bvval = fromType.toInt(s, val);
     unsigned bitsize = bvval.bits();
     unsigned bytesize = divide_up(bitsize, bits_byte);
 
-    pad(bvval, bytesize * bits_byte - bitsize, *s);
+    // There are no sub-byte accesses in assembly
+    if (mem.isAsmMode() && (bitsize % 8) != 0) {
+      s.addUB(expr(false));
+    }
+
+    pad(bvval, bytesize * bits_byte - bitsize, s);
     unsigned np_mul = bits_poison_per_byte;
 
     for (unsigned i = 0; i < bytesize; ++i) {
@@ -514,7 +588,7 @@ static vector<Byte> valueToBytes(const StateValue &val, const Type &fromType,
         bvval.value.extract((i + 1) * bits_byte - 1, i * bits_byte),
         bvval.non_poison.extract((i + 1) * np_mul - 1, i * np_mul)
       };
-      bytes.emplace_back(mem, data);
+      bytes.emplace_back(mem, data, bitsize, i);
     }
   }
   return bytes;
@@ -531,6 +605,8 @@ static StateValue bytesToValue(const Memory &m, const vector<Byte> &bytes,
     }
     return std::move(e);
   };
+
+  bool is_asm = m.isAsmMode();
 
   if (toType.isPtrType()) {
     assert(bytes.size() == bits_program_pointer / bits_byte);
@@ -561,6 +637,8 @@ static StateValue bytesToValue(const Memory &m, const vector<Byte> &bytes,
                           b.nonptrValue() == 0));
       non_poison &= !b.isPoison();
     }
+    if (is_asm)
+      non_poison = true;
 
     // if bits of loaded ptr are a subset of the non-ptr value,
     // we know they must be zero otherwise the value is poison.
@@ -580,17 +658,25 @@ static StateValue bytesToValue(const Memory &m, const vector<Byte> &bytes,
     assert(!toType.isAggregateType() || isNonPtrVector(toType));
     auto bitsize = toType.bits();
     assert(divide_up(bitsize, bits_byte) == bytes.size());
-    bool is_asm = m.isAsmMode();
 
     StateValue val;
     bool first = true;
     IntType ibyteTy("", bits_byte);
+    unsigned byte_number = 0;
 
     for (auto &b: bytes) {
-      expr isptr = ub_pre(!b.isPtr());
+      expr expr_np = ub_pre(!b.isPtr());
+
+      if (num_sub_byte_bits) {
+        unsigned bits = (bitsize % 8) == 0 ? 0 : bitsize;
+        expr_np &= b.numStoredBits() == bits;
+        expr_np &= b.byteNumber() == byte_number++;
+      }
+      if (is_asm)
+        expr_np = true;
+
       StateValue v(is_asm ? b.forceCastToInt() : b.nonptrValue(),
-                   is_asm ? b.nonPoison()
-                          : ibyteTy.combine_poison(isptr, b.nonptrNonpoison()));
+                   ibyteTy.combine_poison(expr_np, b.nonptrNonpoison()));
       val = first ? std::move(v) : v.concat(val);
       first = false;
     }
@@ -960,6 +1046,22 @@ void Memory::access(const Pointer &ptr, unsigned bytes, uint64_t align,
   }
 }
 
+static expr raw_load(const expr &block, const expr &offset,
+                     uint64_t max_idx = UINT64_MAX) {
+  return block.isBV() ? block : block.load(offset, max_idx);
+}
+
+static expr mk_store(expr mem, const expr &offset, const expr &val) {
+  if (mem.isBV())
+    mem = expr::mkConstArray(offset, mem);
+  return mem.store(offset, val);
+}
+
+Byte Memory::raw_load(bool local, unsigned bid, const expr &offset) const {
+  auto &block = (local ? local_block_val : non_local_block_val)[bid].val;
+  return {*this, ::raw_load(block, offset) };
+}
+
 vector<Byte> Memory::load(const Pointer &ptr, unsigned bytes, set<expr> &undef,
                           uint64_t align, bool left2right, DataType type) {
   if (bytes == 0)
@@ -989,7 +1091,7 @@ vector<Byte> Memory::load(const Pointer &ptr, unsigned bytes, set<expr> &undef,
         assert(idx < blk_size);
         uint64_t max_idx = blk_size - bytes + idx;
         expr off = blk_offset + expr::mkUInt(idx, offset);
-        loaded[i].add(blk.val.load(off, max_idx), cond);
+        loaded[i].add(::raw_load(blk.val, off, max_idx), cond);
       }
       undef.insert(blk.undef.begin(), blk.undef.end());
     }
@@ -1042,7 +1144,6 @@ void Memory::store(const Pointer &ptr,
 
   unsigned bytes = data.size() * (bits_byte/8);
   expr offset = ptr.getShortOffset();
-  unsigned off_bits = Pointer::bitsShortOffset();
 
   auto stored_ty = data_type(data, false);
   auto stored_ty_full = data_type(data, true);
@@ -1051,13 +1152,23 @@ void Memory::store(const Pointer &ptr,
     auto mem = blk.val;
 
     uint64_t blk_size;
-    bool full_write = false;
+    bool full_write
+      = Pointer(*this, bid, local).blockSize().isUInt(blk_size) &&
+        blk_size == bytes;
+
     // optimization: if fully rewriting the block, don't bother with the old
     // contents. Pick a value as the default one.
-    if (Pointer(*this, bid, local).blockSize().isUInt(blk_size) &&
-        blk_size == bytes) {
-      mem = expr::mkConstArray(offset, data[0].second);
-      full_write = true;
+    // If we are initializing const globals, the size may be larger than the
+    // init because the size is rounded up to the alignment.
+    // The remaining bytes are poison.
+    if (full_write || state->isInitializationPhase()) {
+      // optimization: if the access size == byte size, then we don't store
+      // data as arrays, but simply as a BV
+      if (data.size() == 1) {
+        mem = data[0].second;
+      } else {
+        mem = full_write ? data[0].second : Byte::mkPoisonByte(*this)();
+      }
       if (cond.isTrue()) {
         blk.undef.clear();
         blk.type = stored_ty_full;
@@ -1072,10 +1183,10 @@ void Memory::store(const Pointer &ptr,
       if (full_write && val.eq(data[0].second))
         continue;
       expr off
-       = offset + expr::mkUInt(idx >> Pointer::zeroBitsShortOffset(), off_bits);
-      mem = mem.store(off, val);
+        = offset + expr::mkUInt(idx >> Pointer::zeroBitsShortOffset(), offset);
+      mem = mk_store(std::move(mem), off, val);
     }
-    blk.val = expr::mkIf(cond, mem, blk.val);
+    blk.val = mk_block_if(cond, std::move(mem), std::move(blk.val));
     blk.undef.insert(undef.begin(), undef.end());
   };
 
@@ -1087,9 +1198,6 @@ void Memory::storeLambda(const Pointer &ptr, const expr &offset,
                          const vector<pair<unsigned, expr>> &data,
                          const set<expr> &undef, uint64_t align) {
   assert(!state->isInitializationPhase());
-  // offset in [ptr, ptr+sz)
-  auto offset_cond = offset.uge(ptr.getShortOffset()) &&
-                     offset.ult((ptr + bytes).getShortOffset());
 
   bool val_no_offset = data.size() == 1 && !data[0].second.vars().count(offset);
   auto stored_ty = data_type(data, false);
@@ -1101,20 +1209,31 @@ void Memory::storeLambda(const Pointer &ptr, const expr &offset,
   }
 
   auto fn = [&](MemBlock &blk, unsigned bid, bool local, expr &&cond) {
+    auto orig_val = ::raw_load(blk.val, offset);
+
     // optimization: full rewrite
     if (bytes.eq(Pointer(*this, bid, local).blockSize())) {
-      blk.val = val_no_offset && data.size() == 1
-        ? expr::mkIf(cond, expr::mkConstArray(offset, val), blk.val)
-        : expr::mkLambda(offset, expr::mkIf(cond, val, blk.val.load(offset)));
+      blk.val = val_no_offset
+        ? mk_block_if(cond, val, std::move(blk.val))
+        : expr::mkLambda(offset, mk_block_if(cond, val, std::move(orig_val)));
 
       if (cond.isTrue()) {
         blk.undef.clear();
         blk.type = stored_ty;
       }
     } else {
-      blk.val = expr::mkLambda(offset, expr::mkIf(cond && offset_cond, val,
-                                                  blk.val.load(offset)));
+      // offset in [ptr, ptr+sz)
+      auto offset_cond = offset.uge(ptr.getShortOffset()) &&
+                         offset.ult((ptr + bytes).getShortOffset());
+
+      blk.val
+        = expr::mkLambda(offset,
+                         mk_block_if(cond && offset_cond, val,
+                                     std::move(orig_val)));
     }
+    // const array -> BV
+    blk.val.isConstArray(blk.val);
+
     blk.type |= stored_ty;
     blk.undef.insert(undef.begin(), undef.end());
   };
@@ -1129,11 +1248,13 @@ static bool memory_unused() {
   return num_locals_src == 0 && num_locals_tgt == 0 && num_nonlocals == 0;
 }
 
-static expr mk_block_val_array(unsigned bid) {
+expr Memory::mk_block_val_array(unsigned bid) const {
   auto str = "init_mem_" + to_string(bid);
-  return expr::mkArray(str.c_str(),
-                       expr::mkUInt(0, Pointer::bitsShortOffset()),
-                       expr::mkUInt(0, Byte::bitsByte()));
+  return Pointer(*this, bid, false).isBlkSingleByte()
+    ? expr::mkVar(str.c_str(), Byte::bitsByte())
+    : expr::mkArray(str.c_str(),
+                    expr::mkUInt(0, Pointer::bitsShortOffset()),
+                    expr::mkUInt(0, Byte::bitsByte()));
 }
 
 static expr mk_liveness_array() {
@@ -1145,26 +1266,53 @@ static expr mk_liveness_array() {
   return expr::mkInt(-1, num_nonlocals);
 }
 
-void Memory::mkNonPoisonAxioms(bool local) {
+void Memory::mkNonPoisonAxioms(bool local) const {
   expr offset
     = expr::mkFreshVar("#off", expr::mkUInt(0, Pointer::bitsShortOffset()));
 
+  unsigned bid = 0;
   for (auto &block : local ? local_block_val : non_local_block_val) {
     if (isInitialMemBlock(block.val, config::disallow_ub_exploitation))
       state->addAxiom(
         expr::mkForAll({ offset },
-                       !Byte(*this, block.val.load(offset)).isPoison()));
+                       !raw_load(local, bid, offset).isPoison()));
+    ++bid;
   }
 }
 
-void Memory::mkNonlocalValAxioms(bool skip_consts) {
+expr Memory::mkSubByteZExtStoreCond(const Byte &val, const Byte &val2) const {
+  bool mk_axiom = &val == &val2;
+
+  // optimization: the initial block is assumed to follow the ABI already.
+  if (!mk_axiom && isInitialMemBlock(val.p, true))
+    return true;
+
+  bool always_1_byte = bits_byte >= (1u << num_sub_byte_bits);
+  auto stored_bits   = val.numStoredBits();
+  auto num_bytes
+    = always_1_byte ? expr::mkUInt(0, size_byte_number())
+                    : stored_bits.udiv(expr::mkUInt(bits_byte, stored_bits))
+                        .zextOrTrunc(size_byte_number());
+  auto leftover_bits
+    = (always_1_byte ? stored_bits
+                      : stored_bits.urem(expr::mkUInt(bits_byte, stored_bits))
+      ).zextOrTrunc(bits_byte);
+
+  return val.isPtr() ||
+         (mk_axiom ? expr(false) : !val.boolNonptrNonpoison()) ||
+         stored_bits == 0 ||
+         val.byteNumber() != num_bytes ||
+         val2.nonptrValue().lshr(leftover_bits) == 0;
+}
+
+void Memory::mkNonlocalValAxioms(bool skip_consts) const {
   // Users may request the initial memory to be non-poisonous
-  if (((config::disable_poison_input && state->isSource()) || isAsmMode()) &&
+  if ((config::disable_poison_input && state->isSource()) &&
       (does_int_mem_access || does_ptr_mem_access)) {
     mkNonPoisonAxioms(false);
   }
 
-  if (!does_ptr_mem_access)
+  if (!does_ptr_mem_access && !(num_sub_byte_bits && isAsmMode()))
     return;
 
   expr offset
@@ -1174,7 +1322,18 @@ void Memory::mkNonlocalValAxioms(bool skip_consts) {
     if (always_noread(i, true))
       continue;
 
-    Byte byte(*this, non_local_block_val[i].val.load(offset));
+    Byte byte = raw_load(false, i, offset);
+
+    // in ASM mode, non-byte-aligned values are expected to be zero-extended
+    // per the ABI.
+    if (num_sub_byte_bits && isAsmMode()) {
+      state->addAxiom(
+        expr::mkForAll({ offset }, mkSubByteZExtStoreCond(byte, byte)));
+    }
+
+    if (!does_ptr_mem_access)
+      continue;
+
     Pointer loadedptr = byte.ptr();
     expr bid = loadedptr.getShortBid();
 
@@ -1226,25 +1385,13 @@ Memory::Memory(State &state) : state(&state), escaped_local_blks(*this) {
 
   non_local_block_liveness = mk_liveness_array();
 
-  // Non-local blocks cannot initially contain pointers to local blocks
-  // and no-capture pointers.
-  mkNonlocalValAxioms(false);
-
   // initialize all local blocks as non-pointer, poison value
   // This is okay because loading a pointer as non-pointer is also poison.
-  // Unless we are in asm mode, in which memory is nondet data.
   if (numLocals() > 0) {
-    if (isAsmMode()) {
-      for (unsigned bid = 0, e = numLocals(); bid != e; ++bid) {
-        local_block_val.emplace_back(mk_block_val_array(bid));
-      }
-      mkNonPoisonAxioms(true);
-    } else {
-      auto poison_array
-        = expr::mkConstArray(expr::mkUInt(0, Pointer::bitsShortOffset()),
-                             Byte::mkPoisonByte(*this)());
-      local_block_val.resize(numLocals(), {std::move(poison_array), DATA_NONE});
-    }
+    auto poison_array
+      = expr::mkConstArray(expr::mkUInt(0, Pointer::bitsShortOffset()),
+                           Byte::mkPoisonByte(*this)());
+    local_block_val.resize(numLocals(), {std::move(poison_array), DATA_NONE});
 
     // all local blocks are dead in the beginning
     local_block_liveness = expr::mkUInt(0, numLocals());
@@ -1269,13 +1416,23 @@ void Memory::mkAxioms(const Memory &tgt) const {
   if (memory_unused())
     return;
 
+  // Non-local blocks cannot initially contain pointers to local blocks
+  // and no-capture pointers.
+  for (auto m_ptr : { this, &tgt }) {
+    auto &m = const_cast<Memory&>(*m_ptr);
+    auto old_vals = m.non_local_block_val;
+    for (unsigned i = 0, e = old_vals.size(); i != e; ++i) {
+      m.non_local_block_val.at(i).val = m.mk_block_val_array(i);
+    }
+    m.mkNonlocalValAxioms(false);
+    m.non_local_block_val = std::move(old_vals);
+  }
+
   auto skip_bid = [&](unsigned bid) {
     if (bid == 0 && has_null_block)
       return true;
-    if (is_globalvar(bid, true))
+    if (is_globalvar(bid, true) || is_fncall_mem(bid))
       return false;
-    if (is_fncall_mem(bid))
-      return true;
     return bid >= tgt.next_nonlocal_bid;
   };
 
@@ -1283,8 +1440,8 @@ void Memory::mkAxioms(const Memory &tgt) const {
   expr align = expr::mkUInt(ilog2(heap_block_alignment), 6);
 
   if (null_is_dereferenceable && has_null_block) {
-    state->addAxiom(Pointer::mkNullPointer(*this).blockAlignment() == -1u);
-    state->addAxiom(Pointer::mkNullPointer(tgt).blockAlignment() == -1u);
+    state->addAxiom(Pointer::mkNullPointer(*this).blockAlignment()==UINT64_MAX);
+    state->addAxiom(Pointer::mkNullPointer(tgt).blockAlignment() == UINT64_MAX);
   }
 
   for (unsigned bid = has_null_block; bid < num_nonlocals; ++bid) {
@@ -1543,10 +1700,18 @@ Memory::CallState Memory::CallState::mkIf(const expr &cond,
                                           const CallState &then,
                                           const CallState &els) {
   CallState ret;
-  for (unsigned i = 0, e = then.non_local_block_val.size(); i != e; ++i) {
-    ret.non_local_block_val.emplace_back(
-      expr::mkIf(cond, then.non_local_block_val[i],
-                 els.non_local_block_val[i]));
+  auto then_sz = then.non_local_block_val.size();
+  auto else_sz = els.non_local_block_val.size();
+  for (unsigned i = 0, e = max(then_sz, else_sz); i != e; ++i) {
+    if (i >= then_sz) {
+      ret.non_local_block_val.emplace_back(els.non_local_block_val[i]);
+    } else if (i >= else_sz) {
+      ret.non_local_block_val.emplace_back(then.non_local_block_val[i]);
+    } else {
+      ret.non_local_block_val.emplace_back(
+        mk_block_if(cond, then.non_local_block_val[i],
+                    els.non_local_block_val[i]));
+    }
   }
   ret.non_local_liveness = expr::mkIf(cond, then.non_local_liveness,
                                       els.non_local_liveness);
@@ -1567,38 +1732,43 @@ expr Memory::CallState::operator==(const CallState &rhs) const {
 }
 
 Memory::CallState
-Memory::mkCallState(const string &fnname, bool nofree, MemoryAccess access) {
+Memory::mkCallState(const string &fnname, bool nofree,
+                    const SMTMemoryAccess &access) {
   assert(has_fncall);
   CallState st;
   st.empty = false;
 
   // TODO: handle havoc of local blocks
 
-  auto blk_type = mk_block_val_array(1);
+  // inaccessible memory block
+  unsigned innaccess_bid = num_nonlocals_src - 1;
+  st.non_local_block_val.emplace_back(
+    expr::mkFreshVar("blk_val", non_local_block_val[innaccess_bid].val));
 
-  if (access.canOnlyWrite(MemoryAccess::Inaccessible)) {
-    st.non_local_block_val.emplace_back(expr::mkFreshVar("blk_val", blk_type));
-  } else {
+  expr only_write_inaccess = access.canOnlyWrite(MemoryAccess::Inaccessible);
+
+  if (!only_write_inaccess.isTrue()) {
     unsigned limit = num_nonlocals_src - num_inaccessiblememonly_fns;
     for (unsigned i = 0; i < limit; ++i) {
       if (always_nowrite(i, true, true))
         continue;
       st.non_local_block_val.emplace_back(
-        expr::mkFreshVar("blk_val", blk_type));
+        expr::mkFreshVar("blk_val", non_local_block_val[i].val));
     }
   }
 
   st.non_local_liveness = mk_liveness_array();
-  if (num_nonlocals_src && !nofree &&
-      !access.canOnlyWrite(MemoryAccess::Inaccessible))
+  if (num_nonlocals_src && !nofree)
     st.non_local_liveness
-      = expr::mkFreshVar("blk_liveness", st.non_local_liveness);
+      = expr::mkIf(only_write_inaccess,
+                   st.non_local_liveness,
+                   expr::mkFreshVar("blk_liveness", st.non_local_liveness));
 
   return st;
 }
 
 void Memory::setState(const Memory::CallState &st,
-                      MemoryAccess access,
+                      const SMTMemoryAccess &access,
                       const vector<PtrInput> &ptr_inputs,
                       unsigned inaccessible_bid) {
   assert(has_fncall);
@@ -1607,19 +1777,23 @@ void Memory::setState(const Memory::CallState &st,
 
   // 1) Havoc memory
 
-  if (access.canOnlyWrite(MemoryAccess::Inaccessible)) {
+  expr only_write_inaccess = access.canOnlyWrite(MemoryAccess::Inaccessible);
+  if (!only_write_inaccess.isFalse()) {
     assert(inaccessible_bid != -1u);
-    assert(st.non_local_block_val.size() == 1);
+    assert(st.non_local_block_val.size() >= 1);
     unsigned bid
       = num_nonlocals_src - num_inaccessiblememonly_fns + inaccessible_bid;
     assert(is_fncall_mem(bid));
     assert(non_local_block_val[bid].undef.empty());
-    non_local_block_val[bid].val = st.non_local_block_val[0];
+    auto &cur_val = non_local_block_val[bid].val;
+    cur_val
+      = expr::mkIf(only_write_inaccess, st.non_local_block_val[0], cur_val);
   }
 
-  if (access.canWrite(MemoryAccess::Args) &&
-     !access.canOnlyWrite(MemoryAccess::Other)) {
-    unsigned idx = 0;
+  expr cond = access.canWrite(MemoryAccess::Args) &&
+              !access.canOnlyWrite(MemoryAccess::Other);
+  if (!cond.isFalse()) {
+    unsigned idx = 1;
     for (unsigned bid = 0; bid < limit - has_write_fncall; ++bid) {
       if (always_nowrite(bid, true, true))
         continue;
@@ -1627,7 +1801,8 @@ void Memory::setState(const Memory::CallState &st,
       expr modifies(false);
       for (auto &ptr_in : ptr_inputs) {
         if (bid < next_nonlocal_bid) {
-          modifies |= ptr_in.val.non_poison &&
+          modifies |= cond &&
+                      ptr_in.val.non_poison &&
                       !ptr_in.nowrite &&
                       ptr_in.byval == 0 &&
                       Pointer(*this, ptr_in.val.value).getBid() == bid;
@@ -1643,17 +1818,21 @@ void Memory::setState(const Memory::CallState &st,
     assert(idx == st.non_local_block_val.size() - has_write_fncall);
   }
 
-  if (access.canWrite(MemoryAccess::Errno)) {
+  if (!access.canWrite(MemoryAccess::Errno).isFalse()) {
     // TODO
    }
 
-  if (access.canWrite(MemoryAccess::Other)) {
-    unsigned idx = 0;
+  cond = access.canWrite(MemoryAccess::Other);
+  if (!cond.isFalse()) {
+    unsigned idx = 1;
     for (unsigned bid = 0; bid < limit; ++bid) {
       if (always_nowrite(bid, true, true))
         continue;
-      non_local_block_val[bid].val = st.non_local_block_val[idx++];
-      non_local_block_val[bid].undef.clear();
+      auto &cur_val = non_local_block_val[bid].val;
+      cur_val
+        = mk_block_if(cond, st.non_local_block_val[idx++], std::move(cur_val));
+      if (cond.isTrue())
+        non_local_block_val[bid].undef.clear();
     }
     assert(idx == st.non_local_block_val.size());
   }
@@ -1662,17 +1841,9 @@ void Memory::setState(const Memory::CallState &st,
     expr one  = expr::mkUInt(1, num_nonlocals);
     expr zero = expr::mkUInt(0, num_nonlocals);
     expr mask = always_nowrite(0) ? one : zero;
+    expr may_free = access.canAccess(MemoryAccess::Other);
+
     for (unsigned bid = always_nowrite(0); bid < num_nonlocals; ++bid) {
-      expr may_free = true;
-      if (!access.canWrite(MemoryAccess::Other)) {
-        may_free = false;
-        for (auto &ptr_in : ptr_inputs) {
-          if (bid < next_nonlocal_bid)
-            may_free |= ptr_in.val.non_poison &&
-                        ptr_in.byval == 0 &&
-                        Pointer(*this, ptr_in.val.value).getBid() == bid;
-        }
-      }
       expr heap = Pointer(*this, bid, false).isHeapAllocated();
       mask = mask | expr::mkIf(heap && may_free && !is_fncall_mem(bid),
                                zero,
@@ -1684,18 +1855,18 @@ void Memory::setState(const Memory::CallState &st,
       = non_local_block_liveness & (st.non_local_liveness | mask);
   }
 
+  // TODO: function calls can also free local objects passed by argument
+
   mkNonlocalValAxioms(true);
 
   // TODO: havoc local blocks
   // for now, zero out if in non UB-exploitation mode to avoid false positives
   if (config::disallow_ub_exploitation) {
-    expr raw_byte = Byte(*this, {expr::mkUInt(0, bits_byte), true})();
-    expr array = expr::mkConstArray(expr::mkUInt(0, bits_for_offset),
-                                    raw_byte);
+    expr zero_byte = Byte(*this, {expr::mkUInt(0, bits_byte), true}, 0, true)();
 
     for (unsigned i = 0; i < next_local_bid; ++i) {
       if (escaped_local_blks.mayAlias(true, i)) {
-        local_block_val[i] = expr(array);
+        local_block_val[i] = expr(zero_byte);
       }
     }
   }
@@ -1783,7 +1954,8 @@ Memory::alloc(const expr *size, uint64_t align, BlockKind blockKind,
   expr size_zext;
   expr nooverflow = true;
   if (size) {
-    size_zext  = size->zextOrTrunc(bits_size_t);
+    size_zext  = size->zextOrTrunc(bits_size_t)
+                      .round_up(expr::mkUInt(align, bits_size_t));
     nooverflow = size->bits() <= bits_size_t ? true :
                    size->extract(size->bits()-1, bits_size_t) == 0;
   }
@@ -1835,6 +2007,13 @@ Memory::alloc(const expr *size, uint64_t align, BlockKind blockKind,
     .add(short_bid, std::move(align_expr));
   (is_local ? local_blk_kind : non_local_blk_kind)
     .add(short_bid, expr::mkUInt(alloc_ty, 2));
+
+  if (Pointer(*this, bid, is_local).isBlkSingleByte()) {
+    if (is_local)
+      local_block_val[bid].val = Byte::mkPoisonByte(*this)();
+    else
+      non_local_block_val[bid].val = mk_block_val_array(bid);
+  }
 
   if (!nonnull.isTrue()) {
     expr nondet_nonnull = expr::mkFreshVar("#alloc_nondet_nonnull", true);
@@ -1909,7 +2088,7 @@ void Memory::store(const StateValue &v, const Type &type, unsigned offset0,
     assert(byteofs == getStoreByteSize(type));
 
   } else {
-    vector<Byte> bytes = valueToBytes(v, type, *this, state);
+    vector<Byte> bytes = valueToBytes(v, type, *this, *state);
     assert(!v.isValid() || bytes.size() * bytesz == getStoreByteSize(type));
 
     for (unsigned i = 0, e = bytes.size(); i < e; ++i) {
@@ -2019,7 +2198,7 @@ void Memory::memset(const expr &p, const StateValue &val, const expr &bytesize,
   unsigned bytesz = bits_byte / 8;
   Pointer ptr(*this, p);
   if (deref_check)
-    state->addUB(ptr.isDereferenceable(bytesize, align, true));
+    state->addUB(ptr.isDereferenceable(bytesize, align, true, false, false));
 
   auto wval = val;
   for (unsigned i = 1; i < bytesz; ++i) {
@@ -2027,7 +2206,7 @@ void Memory::memset(const expr &p, const StateValue &val, const expr &bytesize,
   }
   assert(!val.isValid() || wval.bits() == bits_byte);
 
-  auto bytes = valueToBytes(wval, IntType("", bits_byte), *this, state);
+  auto bytes = valueToBytes(wval, IntType("", bits_byte), *this, *state);
   assert(bytes.size() == 1);
   expr raw_byte = std::move(bytes[0])();
 
@@ -2084,8 +2263,8 @@ void Memory::memcpy(const expr &d, const expr &s, const expr &bytesize,
   unsigned bytesz = bits_byte / 8;
 
   Pointer dst(*this, d), src(*this, s);
-  state->addUB(dst.isDereferenceable(bytesize, align_dst, true));
-  state->addUB(src.isDereferenceable(bytesize, align_src, false));
+  state->addUB(dst.isDereferenceable(bytesize, align_dst, true, false, false));
+  state->addUB(src.isDereferenceable(bytesize, align_src, false, false, false));
   if (!is_move)
     src.isDisjointOrEqual(bytesize, dst, bytesize);
 
@@ -2131,8 +2310,9 @@ void Memory::copy(const Pointer &src, const Pointer &dst) {
   dst_blk.undef.clear();
   dst_blk.type = DATA_NONE;
 
+  unsigned has_bv_val = 0;
   auto offset = expr::mkUInt(0, Pointer::bitsShortOffset());
-  DisjointExpr val(expr::mkConstArray(offset, Byte::mkPoisonByte(*this)()));
+  DisjointExpr val(Byte::mkPoisonByte(*this)());
 
   auto fn = [&](MemBlock &blk, unsigned bid, bool local, expr &&cond) {
     // we assume src != dst
@@ -2141,8 +2321,18 @@ void Memory::copy(const Pointer &src, const Pointer &dst) {
     val.add(blk.val, std::move(cond));
     dst_blk.undef.insert(blk.undef.begin(), blk.undef.end());
     dst_blk.type |= blk.type;
+    has_bv_val   |= 1u << blk.val.isBV();
   };
   access(src, bits_byte/8, bits_byte/8, false, fn);
+
+  // if we have mixed array/non-array blocks, switch them all to array
+  if (has_bv_val == 3) {
+    DisjointExpr<expr> newval;
+    for (auto &[v, cond] : val) {
+      newval.add(v.isBV() ? expr::mkConstArray(offset, v) : v, cond);
+    }
+    val = std::move(newval);
+  }
   dst_blk.val = *std::move(val)();
 }
 
@@ -2266,15 +2456,21 @@ expr Memory::blockValRefined(const Memory &other, unsigned bid, bool local,
     return false;
   }
 
-  Byte val(*this, mem1.val.load(offset));
-  Byte val2(other, mem2.load(offset));
+  Byte val  = raw_load(false, bid, offset);
+  Byte val2 = other.raw_load(false, bid, offset);
 
   if (val.eq(val2))
     return true;
 
   undef.insert(mem1.undef.begin(), mem1.undef.end());
 
-  return val.refined(val2);
+  expr r = val.refined(val2);
+
+  // The ABI requires that sub-byte stores zero extend the stored value
+  if (num_sub_byte_bits && other.isAsmMode())
+    r &= mkSubByteZExtStoreCond(val, val2);
+
+  return r;
 }
 
 expr Memory::blockRefined(const Pointer &src, const Pointer &tgt, unsigned bid,
@@ -2331,8 +2527,8 @@ Memory::refined(const Memory &other, bool fncall,
 
   AliasSet block_alias(*this, other);
   auto min_read_sz = bits_byte / 8;
-  for (auto &[mem, set]
-         : { make_pair(this, set_ptrs), make_pair(&other, set_ptrs2)}) {
+  auto sets = { make_pair(this, set_ptrs), make_pair(&other, set_ptrs2) };
+  for (const auto &[mem, set] : sets) {
     if (set) {
       for (auto &it: *set_ptrs) {
         block_alias.unionWith(computeAliasing(Pointer(*mem, it.val.value),
@@ -2367,6 +2563,15 @@ Memory::refined(const Memory &other, bool fncall,
     Pointer q(other, p());
     if (p.isByval().isTrue() && q.isByval().isTrue())
       continue;
+
+    // In assembly mode we verify each function individually and
+    // global constants are not validated (assumed to be correct).
+    // Hence we may not have all initializers if tgt doesn't reference them.
+    if (other.isAsmMode() &&
+        is_constglb(bid) &&
+        isInitialMemBlock(other.non_local_block_val[bid].val))
+      continue;
+
     ret &= (ptr_bid == bid_expr).implies(blockRefined(p, q, bid, undef_vars));
   }
 
@@ -2399,7 +2604,7 @@ expr Memory::checkNocapture() const {
     if (always_nowrite(bid))
       continue;
     Pointer p(*this, bid, false);
-    Byte b(*this, non_local_block_val[bid].val.load(offset));
+    Byte b = raw_load(false, bid, offset);
     Pointer loadp(*this, b.ptrValue());
     res &= (p.isBlockAlive() && b.isPtr() && b.ptrNonpoison())
              .implies(!loadp.isNocapture());
@@ -2440,18 +2645,18 @@ Memory Memory::mkIf(const expr &cond, Memory &&then, Memory &&els) {
   for (unsigned bid = 0, end = ret.numNonlocals(); bid < end; ++bid) {
     if (always_nowrite(bid, false, true))
       continue;
+    auto &blk   = ret.non_local_block_val[bid];
     auto &other = els.non_local_block_val[bid];
-    ret.non_local_block_val[bid].val
-      = expr::mkIf(cond, then.non_local_block_val[bid].val, other.val);
-    ret.non_local_block_val[bid].undef.insert(other.undef.begin(),
-                                              other.undef.end());
+    blk.val     = mk_block_if(cond, blk.val, other.val);
+    blk.type   |= other.type;
+    blk.undef.insert(other.undef.begin(), other.undef.end());
   }
   for (unsigned bid = 0, end = ret.numLocals(); bid < end; ++bid) {
+    auto &blk   = ret.local_block_val[bid];
     auto &other = els.local_block_val[bid];
-    ret.local_block_val[bid].val
-      = expr::mkIf(cond, then.local_block_val[bid].val, other.val);
-    ret.local_block_val[bid].undef.insert(other.undef.begin(),
-                                          other.undef.end());
+    blk.val     = mk_block_if(cond, blk.val, other.val);
+    blk.type   |= other.type;
+    blk.undef.insert(other.undef.begin(), other.undef.end());
   }
   ret.non_local_block_liveness = expr::mkIf(cond, then.non_local_block_liveness,
                                             els.non_local_block_liveness);

@@ -247,6 +247,26 @@ Value* make_intconst(uint64_t val, int bits) {
   return ret;
 }
 
+IR::Value* make_intconst(const llvm::APInt &val) {
+  unique_ptr<IntConst> c;
+  auto bw = val.getBitWidth();
+  auto &ty = get_int_type(bw);
+  if (bw <= 64)
+    c = make_unique<IntConst>(ty, val.getZExtValue());
+  else
+    c = make_unique<IntConst>(ty, toString(val, 10, false));
+  auto ret = c.get();
+  current_fn->addConstant(std::move(c));
+  return ret;
+}
+
+IR::Value* get_poison(Type &ty) {
+  auto val = make_unique<PoisonValue>(ty);
+  auto ret = val.get();
+  current_fn->addConstant(std::move(val));
+  return ret;
+}
+
 #define RETURN_CACHE(val)                           \
   do {                                              \
     auto val_cpy = val;                             \
@@ -258,23 +278,15 @@ Value* make_intconst(uint64_t val, int bits) {
 Value* get_operand(llvm::Value *v,
                    function<Value*(llvm::ConstantExpr*)> constexpr_conv,
                    function<Value*(AggregateValue*)> copy_inserter) {
-  if (auto I = value_cache.find(v);
-      I != value_cache.end())
-    return I->second;
+  if (auto ptr = get_identifier(*v))
+    return ptr;
 
   auto ty = llvm_type2alive(v->getType());
   if (!ty)
     return nullptr;
 
   if (auto cnst = dyn_cast<llvm::ConstantInt>(v)) {
-    unique_ptr<IntConst> c;
-    if (cnst->getBitWidth() <= 64)
-      c = make_unique<IntConst>(*ty, cnst->getZExtValue());
-    else
-      c = make_unique<IntConst>(*ty, toString(cnst->getValue(), 10, false));
-    auto ret = c.get();
-    current_fn->addConstant(std::move(c));
-    RETURN_CACHE(ret);
+    RETURN_CACHE(make_intconst(cnst->getValue()));
   }
 
   if (auto cnst = dyn_cast<llvm::ConstantFP>(v)) {
@@ -289,10 +301,7 @@ Value* get_operand(llvm::Value *v,
   }
 
   if (isa<llvm::PoisonValue>(v)) {
-    auto val = make_unique<PoisonValue>(*ty);
-    auto ret = val.get();
-    current_fn->addConstant(std::move(val));
-    RETURN_CACHE(ret);
+    RETURN_CACHE(get_poison(*ty));
   }
 
   if (isa<llvm::UndefValue>(v)) {
@@ -347,7 +356,7 @@ Value* get_operand(llvm::Value *v,
 
   if (auto fn = dyn_cast<llvm::Function>(v)) {
     auto val = make_unique<GlobalVariable>(
-      *ty, fn->getName().str(), 0,
+      *ty, '@' + fn->getName().str(), 0,
       fn->getAlign().value_or(llvm::Align(8)).value(), true, true);
     auto gvar = val.get();
     current_fn->addConstant(std::move(val));
@@ -436,6 +445,11 @@ void add_identifier(const llvm::Value &llvm, Value &v) {
 
 void replace_identifier(const llvm::Value &llvm, Value &v) {
   value_cache[&llvm] =  &v;
+}
+
+Value* get_identifier(const llvm::Value &llvm) {
+  auto I = value_cache.find(&llvm);
+  return I != value_cache.end() ? I->second : nullptr;
 }
 
 

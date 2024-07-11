@@ -1,5 +1,7 @@
 # ARM-TV TODO
 
+- ensure that when we do the ARM side of an i1 store, only 0 or 1
+  is stored
 - rig llvm-reduce to be a fuzzer
 - refactor so instructions go into separate files and use a proper API
 - support jump tables, requires symbolic register contents

@@ -12,10 +12,13 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/Bitcode/BitcodeReader.h"
+#include "llvm/IR/DIBuilder.h"
+#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/MC/MCContext.h"
@@ -61,28 +64,27 @@ using namespace std;
 using namespace llvm;
 using namespace lifter;
 
+long totalAllocas;
+
 namespace {
 
-void checkVectorTy(VectorType *Ty) {
-  auto *EltTy = Ty->getElementType();
-  if (auto *IntTy = dyn_cast<IntegerType>(EltTy)) {
-    auto Width = IntTy->getBitWidth();
-    if (Width != 8 && Width != 16 && Width != 32 && Width != 64) {
-      *out << "\nERROR: Only vectors of i8, i16, i32, i64 are supported\n\n";
-      exit(-1);
-    }
-    auto Count = Ty->getElementCount().getFixedValue();
-    auto VecSize = (Count * Width) / 8;
-    if (VecSize != 8 && VecSize != 16) {
-      *out << "\nERROR: Only short vectors 8 and 16 bytes long are supported, "
-              "in parameters and return values; please see Section 5.4 of "
-              "AAPCS64 for more details\n\n";
-      exit(-1);
-    }
-  } else {
-    // FIXME there's no reason for this restriction
-    *out << "\nERROR: Only vectors of integers supported for now\n\n";
+void checkCallingConv(Function *fn) {
+  if (fn->getCallingConv() != CallingConv::C &&
+      fn->getCallingConv() != CallingConv::Fast) {
+    *out
+        << "\nERROR: Only the C and fast calling conventions are supported\n\n";
     exit(-1);
+  }
+}
+
+void avoidArgMD(CallInst *ci, const string &str) {
+  auto &Ctx = ci->getContext();
+  auto val = MetadataAsValue::get(Ctx, MDString::get(Ctx, str));
+  for (auto &arg : ci->args()) {
+    if (arg.get() == val) {
+      *out << "\nERROR: " << val->getNameOrAsOperand() << " not supported\n\n";
+      exit(-1);
+    }
   }
 }
 
@@ -107,17 +109,8 @@ void checkSupportHelper(Instruction &i, const DataLayout &DL,
     exit(-1);
   }
   if (i.isAtomic()) {
-    *out << "\nERROR: atomics not supported\n\n";
+    *out << "\nERROR: atomics not supported yet\n\n";
     exit(-1);
-  }
-  if (auto *li = dyn_cast<LoadInst>(&i)) {
-    auto *ty = li->getType();
-    unsigned w = ty->getScalarSizeInBits();
-    // i1 is a special case in the ABI
-    if ((w != 1) && ((w % 8) != 0)) {
-      *out << "\nERROR: loads that have padding are disabled\n\n";
-      exit(-1);
-    }
   }
   if (isa<VAArgInst>(&i)) {
     *out << "\nERROR: va_arg instructions not supported\n\n";
@@ -127,29 +120,79 @@ void checkSupportHelper(Instruction &i, const DataLayout &DL,
     *out << "\nERROR: invoke instructions not supported\n\n";
     exit(-1);
   }
+  if (auto *ai = dyn_cast<AllocaInst>(&i)) {
+    if (!ai->isStaticAlloca()) {
+      *out << "\nERROR: only static allocas supported for now\n\n";
+      exit(-1);
+    }
+    auto allocSize = ai->getAllocationSize(DL);
+    if (allocSize)
+      totalAllocas += allocSize->getFixedValue();
+  }
+  if (auto *cb = dyn_cast<CallBase>(&i)) {
+    if (isa<InlineAsm>(cb->getCalledOperand())) {
+      *out << "\nERROR: inline assembly not supported\n\n";
+      exit(-1);
+    }
+  }
   if (auto *ci = dyn_cast<CallInst>(&i)) {
     if (auto callee = ci->getCalledFunction()) {
-      if (!callee->isIntrinsic())
+      checkCallingConv(callee);
+
+      if (callee->isIntrinsic()) {
+        const auto &name = callee->getName();
+        if (callee->isConstrainedFPIntrinsic() ||
+            name.contains("llvm.fptrunc.round")) {
+          // FIXME we should be able to support these, except round.dynamic
+          avoidArgMD(ci, "round.dynamic");
+          avoidArgMD(ci, "round.downward");
+          avoidArgMD(ci, "round.upward");
+          avoidArgMD(ci, "round.towardzero");
+          avoidArgMD(ci, "round.tonearestaway");
+        }
+      } else {
         for (auto arg = callee->arg_begin(); arg != callee->arg_end(); ++arg)
           if (auto *vTy = dyn_cast<VectorType>(arg->getType()))
             checkVectorTy(vTy);
+      }
+
       if (callee->isVarArg()) {
         *out << "\nERROR: varargs not supported\n\n";
         exit(-1);
       }
+
       auto name = (string)callee->getName();
+      if (name.find("llvm.memcpy.element.unordered.atomic") != string::npos) {
+        *out << "\nERROR: atomic instrinsics not supported\n\n";
+        exit(-1);
+      }
+
       if (name.find("llvm.objc") != string::npos) {
         *out << "\nERROR: llvm.objc instrinsics not supported\n\n";
         exit(-1);
       }
+
       if (name.find("llvm.thread") != string::npos) {
         *out << "\nERROR: llvm.thread instrinsics not supported\n\n";
         exit(-1);
       }
+
       if ((name.find("llvm.experimental.gc") != string::npos) ||
           (name.find("llvm.experimental.stackmap") != string::npos)) {
         *out << "\nERROR: llvm GC instrinsics not supported\n\n";
         exit(-1);
+      }
+    } else {
+      // indirect call or signature mismatch
+      auto co = ci->getCalledOperand();
+      assert(co);
+      if (auto cf = dyn_cast<Function>(co)) {
+        if (cf->isVarArg()) {
+          *out << "\nERROR: varargs not supported\n\n";
+          exit(-1);
+        }
+      } else {
+        // FIXME -- do we need to handle this case?
       }
     }
   }
@@ -159,20 +202,76 @@ void checkSupportHelper(Instruction &i, const DataLayout &DL,
 
 namespace lifter {
 
-void checkSupport(Function *srcFn) {
-  if (srcFn->getCallingConv() != CallingConv::C &&
-      srcFn->getCallingConv() != CallingConv::Fast) {
-    *out
-        << "\nERROR: Only the C and fast calling conventions are supported\n\n";
-    exit(-1);
-  }
-
-  if (false) {
-    // can't reject this, basically everything has it
-    if (srcFn->hasFnAttribute(Attribute::StackProtect)) {
-      *out << "\nERROR: StackProtect attribute not supported\n\n";
+void checkVectorTy(VectorType *Ty) {
+  auto *EltTy = Ty->getElementType();
+  if (auto *IntTy = dyn_cast<IntegerType>(EltTy)) {
+    auto Width = IntTy->getBitWidth();
+    if (Width != 8 && Width != 16 && Width != 32 && Width != 64) {
+      *out << "\nERROR: Only vectors of i8, i16, i32, i64 are supported\n\n";
       exit(-1);
     }
+    auto Count = Ty->getElementCount().getFixedValue();
+    auto VecSize = (Count * Width) / 8;
+    if (VecSize != 8 && VecSize != 16) {
+      *out << "\nERROR: Only short vectors 8 and 16 bytes long are supported, "
+              "in parameters and return values; please see Section 5.4 of "
+              "AAPCS64 for more details\n\n";
+      exit(-1);
+    }
+  } else {
+    // FIXME there's no reason for this restriction
+    *out << "\nERROR: Only vectors of integers supported for now\n\n";
+    exit(-1);
+  }
+}
+
+std::unique_ptr<DIBuilder> DBuilder;
+std::unordered_map<unsigned, llvm::Instruction *> lineMap;
+
+void addDebugInfo(Function *srcFn) {
+  auto &M = *srcFn->getParent();
+
+  // start with a clean slate
+  StripDebugInfo(M);
+
+  M.addModuleFlag(Module::Warning, "Dwarf Version", dwarf::DWARF_VERSION);
+  M.addModuleFlag(Module::Warning, "Debug Info Version",
+                  DEBUG_METADATA_VERSION);
+
+  auto &Ctx = srcFn->getContext();
+
+  DBuilder = std::make_unique<DIBuilder>(M);
+  auto DIF = DBuilder->createFile("foo.ll", ".");
+  auto CU = DBuilder->createCompileUnit(dwarf::DW_LANG_C, DIF, "arm-tv", false,
+                                        "", 0);
+  auto Ty = DBuilder->createSubroutineType(DBuilder->getOrCreateTypeArray({}));
+  auto SP = DBuilder->createFunction(CU, srcFn->getName(), StringRef(), DIF, 0,
+                                     Ty, 0, DINode::FlagPrototyped,
+                                     DISubprogram::SPFlagDefinition);
+  srcFn->setSubprogram(SP);
+  unsigned line = 0;
+  for (auto &bb : *srcFn) {
+    for (auto &i : bb) {
+      lineMap[line] = &i;
+      i.setDebugLoc(DILocation::get(Ctx, line, 0, SP));
+      ++line;
+    }
+  }
+
+  DBuilder->finalize();
+  verifyModule(M);
+  *out << "\n\n\n";
+  // M.dump();
+  //*out << "\n\n\n";
+}
+
+void checkSupport(Function *srcFn) {
+  checkCallingConv(srcFn);
+  if (srcFn->getLinkage() ==
+      GlobalValue::LinkageTypes::AvailableExternallyLinkage) {
+    *out << "\nERROR: function has externally_available linkage type and won't "
+            "be codegenned\n\n";
+    exit(-1);
   }
 
   if (srcFn->hasPersonalityFn()) {
@@ -225,22 +324,27 @@ void checkSupport(Function *srcFn) {
   set<Type *> typeSet;
   auto &DL = srcFn->getParent()->getDataLayout();
   unsigned llvmInstCount = 0;
+
+  totalAllocas = 0;
   for (auto &bb : *srcFn) {
     for (auto &i : bb) {
       checkSupportHelper(i, DL, typeSet);
       ++llvmInstCount;
     }
   }
+  if (totalAllocas >= stackBytes) {
+    *out << "ERROR: ARM stack frame too large, consider increasing "
+            "stackBytes\n\n";
+    exit(-1);
+  }
 
-  if (false) {
-    auto &Ctx = srcFn->getContext();
-    if (typeSet.find(Type::getFloatTy(Ctx)) != typeSet.end() ||
-        typeSet.find(Type::getDoubleTy(Ctx)) != typeSet.end() ||
-        typeSet.find(Type::getHalfTy(Ctx)) != typeSet.end() ||
-        typeSet.find(Type::getBFloatTy(Ctx)) != typeSet.end()) {
-      *out << "\nERROR: Not supporting float until this issue gets resolved\n";
-      *out << "https://github.com/AliveToolkit/alive2/issues/982\n\n";
-      exit(-1);
+  for (auto ty : typeSet) {
+    if (ty->isFloatingPointTy()) {
+      if (!(ty->isFloatTy() || ty->isDoubleTy())) {
+        *out << "\nERROR: only float and double supported (not  bfloat, half, "
+                "fp128, etc.)\n\n";
+        exit(-1);
+      }
     }
   }
 
