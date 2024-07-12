@@ -4,8 +4,9 @@ import io
 import os
 import csv
 import sys
-import tarfile
 import random
+import tarfile
+import functools
 import subprocess
 import dataclasses
 import concurrent.futures
@@ -68,14 +69,17 @@ def extract_asm_and_output(log):
       output = output.lstrip('-')
   return asm, output
 
-def process_log(log: Path, aslplog: Path) -> Row:
-  proc = subprocess.run([classify_pl, log], stdin=DEVNULL, stdout=PIPE, stderr=PIPE, encoding='utf-8')
-  out, err = map(str.strip, (proc.stdout, proc.stderr))
-  assert not err, f"{log} returned error: {err}"
+@functools.lru_cache
+def classify_logs(d: Path) -> dict[Path, str]:
+  proc = subprocess.run([classify_pl, d], stdin=DEVNULL, stdout=PIPE, encoding='utf-8')
+  out = proc.stdout.strip()
+  # assert not err, f"classify.py {d} returned error: {err}"
+  return {Path(p): v for p,v in map(lambda l: l.split('|',1), out.splitlines())}
 
-  proc = subprocess.run([classify_pl, aslplog], stdin=DEVNULL, stdout=PIPE, stderr=PIPE, encoding='utf-8')
-  aout, aerr = map(str.strip, (proc.stdout, proc.stderr))
-  assert not err, f"{aslplog} returned error: {aerr}"
+
+def process_log(log: Path, aslplog: Path) -> Row:
+  out = classify_logs(logs_dir)[log]
+  aout = classify_logs(aslplogs_dir)[aslplog]
 
   def simplify_name(s):
     if s.startswith('classic_'):
@@ -88,6 +92,7 @@ def process_log(log: Path, aslplog: Path) -> Row:
       return 'classic_' + out
     return s
 
+  # process encoding counts
   counts = defaultdict(int)
   cmdline = ''
   with open(aslplog) as f:
@@ -102,11 +107,15 @@ def process_log(log: Path, aslplog: Path) -> Row:
       break
   assert cmdline, aslplog
 
+
   asm, output = extract_asm_and_output(log)
   _, aoutput = extract_asm_and_output(aslplog)
 
-  t = lambda x: x.split(' ')[0]
-  return Row(log.stem, t(out), out, t(aout), aout, counts, cmdline, asm, output, aoutput)
+  def outcome(s):
+    assert s.startswith('['), s
+    return s.split(' ', 1)[0]
+
+  return Row(log.stem, outcome(out), out, outcome(aout), aout, counts, cmdline, asm, output, aoutput)
 
 def main():
   logs = list(logs_dir.glob('*.log'))
@@ -118,7 +127,10 @@ def main():
   for f in aslplogs:
     assert f.exists(), f
 
-  with concurrent.futures.ThreadPoolExecutor(8) as executor:
+  with concurrent.futures.ThreadPoolExecutor(2) as executor:
+    _, _ = executor.map(classify_logs, [logs_dir, aslplogs_dir])
+
+  with concurrent.futures.ProcessPoolExecutor(4) as executor:
     futures = executor.map(process_log, logs, aslplogs)
     for f, result in tqdm(zip(logs, futures), total=len(logs), mininterval=1):
       classified[f] = result
