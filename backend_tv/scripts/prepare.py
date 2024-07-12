@@ -7,6 +7,7 @@ import sys
 import tarfile
 import random
 import subprocess
+import dataclasses
 import concurrent.futures
 from subprocess import PIPE, DEVNULL
 from collections import defaultdict
@@ -30,17 +31,44 @@ except ImportError:
       yield x
 
 
-logs_dir = Path(sys.argv[1])
-aslplogs_dir = Path(sys.argv[2])
-assert logs_dir.is_dir()
-assert aslplogs_dir.is_dir()
+root_dir = Path(sys.argv[1] if len(sys.argv) >= 2 else '/nowhere')
+logs_dir = root_dir / 'logs'
+aslplogs_dir = root_dir / 'logs-aslp'
+assert logs_dir.is_dir() and aslplogs_dir.is_dir(), ( # XXX: changed from previous command-line of `prepare.py logs logs-aslp`
+  f"first argument should be a directory containing 'logs' and 'logs-aslp'")
 
+out_csv = Path(sys.argv[2] if len(sys.argv) >= 3 else 'table.tar.gz')
 
 self_dir = Path(os.path.dirname(os.path.realpath(__file__)))
 classify_pl = self_dir / 'classify.pl'
 
+@dataclasses.dataclass
+class Row:
+  id: str
+  old_outcome: str
+  old_detail: str
+  aslp_outcome: str
+  aslp_detail: str
+  encoding_counts: dict[str, int]
+  cmdline: str
+  assembly: str
+  old_output: str
+  aslp_output: str
 
-def process_log(log: Path, aslplog: Path):
+def extract_asm_and_output(log):
+  with open(log) as f:
+    d = f.read().split('\n------------')
+
+  asm = output = ''
+  match d:
+    case _header, asm, _debug, output, *_:
+      assert 'AArch64 Assembly' in asm, log
+      assert '\n=>\n' in output, log
+      asm = '\n'.join(asm.splitlines()[1:])
+      output = output.lstrip('-')
+  return asm, output
+
+def process_log(log: Path, aslplog: Path) -> Row:
   proc = subprocess.run([classify_pl, log], stdin=DEVNULL, stdout=PIPE, stderr=PIPE, encoding='utf-8')
   out, err = map(str.strip, (proc.stdout, proc.stderr))
   assert not err, f"{log} returned error: {err}"
@@ -61,54 +89,68 @@ def process_log(log: Path, aslplog: Path):
     return s
 
   counts = defaultdict(int)
+  cmdline = ''
   with open(aslplog) as f:
     for l in f:
+      l = l.strip()
+      if not cmdline and l: cmdline = l
       if not l.startswith('encoding counts: '): continue
       for term in l.replace('encoding counts: ', '').split(','):
         if '=' not in term: continue
         k,v = term.split('=')
         counts[simplify_name(k)] += int(v)
       break
+  assert cmdline, aslplog
 
-  return out, aout, counts
+  asm, output = extract_asm_and_output(log)
+  _, aoutput = extract_asm_and_output(aslplog)
+
+  t = lambda x: x.split(' ')[0]
+  return Row(log.stem, t(out), out, t(aout), aout, counts, cmdline, asm, output, aoutput)
 
 def main():
   logs = list(logs_dir.glob('*.log'))
-  for f in logs:
-    assert (aslplogs_dir / f.name).exists()
 
-  classified: dict[Path, tuple[str, str, dict]] = cast(Any, {f: () for f in logs})
-  random.shuffle(logs)
+  classified: dict[Path, Row] = cast(Any, {f: () for f in logs})
+  random.shuffle(logs) # XXX: be aware of shuffle!
 
-  with concurrent.futures.ThreadPoolExecutor() as pool:
-    futures = {pool.submit(process_log, f, aslplogs_dir / f.name): f for f in logs}
-    for f in tqdm(concurrent.futures.as_completed(futures.keys()), total=len(futures), mininterval=1):
-      classified[futures[f]] = f.result()
+  aslplogs = [aslplogs_dir / f.name for f in logs]
+  for f in aslplogs:
+    assert f.exists(), f
 
+  with concurrent.futures.ThreadPoolExecutor(8) as executor:
+    futures = executor.map(process_log, logs, aslplogs)
+    for f, result in tqdm(zip(logs, futures), total=len(logs), mininterval=1):
+      classified[f] = result
 
   keys = ['id']
-  keys += sorted(set(k for _,_,x in classified.values() for k in x.keys()))
+  keys += sorted(set(k for x in classified.values() for k in x.encoding_counts.keys()))
   keys += ['old_outcome']
   keys += ['old_detail']
   keys += ['aslp_outcome']
   keys += ['aslp_detail']
+  keys += ['cmdline']
+  keys += ['old_output']
+  keys += ['aslp_output']
 
   csvfile = io.StringIO()
   writer = csv.DictWriter(csvfile, fieldnames=keys, restval=0)
   writer.writeheader()
 
-  for f, (classic, aslp, counts) in tqdm(classified.items()):
-    t = lambda x: x.split(' ')[0]
-    row = {'id': f.stem, 'old_outcome': t(classic), 'old_detail': classic, 'aslp_outcome': t(aslp), 'aslp_detail': aslp}
-    row |= counts
-    assert set(row.keys()) <= set(keys)
-    writer.writerow(row) # type: ignore
+  for f, row in tqdm(classified.items()):
+    r = {'id': f.stem, 'old_outcome': row.old_outcome, 'old_detail': row.old_detail,
+           'aslp_outcome': row.aslp_outcome, 'aslp_detail': row.aslp_detail, 'cmdline': row.cmdline,
+           'old_output': row.old_output, 'aslp_output': row.aslp_output}
+    r |= row.encoding_counts
+    assert set(r.keys()) <= set(keys)
+    writer.writerow(r) # type: ignore
 
   data = csvfile.getvalue().encode('utf-8')
-  with tarfile.open('table.tar.gz', 'w:gz') as t:
+  with tarfile.open(out_csv, 'w:gz') as t:
     ti = tarfile.TarInfo('table.csv')
     ti.size = len(data)
     t.addfile(ti, io.BytesIO(data))
+  print(out_csv)
 
 if __name__ == '__main__':
   main()
