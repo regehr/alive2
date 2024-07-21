@@ -14,7 +14,7 @@ sub classify($) {
     (my $ref) = @_;
     my @lines = @{$ref};
 
-    foreach my $data (@lines) {
+    foreach my $data (reverse @lines) {
         if ($data =~ /seems to be correct/) {
             return "[c] $CORRECT";
         }
@@ -133,20 +133,26 @@ sub classify($) {
     return $UNKNOWN;
 }
 
-my %cmds = ();
-my $f = $ARGV[0];
+my $dir = $ARGV[0];
+die "please specify directory of logs" unless (-d $dir);
+my @files = glob "$dir/*.log";
+print STDERR "found ", scalar @files, " .log files in $dir\n";
 
-open my $INF, "<$f" or die "reading $f failed";
-my @lines = ();
-my $cmdline;
-while (my $line = <$INF>) {
-    $cmdline = $line unless defined($cmdline);
-    push @lines, $line;
-}
-close $INF;
-my $line = classify(\@lines);
-print "$line\n";
+foreach my $f (@files) {
+    open my $INF, "<$f" or die "reading $f failed";
+    my @lines = ();
+    my $cmdline;
+    while (my $line = <$INF>) {
+        $cmdline = $line unless defined($cmdline);
+        push @lines, $line;
+    }
+    close $INF;
+    my $line = classify(\@lines);
+    print "$f|";
 
-if ($line eq $UNKNOWN) {
-    say STDERR "unknown: $f\n";
+    if ($line eq $UNKNOWN) {
+        print "unknown\n";
+    } else {
+        print "$line\n";
+    }
 }
