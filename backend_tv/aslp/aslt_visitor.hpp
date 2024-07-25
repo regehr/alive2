@@ -15,6 +15,7 @@
 
 #include "SemanticsParser.h"
 #include "interface.hpp"
+#include "llvm/Support/raw_ostream.h"
 
 namespace aslp {
 
@@ -111,6 +112,24 @@ protected:
 
   virtual std::string ident(aslt::SemanticsParser::IdentContext* ctx) {
     return std::any_cast<std::string>(visitIdent(ctx));
+  }
+
+  /**
+   * Intelligently coerce the given expression to the given LLVM type.
+   * Where possible, exploits structure within the expression to improve precision.
+   */
+  virtual expr_t coerce(expr_t e, llvm::Type* ty) {
+    if (e->getType() == ty) return e;
+    if (auto load = llvm::dyn_cast<llvm::LoadInst>(e)) {
+      return iface.createLoad(ty, load->getPointerOperand());
+    }
+
+    // log() << "fallback aslp bitcast: " << std::flush;
+    // e->print(llvm::outs());
+    // log() << " to " << std::flush;
+    // ty->print(llvm::outs());
+    // log() << std::endl;
+    return iface.createBitCast(e, ty);
   }
 
   virtual std::pair<expr_t, expr_t> ptr_expr(expr_t x, llvm::Instruction* before = nullptr);
