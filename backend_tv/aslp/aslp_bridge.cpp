@@ -59,7 +59,10 @@ aslp_connection make_conn() {
 namespace aslp {
 
 bridge::bridge(lifter_interface_llvm& iface, const llvm::MCCodeEmitter& mce, const llvm::MCSubtargetInfo& sti, const llvm::MCInstrAnalysis& ia) 
-  : iface{iface}, context{iface.ll_function().getContext()}, mce{mce}, sti{sti}, ia{ia}, conn{make_conn()} { }
+  : iface{iface}, context{iface.ll_function().getContext()}, mce{mce}, sti{sti}, ia{ia}, conn{make_conn()} {
+  (void)this->mce;
+  (void)this->sti;
+}
 
 
 const config_t& bridge::config() {
