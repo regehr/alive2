@@ -115,6 +115,7 @@ stmt_t aslt_visitor::visit_stmt(const std::vector<aslt::SemanticsParser::StmtCon
 
   stmt_counts[depth+1] = 0;
   stmt_t s = stmt(stmts.at(0));
+  s.second = iface.get_bb(); // XXX: this is a hack to support expressions which add basic blocks
   for (auto& s2 : stmts | std::ranges::views::drop(1)) {
     s = link(s, stmt(s2));
   }
@@ -488,7 +489,31 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       return static_cast<expr_t>(iface.createMul(x, y));
 
     } else if (name == "sdiv_bits.0") {
-      return static_cast<expr_t>(iface.createSDiv(x, y));
+      unsigned long wd = x->getType()->getIntegerBitWidth();
+      auto result = iface.createAlloca(x->getType(), iface.getIntConst(1, 64), "sdiv_result");
+
+      auto overflowing = iface.createAnd(
+          iface.createICmp(llvm::ICmpInst::ICMP_EQ, x, llvm::ConstantInt::get(context, llvm::APInt::getSignedMinValue(wd))),
+          iface.createICmp(llvm::ICmpInst::ICMP_EQ, y, llvm::ConstantInt::get(context, --llvm::APInt::getZero(wd))));
+
+      auto oldbb = iface.get_bb();
+      auto overflowbb = new_stmt("sdiv_overflowing");
+      auto okbb = new_stmt("sdiv_non_overflowing");
+      auto contbb = new_stmt("sdiv_continuation");
+
+      iface.set_bb(oldbb);
+      iface.createBranch(overflowing, overflowbb, okbb);
+
+      iface.set_bb(overflowbb.second);
+      iface.createStore(iface.getIntConst(0, wd), result);
+      link(overflowbb, contbb);
+
+      iface.set_bb(okbb.second);
+      iface.createStore(iface.createSDiv(x, y), result);
+      link(okbb, contbb);
+
+      iface.set_bb(contbb.first);
+      return static_cast<expr_t>(iface.createLoad(x->getType(), result));
 
     } else if (name == "slt_bits.0") {
       return static_cast<expr_t>(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_SLT, x, y));
