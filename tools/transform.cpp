@@ -45,7 +45,7 @@ static void print_single_varval(ostream &os, const State &st, const Model &m,
 
   // Best effort detection of poison if model is partial
   if (auto v = m.eval(val.non_poison);
-      (v.isFalse() || check_expr(!v).isSat())) {
+      (v.isFalse() || check_expr(!v, "val_is_poison").isSat())) {
     os << "poison";
     return;
   }
@@ -172,7 +172,7 @@ static bool error(Errors &errs, State &src_state, State &tgt_state,
     {
       SolverPush push(solver);
       solver.add(e);
-      auto tmpr = solver.check();
+      auto tmpr = solver.check("reduce");
       if (tmpr.isSat()) {
         ok   = true;
         newr = std::move(tmpr);
@@ -512,7 +512,7 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
     axioms_expr = std::move(axioms)();
   }
 
-  if (check_expr(axioms_expr && fndom_a).isUnsat()) {
+  if (check_expr(axioms_expr && fndom_a, "ub_src").isUnsat()) {
     if (config::fail_if_src_is_ub) {
       errs.add("Source function is always UB", false);
       return;
@@ -526,7 +526,8 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
 
   {
     auto sink_src = src_state.sinkDomain(false);
-    if (!sink_src.isFalse() && check_expr(axioms_expr && !sink_src).isUnsat()) {
+    if (!sink_src.isFalse() &&
+        check_expr(axioms_expr && !sink_src, "return_src").isUnsat()) {
       errs.add("The source program doesn't reach a return instruction.\n"
                "Consider increasing the unroll factor if it has loops", false);
       return;
@@ -535,7 +536,7 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
     if (auto sink_tgt = tgt_state.sinkDomain(false);
         !sink_src.eq(sink_tgt) &&
         !sink_tgt.isFalse() &&
-        check_expr(axioms_expr && (!sink_tgt || sink_src)).isUnsat()) {
+        check_expr(axioms_expr && (!sink_tgt || sink_src), "return_tgt").isUnsat()) {
       errs.add("The target program doesn't reach a return instruction.\n"
                "Consider increasing the unroll factor if it has loops", false);
       return;
@@ -560,7 +561,7 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
       pre_tgt = pre_tgt_and();
     }
 
-    if (check_expr(axioms_expr && (pre_src && pre_tgt)).isUnsat()) {
+    if (check_expr(axioms_expr && (pre_src && pre_tgt), "pre").isUnsat()) {
       errs.add("Precondition is always false", false);
       return;
     }
@@ -591,11 +592,21 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
             preprocess(t, qvars, uvars, pre && pre_src_forall.implies(refines));
   };
 
-  auto check = [&](expr &&e, auto &&printer, const char *msg) {
+  auto check = [&](expr &&e, const char *name, auto &&printer, const char *msg) {
     Solver s;
     s.add(mk_fml(std::move(e)));
     e = expr();
-    auto res = s.check();
+    auto res = s.check(name);
+
+    // Some non-deterministic vars have preconditions. These preconditions are
+    // under the forall quantifier, hence they have no effect when we fetch
+    // the vars from the model (as in fact these are different vars -- they
+    // are implicitly existentially quantified).
+    if (res.isSat()) {
+      s.add(pre_src_forall);
+      res = s.check(name);
+      assert(!res.isUnsat());
+    }
 
     if (!res.isUnsat() &&
         !error(errs, src_state, tgt_state, res, s, var, msg, check_each_var,
@@ -604,8 +615,8 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
     return true;
   };
 
-#define CHECK(fml, printer, msg) \
-  if (!check(fml, printer, msg)) \
+#define CHECK(fml, name, printer, msg) \
+  if (!check(fml, name, printer, msg)) \
     return
 
   if (config::disallow_ub_exploitation) {
@@ -613,14 +624,16 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
       errs.add("Null is not dereferenceable", false);
 
     CHECK(retdom_a && src_state.getGuardableUB(),
-          [](ostream&, const Model&){}, "Source has guardable UB");
+          "guardable_ub_src", [](ostream&, const Model&){},
+          "Source has guardable UB");
     CHECK(retdom_a && retdom_b && tgt_state.getGuardableUB(),
-          [](ostream&, const Model&){}, "Target has guardable UB");
+          "guardable_ub_tgt", [](ostream&, const Model&){},
+          "Target has guardable UB");
 
     // disallow reaching unreachable instructions
-    CHECK(src_state.getUnreachable()(),
+    CHECK(src_state.getUnreachable()(), "unreachable_src",
           [](ostream&, const Model&){}, "Source has reachable unreachable");
-    CHECK(tgt_state.getUnreachable()(),
+    CHECK(tgt_state.getUnreachable()(), "unreachable_tgt",
           [](ostream&, const Model&){}, "Target has reachable unreachable");
   }
 
@@ -631,7 +644,8 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
 
     // 1. Check UB
     CHECK(fndom_a.notImplies(fndom_b),
-          [](ostream&, const Model&){}, "Source is more defined than target");
+          "ub", [](ostream&, const Model&){},
+          "Source is more defined than target");
 
     pre = std::move(pre_old);
   }
@@ -645,7 +659,8 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
       dom_constr = (fndom_a && fndom_b) && retdom_a != retdom_b;
     }
 
-    CHECK(std::move(dom_constr), [](ostream&, const Model&){},
+    CHECK(std::move(dom_constr),
+          "retdom", [](ostream&, const Model&){},
           "Source and target don't have the same return domain");
   }
 
@@ -659,8 +674,10 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
 
   // Src function can't return poison
   if (config::disallow_ub_exploitation) {
-    CHECK(retdom_a && !a.non_poison, print_value, "Source returns poison");
-    CHECK(retdom_b && !b.non_poison, print_value, "Target returns poison");
+    CHECK(retdom_a && !a.non_poison,
+          "poison_src", print_value, "Source returns poison");
+    CHECK(retdom_b && !b.non_poison,
+          "poison_tgt", print_value, "Target returns poison");
   }
 
   auto [poison_cnstr, value_cnstr] = type.refines(src_state, tgt_state, a, b);
@@ -670,23 +687,23 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
 
   if (!config::disallow_ub_exploitation) {
     CHECK(dom && !poison_cnstr,
-          print_value, "Target is more poisonous than source");
+          "poison", print_value, "Target is more poisonous than source");
   }
   poison_cnstr = {};
 
   // 4. Check undef
   if (config::disallow_ub_exploitation) {
     CHECK(retdom_a && encode_undef_refinement(src_state, tgt_state, type,ap,bp),
-          print_value, "Source returns undef");
+          "undef_src", print_value, "Source returns undef");
     CHECK(retdom_b && encode_undef_refinement(tgt_state, src_state, type,bp,ap),
-          print_value, "Target returns undef");
+          "undef_tgt", print_value, "Target returns undef");
   } else {
     CHECK(dom && encode_undef_refinement(src_state, tgt_state, type, ap, bp),
-          print_value, "Target's return value is more undefined");
+          "undef", print_value, "Target's return value is more undefined");
   }
 
   // 5. Check value
-  CHECK(dom && !value_cnstr, print_value, "Value mismatch");
+  CHECK(dom && !value_cnstr, "value", print_value, "Value mismatch");
 
   // 6. Check memory
   auto &src_mem = src_state.returnMemory();
@@ -717,7 +734,7 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
 
   CHECK(dom && !(memory_cnstr0.isTrue() ? memory_cnstr0
                                         : value_cnstr && memory_cnstr0),
-        print_ptr_load, "Mismatch in memory");
+        "memory", print_ptr_load, "Mismatch in memory");
 
 #undef CHECK
 }
@@ -1027,19 +1044,24 @@ static void calculateAndInitConstants(Transform &t) {
     uint64_t &loc_alloc_aligned_size
       = is_src ? loc_src_alloc_aligned_size : loc_tgt_alloc_aligned_size;
 
+    observes_addresses |= fn->getFnAttrs().has(FnAttrs::Asm);
+
     for (auto &v : fn->getInputs()) {
       auto *i = dynamic_cast<const Input *>(&v);
       if (!i)
         continue;
 
       has_ptr_arg |= hasPtr(i->getType());
+      observes_addresses |= i->hasAttribute(ParamAttrs::Align) ||
+                            i->hasAttribute(ParamAttrs::Dereferenceable) ||
+                            i->hasAttribute(ParamAttrs::DereferenceableOrNull);
 
       update_min_vect_sz(i->getType());
+      max_access_size
+        = max(max_access_size, i->getAttributes().maxAccessSize());
 
       if (i->hasAttribute(ParamAttrs::Dereferenceable)) {
         does_mem_access = true;
-        uint64_t deref_bytes = i->getAttributes().derefBytes;
-        max_access_size = max(max_access_size, deref_bytes);
       }
       if (i->hasAttribute(ParamAttrs::DereferenceableOrNull)) {
         // Optimization: unless explicitly compared with a null pointer, don't
@@ -1048,13 +1070,10 @@ static void calculateAndInitConstants(Transform &t) {
         // Note that dereferenceable_or_null implies num_ptrinputs > 0,
         // which may turn has_null_block on.
         does_mem_access = true;
-        uint64_t deref_bytes = i->getAttributes().derefOrNullBytes;
-        max_access_size = max(max_access_size, deref_bytes);
       }
       if (i->hasAttribute(ParamAttrs::ByVal)) {
         does_mem_access = true;
         uint64_t sz = i->getAttributes().blockSize;
-        max_access_size = max(max_access_size, sz);
         min_global_size = min_global_size != UINT64_MAX
                             ? gcd(sz, min_global_size)
                             : sz;
@@ -1135,6 +1154,8 @@ static void calculateAndInitConstants(Transform &t) {
       } else if (auto *ic = dynamic_cast<const ICmp*>(&i)) {
         observes_addresses |= ic->isPtrCmp() &&
                               ic->getPtrCmpMode() == ICmp::INTEGRAL;
+      } else if (auto *assume = dynamic_cast<const Assume*>(&i)) {
+        observes_addresses |= assume->getKind() == Assume::Align;
       }
     }
   }
@@ -1440,7 +1461,7 @@ TypingAssignments::TypingAssignments(const expr &e) : s(true), sneg(true) {
     EnableSMTQueriesTMP tmp;
     s.add(e);
     sneg.add(!e);
-    r = s.check();
+    r = s.check("typing");
   }
 }
 
@@ -1454,7 +1475,7 @@ void TypingAssignments::operator++(void) {
   } else {
     EnableSMTQueriesTMP tmp;
     s.block(r.getModel(), &sneg);
-    r = s.check();
+    r = s.check("typing");
     assert(r.isSat() || r.isUnsat());
   }
 }
@@ -1648,9 +1669,8 @@ static void optimize_ptrcmp(Function &f) {
     auto base0 = get_base_ptr(op0);
     auto base1 = get_base_ptr(op1);
     if (base0 && base0 == base1) {
-      if (is_eq)
-        const_cast<ICmp*>(icmp)->setPtrCmpMode(ICmp::PROVENANCE);
-      else if (is_inbounds(*op0) && is_inbounds(*op1) && !is_signed_cmp)
+      if (is_eq ||
+          (is_inbounds(*op0) && is_inbounds(*op1) && !is_signed_cmp))
         // Even if op0 and op1 are inbounds, 'icmp slt op0, op1' must
         // compare underlying addresses because it is possible for the block
         // to span across [a, b] where a >s 0 && b <s 0.

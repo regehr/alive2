@@ -196,7 +196,8 @@ class llvm2alive_ : public llvm::InstVisitor<llvm2alive_, unique_ptr<Instr>> {
   auto get_operand(llvm::Value *v) {
     return llvm_util::get_operand(v,
         [this](auto I) { return convert_constexpr(I); },
-        [&](auto ag) { return copy_inserter(ag); });
+        [this](auto ag) { return copy_inserter(ag); },
+        [this](auto fn) { return register_fn_decl(fn, nullptr); });
   }
 
   RetTy NOP(llvm::Instruction &i) {
@@ -344,15 +345,6 @@ public:
     }
 
     auto fn = i.getCalledFunction();
-    FnAttrs attrs;
-    vector<ParamAttrs> param_attrs;
-
-    parse_fn_attrs(i, attrs, true);
-
-    if (auto op = dyn_cast<llvm::FPMathOperator>(&i)) {
-      if (op->hasNoNaNs())
-        attrs.set(FnAttrs::NNaN);
-    }
 
     auto ty = llvm_type2alive(i.getType());
     if (!ty)
@@ -382,13 +374,6 @@ public:
         return make_unique<Assume>(*args.at(0), Assume::AndNonPoison);
       }
 
-      Function::FnDecl decl;
-      decl.name  = '@' + fn_decl->getName().str();
-      decl.attrs = attrs;
-      decl.is_varargs = fn_decl->isVarArg();
-      if (!(decl.output = llvm_type2alive(fn_decl->getReturnType())))
-        return error(i);
-
       if (fn_decl->isVarArg())
         vararg_idx = fn_decl->arg_size();
 
@@ -403,23 +388,19 @@ public:
                                     UnaryOp::Copy);
       }
 
-      auto attrs_fndef = fn_decl->getAttributes();
-      for (uint64_t idx = 0, nargs = fn_decl->arg_size(); idx < nargs; ++idx) {
-        auto ty = llvm_type2alive(fn_decl->getArg(idx)->getType());
-        if (!ty)
-          return error(i);
-
-        unsigned attr_argidx = llvm::AttributeList::FirstArgIndex + idx;
-        auto &arg = args.at(idx);
-        ParamAttrs pattr;
-        handleParamAttrs(attrs_fndef.getAttributes(attr_argidx), pattr,
-                         *arg, arg, true);
-        decl.inputs.emplace_back(ty, std::move(pattr));
-      }
-      alive_fn->addFnDecl(std::move(decl));
+      if (!register_fn_decl(fn_decl, &args))
+        return error(i);
     }
 
+    FnAttrs attrs;
+    vector<ParamAttrs> param_attrs;
+
     parse_fn_attrs(i, attrs);
+
+    if (auto op = dyn_cast<llvm::FPMathOperator>(&i)) {
+      if (op->hasNoNaNs())
+        attrs.set(FnAttrs::NNaN);
+    }
 
     if (!approx) {
       auto [known, approx0]
@@ -463,10 +444,10 @@ public:
 
       unsigned attr_argidx = llvm::AttributeList::FirstArgIndex + argidx;
       approx |= !handleParamAttrs(attrs_callsite.getAttributes(attr_argidx),
-                                  pattr, *arg, arg, true);
+                                  pattr, &arg, true);
       if (fn && argidx < fn->arg_size())
         approx |= !handleParamAttrs(attrs_fndef.getAttributes(attr_argidx),
-                                    pattr, *arg, arg, true);
+                                    pattr, &arg, true);
 
       if (i.paramHasAttr(argidx, llvm::Attribute::NoUndef)) {
         if (i.getArgOperand(argidx)->getType()->isAggregateType())
@@ -851,10 +832,20 @@ public:
 
             BB->addInstr(make_unique<Assume>(*av, Assume::WellDefined));
           }
-        } else if (name == "align") {
-          llvm::Value *ptr = bundle.Inputs[0].get();
+        }
+        else if (name == "dereferenceable") {
+          auto *ptr   = get_operand(bundle.Inputs[0].get());
+          auto *bytes = get_operand(bundle.Inputs[1].get());
+          if (!ptr || !bytes)
+            return error(i);
+
+          BB->addInstr(make_unique<Assume>(vector<Value*>{ptr, bytes},
+                                           Assume::Dereferenceable));
+        }
+        else if (name == "align") {
+          auto *aptr         = get_operand(bundle.Inputs[0].get());
           llvm::Value *align = bundle.Inputs[1].get();
-          auto *aptr = get_operand(ptr), *aalign = get_operand(align);
+          auto *aalign       = get_operand(align);
           if (!aptr || !aalign || align->getType()->getIntegerBitWidth() > 64)
             return error(i);
 
@@ -870,15 +861,18 @@ public:
             BB->addInstr(std::move(gep));
           }
 
-          vector<Value *> args = {aptr, aalign};
-          BB->addInstr(make_unique<Assume>(std::move(args), Assume::Align));
-        } else if (name == "nonnull") {
-          llvm::Value *ptr = bundle.Inputs[0].get();
-          auto *aptr = get_operand(ptr);
-          if (!aptr)
+          BB->addInstr(make_unique<Assume>(vector<Value*>{aptr, aalign},
+                                           Assume::Align));
+        }
+        else if (name == "nonnull") {
+          auto *ptr = get_operand(bundle.Inputs[0].get());
+          if (!ptr)
             return error(i);
 
-          BB->addInstr(make_unique<Assume>(*aptr, Assume::NonNull));
+          BB->addInstr(make_unique<Assume>(*ptr, Assume::NonNull));
+        }
+        else if (name == "cold" || name == "ignore") {
+          // Not relevant for correctness
         } else {
           return error(i);
         }
@@ -1264,7 +1258,8 @@ public:
 
   RetTy visitInstruction(llvm::Instruction &i) { return error(i); }
 
-  RetTy error(llvm::Instruction &i) {
+  template <typename RetType = RetTy>
+  RetType error(llvm::Instruction &i) {
     if (hit_limits)
       return {};
     stringstream ss;
@@ -1274,6 +1269,7 @@ public:
          << string_view(std::move(ss).str()).substr(0, 80) << '\n';
     return {};
   }
+
   RetTy errorAttr(const llvm::Attribute &attr) {
     *out << "ERROR: Unsupported attribute: " << attr.getAsString() << '\n';
     return {};
@@ -1400,6 +1396,37 @@ public:
     return true;
   }
 
+  bool handleOpBundles(llvm::Instruction &llvm_i, Instr *i) {
+    auto *call = dyn_cast<llvm::CallBase>(&llvm_i);
+    if (!call)
+      return true;
+
+    for (auto &bundle0 : call->bundle_op_infos()) {
+      auto bundle = call->operandBundleFromBundleOpInfo(bundle0);
+      if (bundle.getTagName() == "clang.arc.attachedcall") {
+        assert(bundle.Inputs.size() == 1);
+        auto *fn = dyn_cast<llvm::Function>(bundle.Inputs[0].get());
+        auto ty = llvm_type2alive(fn->getReturnType());
+        if (!ty)
+          return error<bool>(llvm_i);
+
+        FnAttrs attrs;
+        parse_fn_decl_attrs(fn, attrs);
+
+        auto call
+          = make_unique<FnCall>(*ty, i->getName() + "#arc",
+                                '@' + fn->getName().str(), std::move(attrs));
+
+        if (fn->isIntrinsic())
+          call->setApproximated(true);
+
+        BB->addInstr(std::move(call));
+      }
+    }
+
+    return true;
+  }
+
   unique_ptr<Instr>
   handleRangeAttrNoInsert(const llvm::Attribute &attr, Value &val,
                           bool is_welldefined = false) {
@@ -1425,7 +1452,7 @@ public:
   // TODO: Once attributes at a call site are fully supported, we should
   // remove is_callsite flag
   bool handleParamAttrs(const llvm::AttributeSet &aset, ParamAttrs &attrs,
-                        Value &val, Value* &newval, bool is_callsite) {
+                        Value **val, bool is_callsite) {
     bool precise = true;
     for (const llvm::Attribute &llvmattr : aset) {
       switch (llvmattr.getKindAsEnum()) {
@@ -1500,7 +1527,8 @@ public:
         break;
 
       case llvm::Attribute::Range:
-        newval = handleRangeAttr(llvmattr, val,
+        if (val)
+          *val = handleRangeAttr(llvmattr, **val,
                                  aset.hasAttribute(llvm::Attribute::NoUndef));
         break;
 
@@ -1535,7 +1563,7 @@ public:
     return precise;
   }
 
-  void handleRetAttrs(const llvm::AttributeSet &aset, FnAttrs &attrs) {
+  static void handleRetAttrs(const llvm::AttributeSet &aset, FnAttrs &attrs) {
     for (const llvm::Attribute &llvmattr : aset) {
       if (!llvmattr.isEnumAttribute() && !llvmattr.isIntAttribute() &&
           !llvmattr.isTypeAttribute())
@@ -1594,7 +1622,7 @@ public:
     return attr;
   }
 
-  void handleFnAttrs(const llvm::AttributeSet &aset, FnAttrs &attrs) {
+  static void handleFnAttrs(const llvm::AttributeSet &aset, FnAttrs &attrs) {
     for (const llvm::Attribute &llvmattr : aset) {
       if (llvmattr.isStringAttribute()) {
         auto str = llvmattr.getKindAsString();
@@ -1660,7 +1688,7 @@ public:
     }
   }
 
-  MemoryAccess handleMemAttrs(const llvm::MemoryEffects &e) {
+  static MemoryAccess handleMemAttrs(const llvm::MemoryEffects &e) {
     MemoryAccess attrs;
     attrs.setNoAccess();
 
@@ -1684,27 +1712,56 @@ public:
     return attrs;
   }
 
-  void parse_fn_attrs(const llvm::CallInst &i, FnAttrs &attrs,
-                      bool decl_only = false) {
-    auto fn = i.getCalledFunction();
-    llvm::AttributeList attrs_callsite = i.getAttributes();
-    llvm::AttributeList attrs_fndef = fn ? fn->getAttributes()
-                                          : llvm::AttributeList();
+  static void parse_fn_decl_attrs(const llvm::Function *fn, FnAttrs &attrs) {
+    llvm::AttributeList attrs_fndef = fn->getAttributes();
     auto ret = llvm::AttributeList::ReturnIndex;
     auto fnidx = llvm::AttributeList::FunctionIndex;
-
-    if (!decl_only) {
-      handleRetAttrs(attrs_callsite.getAttributes(ret), attrs);
-      handleFnAttrs(attrs_callsite.getAttributes(fnidx), attrs);
-    }
     handleRetAttrs(attrs_fndef.getAttributes(ret), attrs);
     handleFnAttrs(attrs_fndef.getAttributes(fnidx), attrs);
     attrs.mem.setFullAccess();
-    if (!decl_only)
-      attrs.mem &= handleMemAttrs(i.getMemoryEffects());
-    if (fn)
-      attrs.mem &= handleMemAttrs(fn->getMemoryEffects());
+    attrs.mem &= handleMemAttrs(fn->getMemoryEffects());
     attrs.inferImpliedAttributes();
+  }
+
+  static void parse_fn_attrs(const llvm::CallInst &i, FnAttrs &attrs) {
+    attrs.mem.setFullAccess();
+
+    if (auto fn = i.getCalledFunction())
+      parse_fn_decl_attrs(fn, attrs);
+
+    llvm::AttributeList attrs_callsite = i.getAttributes();
+    auto ret = llvm::AttributeList::ReturnIndex;
+    auto fnidx = llvm::AttributeList::FunctionIndex;
+    handleRetAttrs(attrs_callsite.getAttributes(ret), attrs);
+    handleFnAttrs(attrs_callsite.getAttributes(fnidx), attrs);
+    attrs.mem &= handleMemAttrs(i.getMemoryEffects());
+    attrs.inferImpliedAttributes();
+  }
+
+  bool register_fn_decl(llvm::Function *fn, vector<Value*> *args) {
+    Function::FnDecl decl;
+    decl.name       = '@' + fn->getName().str();
+    decl.is_varargs = fn->isVarArg();
+    if (!(decl.output = llvm_type2alive(fn->getReturnType())))
+      return false;
+
+    parse_fn_decl_attrs(fn, decl.attrs);
+
+    const auto &attrs_fndef = fn->getAttributes();
+    for (uint64_t idx = 0, nargs = fn->arg_size(); idx < nargs; ++idx) {
+      auto ty = llvm_type2alive(fn->getArg(idx)->getType());
+      if (!ty)
+        return false;
+
+      unsigned attr_argidx = llvm::AttributeList::FirstArgIndex + idx;
+      auto **arg = args ? &args->at(idx) : nullptr;
+      ParamAttrs pattr;
+      handleParamAttrs(attrs_fndef.getAttributes(attr_argidx), pattr, arg,
+                       true);
+      decl.inputs.emplace_back(ty, std::move(pattr));
+    }
+    alive_fn->addFnDecl(std::move(decl));
+    return true;
   }
 
 
@@ -1748,7 +1805,7 @@ public:
       auto val = make_unique<Input>(*ty, value_name(arg));
       Value *newval = val.get();
 
-      if (!ty || !handleParamAttrs(argattr, attrs, *val, newval, false))
+      if (!ty || !handleParamAttrs(argattr, attrs, &newval, false))
         return {};
       val->setAttributes(std::move(attrs));
       add_identifier(arg, *newval);
@@ -1827,6 +1884,9 @@ public:
 
           if (i.hasMetadataOtherThanDebugLoc() &&
               !handleMetadata(Fn, i, alive_i))
+            return {};
+
+          if (!handleOpBundles(i, alive_i))
             return {};
         } else
           return {};

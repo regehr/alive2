@@ -72,7 +72,8 @@ struct LoopLikeFunctionApproximator {
     prefix.add(ub_i);
 
     // Keep going if the function is being applied to a constant input
-    is_last &= !continue_i.isConst();
+    if (i < 512)
+      is_last &= !continue_i.isConst();
 
     if (is_last)
       s.addPre(prefix().implies(!continue_i));
@@ -2204,12 +2205,21 @@ MemInstr::ByteAccessInfo FnCall::getByteAccessInfo() const {
   if (attrs.has(AllocKind::Uninitialized) || attrs.has(AllocKind::Free))
     return {};
 
+  bool has_ptr_args = any_of(args.begin(), args.end(),
+    [](const auto &pair) {
+      auto &[val, attrs] = pair;
+      return hasPtr(val->getType()) &&
+             !attrs.has(ParamAttrs::ByVal) &&
+             !attrs.has(ParamAttrs::NoCapture);
+    });
+
   // calloc style
   if (attrs.has(AllocKind::Zeroed)) {
     auto info = ByteAccessInfo::intOnly(1);
     auto [alloc, align] = getMaxAllocSize();
     if (alloc)
       info.byteSize = gcd(alloc, align);
+    info.observesAddresses = has_ptr_args;
     return info;
   }
 
@@ -2248,11 +2258,10 @@ MemInstr::ByteAccessInfo FnCall::getByteAccessInfo() const {
   }
 #undef UPDATE
 
-  // No dereferenceable attribute
-  if (bytesize == 0)
-    return {};
-
-  return ByteAccessInfo::anyType(bytesize);
+  ByteAccessInfo info;
+  info.byteSize = bytesize;
+  info.observesAddresses = has_ptr_args;
+  return info;
 }
 
 
@@ -2489,7 +2498,9 @@ StateValue FnCall::toSMT(State &s) const {
     UNREACHABLE();
   };
 
-  if (attrs.has(AllocKind::Alloc) || attrs.has(AllocKind::Realloc)) {
+  if (attrs.has(AllocKind::Alloc) ||
+      attrs.has(AllocKind::Realloc) ||
+      attrs.has(FnAttrs::AllocSize)) {
     auto [size, np_size] = attrs.computeAllocSize(s, args);
     expr nonnull = attrs.isNonNull() ? expr(true)
                                      : expr::mkBoolVar("malloc_never_fails");
@@ -2688,8 +2699,12 @@ StateValue ICmp::toSMT(State &s) const {
 
   if (isPtrCmp()) {
     fn = [this, &s, fn](const expr &av, const expr &bv, Cond cond) {
-      Pointer lhs(s.getMemory(), av);
-      Pointer rhs(s.getMemory(), bv);
+      auto &m = s.getMemory();
+      Pointer lhs(m, av);
+      Pointer rhs(m, bv);
+      m.observesAddr(lhs);
+      m.observesAddr(rhs);
+
       switch (pcmode) {
       case INTEGRAL:
         return fn(lhs.getAddress(), rhs.getAddress(), cond);
@@ -3833,7 +3848,7 @@ StateValue GEP::toSMT(State &s) const {
 
       // try to simplify the pointer
       if (all_zeros.isFalse())
-        ptr.inbounds(true);
+        ptr.inbounds();
     }
 
     return { std::move(ptr).release(), non_poison() };

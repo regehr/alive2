@@ -135,7 +135,7 @@ struct OffsetSym {
   long offset;
 };
 
-typedef variant<char, OffsetSym> RODataItem;
+typedef variant<OffsetSym, char> RODataItem;
 
 struct MCGlobal {
   string name;
@@ -150,7 +150,7 @@ class MCFunction {
 
 public:
   MCInstrAnalysis *IA;
-  MCInstPrinter *IP;
+  MCInstPrinter *InstPrinter;
   MCRegisterInfo *MRI;
   vector<MCBasicBlock> BBs;
   vector<MCGlobal> MCglobals;
@@ -210,7 +210,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
   Function *liftedFn{nullptr}, *myFree{nullptr};
   MCBasicBlock *MCBB{nullptr};
   BasicBlock *LLVMBB{nullptr};
-  MCInstPrinter *instrPrinter{nullptr};
+  MCInstPrinter *InstPrinter{nullptr};
   MCInst *CurInst{nullptr}, *PrevInst{nullptr};
   unsigned armInstNum{0}, llvmInstNum{0};
   map<unsigned, Value *> RegFile;
@@ -529,7 +529,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
 
   [[noreturn]] void visitError() {
     out->flush();
-    string str(instrPrinter->getOpcodeName(CurInst->getOpcode()));
+    string str(InstPrinter->getOpcodeName(CurInst->getOpcode()));
     *out << "\nERROR: Unsupported AArch64 instruction: " << str << "\n";
     out->flush();
     exit(-1);
@@ -2300,7 +2300,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
   Value *getIndexedElement(unsigned idx, unsigned eltSize, unsigned reg) override {
     assert(getRegSize(reg) == 128 && "Expected 128-bit register");
     auto *ty = getVecTy(eltSize, 128 / eltSize);
-    auto *r = createBitCast(readFromReg(reg), ty);
+    auto *r = readFromRegTyped(reg, ty);
     return createExtractElement(r, idx);
   }
 
@@ -2773,9 +2773,16 @@ class arm2llvm : public aslp::lifter_interface_llvm {
   }
 
   // always does a full-width read
-  Value *readFromReg(unsigned Reg) {
+  //
+  // TODO eliminate all uses of this and rename readFromRegTyped to readFromReg
+  Value *readFromRegOld(unsigned Reg) {
     auto RegAddr = dealiasReg(Reg);
     return createLoad(getIntTy(getRegSize(mapRegToBackingReg(Reg))), RegAddr);
+  }
+
+  Value *readFromRegTyped(unsigned Reg, Type *ty) {
+    auto RegAddr = dealiasReg(Reg);
+    return createLoad(ty, RegAddr);
   }
 
   Value *readPtrFromReg(unsigned Reg) {
@@ -2824,10 +2831,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     assert(op.isReg());
     auto reg = op.getReg();
     auto regSize = getRegSize(reg);
-    auto val = readFromReg(reg);
-    if (regSize < getBitWidth(val))
-      val = createTrunc(val, getIntTy(regSize));
-    return val;
+    return readFromRegTyped(reg, getIntTy(regSize));
   }
 
   // FIXME: stop using this -- instructions should know what they're loading
@@ -2852,7 +2856,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     if (op.isImm()) {
       V = getIntConst(op.getImm(), size);
     } else if (op.isReg()) {
-      V = readFromReg(op.getReg());
+      V = readFromRegOld(op.getReg());
       if (size == 32) {
         // Always truncate since backing registers are either 64 or 128 bits
         V = createTrunc(V, getIntTy(32));
@@ -3471,10 +3475,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       Value *param{nullptr};
       if (argTy->isFloatingPointTy() || argTy->isVectorTy()) {
         if (vecArgNum < 8) {
-          param = readFromReg(AArch64::Q0 + vecArgNum);
-          if (getBitWidth(argTy) < 128)
-            param = createTrunc(param, getIntTy(getBitWidth(argTy)));
-          param = createBitCast(param, argTy);
+          param = readFromRegTyped(AArch64::Q0 + vecArgNum, argTy);
           ++vecArgNum;
         } else {
           auto sz = getBitWidth(argTy);
@@ -3494,7 +3495,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       } else if (argTy->isIntegerTy() || argTy->isPointerTy()) {
         // FIXME check signext and zeroext
         if (scalarArgNum < 8) {
-          param = readFromReg(AArch64::X0 + scalarArgNum);
+          param = readFromRegTyped(AArch64::X0 + scalarArgNum, getIntTy(64));
           ++scalarArgNum;
         } else {
           auto SP = readPtrFromReg(AArch64::SP);
@@ -3662,9 +3663,9 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       // FIXME: check callee-saved vector registers
       // FIXME: make sure code doesn't touch 16, 17?
       // FIXME: check FP and LR?
-      assertSame(initialSP, readFromReg(AArch64::SP));
+      assertSame(initialSP, readFromRegTyped(AArch64::SP, getIntTy(64)));
       for (unsigned r = 19; r <= 28; ++r)
-        assertSame(initialReg[r], readFromReg(AArch64::X0 + r));
+        assertSame(initialReg[r], readFromRegTyped(AArch64::X0 + r, getIntTy(64)));
     }
 
     CallInst::Create(myFree, {stackMem}, "", LLVMBB);
@@ -3675,9 +3676,9 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     } else {
       Value *retVal = nullptr;
       if (retTyp->isVectorTy() || retTyp->isFloatingPointTy()) {
-        retVal = readFromReg(AArch64::Q0);
+        retVal = readFromRegTyped(AArch64::Q0, retTyp);
       } else {
-        retVal = readFromReg(AArch64::X0);
+        retVal = readFromRegOld(AArch64::X0);
       }
       if (retTyp->isPointerTy()) {
         retVal = new IntToPtrInst(retVal, PointerType::get(Ctx, 0), "", LLVMBB);
@@ -3831,7 +3832,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     }
 
     auto baseAddr = readPtrFromReg(baseReg);
-    auto offset = extendAndShiftValue(readFromReg(offsetReg),
+    auto offset = extendAndShiftValue(readFromRegTyped(offsetReg, getIntTy(64)),
                                       (ExtendType)extTyp, shiftAmt);
 
     return make_pair(baseAddr, offset);
@@ -4302,10 +4303,10 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     }
 
     auto baseAddr = readPtrFromReg(baseReg);
-    auto offset = extendAndShiftValue(readFromReg(offsetReg),
+    auto offset = extendAndShiftValue(readFromRegOld(offsetReg),
                                       (ExtendType)extTyp, shiftAmt);
 
-    return make_tuple(baseAddr, offset, readFromReg(op0.getReg()));
+    return make_tuple(baseAddr, offset, readFromRegOld(op0.getReg()));
   }
 
   void storeToMemoryValOffset(Value *base, Value *offset, u_int64_t size,
@@ -4331,11 +4332,11 @@ class arm2llvm : public aslp::lifter_interface_llvm {
              (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
              (baseReg == AArch64::FP) || (baseReg == AArch64::XZR));
       auto baseAddr = readPtrFromReg(baseReg);
-      return make_tuple(baseAddr, op2.getImm(), readFromReg(op0.getReg()));
+      return make_tuple(baseAddr, op2.getImm(), readFromRegOld(op0.getReg()));
     } else {
       assert(op2.isExpr());
       auto [globalVar, _] = getExprVar(op2.getExpr());
-      return make_tuple(globalVar, 0, readFromReg(op0.getReg()));
+      return make_tuple(globalVar, 0, readFromRegOld(op0.getReg()));
     }
   }
 
@@ -4357,10 +4358,10 @@ class arm2llvm : public aslp::lifter_interface_llvm {
 
 public:
   arm2llvm(Module *LiftedModule, MCFunction &MF, Function &srcFn,
-           MCInstPrinter *instrPrinter, const MCCodeEmitter &MCE,
+           MCInstPrinter *InstPrinter, const MCCodeEmitter &MCE,
            const MCSubtargetInfo &STI, const MCInstrAnalysis& IA)
       : LiftedModule(LiftedModule), MF(MF), srcFn(srcFn),
-        instrPrinter(instrPrinter), MCE{MCE}, STI{STI}, IA{IA},
+        InstPrinter(InstPrinter), MCE{MCE}, STI{STI}, IA{IA},
         DL(srcFn.getParent()->getDataLayout()) {
 
     // sanity checking
@@ -4416,10 +4417,10 @@ public:
 
     std::string sss;
     llvm::raw_string_ostream ss{sss};
-    I.dump_pretty(ss, instrPrinter);
+    I.dump_pretty(ss, InstPrinter);
     *out << sss << " = " << std::flush;
     if (I.getOpcode() != AArch64::SEH_Nop) {
-      instrPrinter->printInst(&I, 100, "", STI, outs());
+      InstPrinter->printInst(&I, 100, "", STI, outs());
       outs().flush();
     }
     *out << std::endl;
@@ -4443,7 +4444,7 @@ public:
           << "... lifted via aslp: "
           << encoding
           << " - "
-          << instrPrinter->getOpcodeName(I.getOpcode()).str() 
+          << InstPrinter->getOpcodeName(I.getOpcode()).str() 
           << std::endl;
         encodingCounts[encoding]++;
         return;
@@ -4467,7 +4468,7 @@ public:
       }
     } else {
       *out << "... arm opnum failed: "
-          << instrPrinter->getOpcodeName(I.getOpcode()).str() 
+          << InstPrinter->getOpcodeName(I.getOpcode()).str() 
           << '\n';
       // arm opcode translation failed, possibly SEH_NOP. continue with classic.
     }
@@ -6077,7 +6078,7 @@ public:
       if (isPost) {
         if (CurInst->getOperand(5).isReg() &&
             CurInst->getOperand(5).getReg() != AArch64::XZR) {
-          totalOffset = readFromReg(CurInst->getOperand(3).getReg());
+          totalOffset = readFromRegOld(CurInst->getOperand(3).getReg());
         } else {
           totalOffset = getIntConst(nregs * (eltSize / 8), 64);
         }
@@ -6089,9 +6090,8 @@ public:
       auto offset = 0;
       for (unsigned i = 0; i < nregs; i++, offset += eltSize / 8) {
         auto loaded = makeLoadWithOffset(base, offset, eltSize / 8);
-        auto dst = readFromReg(regCounter);
-        auto dst_casted = createBitCast(dst, getVecTy(eltSize, numElts));
-        auto updated = createInsertElement(dst_casted, loaded, index);
+        auto dst = readFromRegTyped(regCounter, getVecTy(eltSize, numElts));
+        auto updated = createInsertElement(dst, loaded, index);
         updateReg(updated, regCounter);
 
         regCounter++;
@@ -6196,7 +6196,7 @@ public:
       if (isPost) {
         if (CurInst->getOperand(3).isReg() &&
             CurInst->getOperand(3).getReg() != AArch64::XZR) {
-          offset = readFromReg(CurInst->getOperand(3).getReg());
+          offset = readFromRegOld(CurInst->getOperand(3).getReg());
         } else {
           offset = getIntConst((eltSize / 8), 64);
         }
@@ -6611,7 +6611,7 @@ public:
       if (isPost) {
         if (CurInst->getOperand(3).isReg() &&
             CurInst->getOperand(3).getReg() != AArch64::XZR) {
-          offset = readFromReg(CurInst->getOperand(3).getReg());
+          offset = readFromRegOld(CurInst->getOperand(3).getReg());
         } else {
           offset = getIntConst(nregs * numElts * (eltSize / 8), 64);
         }
@@ -6774,36 +6774,36 @@ public:
       case AArch64::STRBBpost:
       case AArch64::STRBpost:
         size = 1;
-        loaded = createTrunc(readFromReg(srcReg), i8);
+        loaded = readFromRegTyped(srcReg, i8);
         break;
       case AArch64::STRHHpre:
       case AArch64::STRHpre:
       case AArch64::STRHHpost:
       case AArch64::STRHpost:
         size = 2;
-        loaded = createTrunc(readFromReg(srcReg), i16);
+        loaded = readFromRegTyped(srcReg, i16);
         break;
       case AArch64::STRWpre:
       case AArch64::STRSpre:
       case AArch64::STRWpost:
       case AArch64::STRSpost:
         size = 4;
-        loaded = createTrunc(readFromReg(srcReg), i32);
+        loaded = readFromRegTyped(srcReg, i32);
         break;
       case AArch64::STRXpre:
       case AArch64::STRXpost:
         size = 8;
-        loaded = readFromReg(srcReg);
+        loaded = readFromRegTyped(srcReg, i64);
         break;
       case AArch64::STRDpre:
       case AArch64::STRDpost:
         size = 8;
-        loaded = createTrunc(readFromReg(srcReg), i64);
+        loaded = readFromRegTyped(srcReg, i64);
         break;
       case AArch64::STRQpre:
       case AArch64::STRQpost:
         size = 16;
-        loaded = readFromReg(srcReg);
+        loaded = readFromRegTyped(srcReg, getIntTy(128));
         break;
       default:
         assert(false);
@@ -6956,7 +6956,7 @@ public:
       if (isPost) {
         if (CurInst->getOperand(4).isReg() &&
             CurInst->getOperand(4).getReg() != AArch64::XZR) {
-          offset = readFromReg(CurInst->getOperand(4).getReg());
+          offset = readFromRegOld(CurInst->getOperand(4).getReg());
         } else {
           offset = getIntConst(nregs * (eltSize / 8), 64);
         }
@@ -6968,7 +6968,7 @@ public:
       Value *valueToStore = getUndefVec(nregs, eltSize);
       // Outer loop control for register to load from
       for (unsigned j = 0; j < nregs; j++) {
-        Value *registerjValue = readFromReg(regCounter);
+        Value *registerjValue = readFromRegOld(regCounter);
 
         auto casted = createBitCast(registerjValue, getVecTy(eltSize, numElts));
         auto loaded = createExtractElement(casted, index);
@@ -7381,7 +7381,7 @@ public:
       if (isPost) {
         if (CurInst->getOperand(3).isReg() &&
             CurInst->getOperand(3).getReg() != AArch64::XZR) {
-          offset = readFromReg(CurInst->getOperand(3).getReg());
+          offset = readFromRegOld(CurInst->getOperand(3).getReg());
         } else {
           offset = getIntConst(nregs * numElts * (eltSize / 8), 64);
         }
@@ -7395,7 +7395,7 @@ public:
       Value *valueToStore = getUndefVec(nregs, numElts * eltSize);
       // Outer loop control for register to load from
       for (unsigned j = 0; j < nregs; j++) {
-        Value *registerjValue = readFromReg(regCounter);
+        Value *registerjValue = readFromRegOld(regCounter);
         if (!fullWidth) {
           registerjValue = createTrunc(registerjValue, i64);
         }
@@ -7502,8 +7502,8 @@ public:
              (baseReg == AArch64::SP) || (baseReg == AArch64::LR) ||
              (baseReg == AArch64::FP));
       auto baseAddr = readPtrFromReg(baseReg);
-      auto val1 = readFromReg(op0.getReg());
-      auto val2 = readFromReg(op1.getReg());
+      auto val1 = readFromRegOld(op0.getReg());
+      auto val2 = readFromRegOld(op1.getReg());
 
       auto imm = op3.getImm();
 
@@ -7680,29 +7680,29 @@ public:
       case AArch64::STPWpost:
       case AArch64::STPSpost: {
         scale = 2;
-        loaded1 = createTrunc(readFromReg(srcReg1), i32);
-        loaded2 = createTrunc(readFromReg(srcReg2), i32);
+        loaded1 = createTrunc(readFromRegOld(srcReg1), i32);
+        loaded2 = createTrunc(readFromRegOld(srcReg2), i32);
         break;
       }
       case AArch64::STPXpre:
       case AArch64::STPXpost: {
         scale = 3;
-        loaded1 = readFromReg(srcReg1);
-        loaded2 = readFromReg(srcReg2);
+        loaded1 = readFromRegOld(srcReg1);
+        loaded2 = readFromRegOld(srcReg2);
         break;
       }
       case AArch64::STPDpre:
       case AArch64::STPDpost: {
         scale = 3;
-        loaded1 = createTrunc(readFromReg(srcReg1), i64);
-        loaded2 = createTrunc(readFromReg(srcReg2), i64);
+        loaded1 = createTrunc(readFromRegOld(srcReg1), i64);
+        loaded2 = createTrunc(readFromRegOld(srcReg2), i64);
         break;
       }
       case AArch64::STPQpre:
       case AArch64::STPQpost: {
         scale = 4;
-        loaded1 = readFromReg(srcReg1);
-        loaded2 = readFromReg(srcReg2);
+        loaded1 = readFromRegOld(srcReg1);
+        loaded2 = readFromRegOld(srcReg2);
         break;
       }
       default: {
@@ -7879,7 +7879,7 @@ public:
       if (w < 32)
         val = createTrunc(val, getIntTy(w));
       auto lane = getImm(2);
-      auto orig = readFromReg(CurInst->getOperand(1).getReg());
+      auto orig = readFromRegOld(CurInst->getOperand(1).getReg());
       auto vec = createBitCast(orig, getVecTy(w, 128 / w));
       auto inserted = createInsertElement(vec, val, lane);
       updateOutputReg(inserted);
@@ -8388,6 +8388,8 @@ public:
         eltSizeLog2 = 5;
         truncSize = i32;
         break;
+      default:
+        assert(false && "error");
       }
       auto shiftAmt = getIntConst(index << eltSizeLog2, 128);
       auto shifted = createRawLShr(val, shiftAmt);
@@ -9217,7 +9219,7 @@ public:
       auto baseReg = decodeRegSet(CurInst->getOperand(1).getReg());
       vector<Value *> regs;
       for (int i = 0; i < nregs; ++i) {
-        regs.push_back(createBitCast(readFromReg(baseReg), fullTy));
+        regs.push_back(createBitCast(readFromRegOld(baseReg), fullTy));
         baseReg++;
         if (baseReg > AArch64::Q31)
           baseReg = AArch64::Q0;
@@ -11737,7 +11739,7 @@ public:
       auto &op1 = CurInst->getOperand(srcReg);
       assert(isSIMDandFPRegOperand(op0) && isSIMDandFPRegOperand(op0));
 
-      Value *src = readFromReg(op1.getReg());
+      Value *src = readFromRegOld(op1.getReg());
       assert(getBitWidth(src) == 128 &&
              "Source value is not a vector with 128 bits");
 
@@ -11780,7 +11782,7 @@ public:
       if (part) {
         // Preserve the lower 64 bits so, read from destination register
         // and insert to the upper 64 bits
-        Value *dest = readFromReg(op0.getReg());
+        Value *dest = readFromRegOld(op0.getReg());
         Value *original_dest_vector = createBitCast(dest, getVecTy(64, 2));
 
         Value *element = createBitCast(narrowed_vector, i64);
@@ -11848,7 +11850,7 @@ public:
       auto &op1 = CurInst->getOperand(srcReg);
       assert(isSIMDandFPRegOperand(op0) && isSIMDandFPRegOperand(op0));
 
-      Value *src = readFromReg(op1.getReg());
+      Value *src = readFromRegOld(op1.getReg());
       assert(getBitWidth(src) == 128 &&
              "Source value is not a vector with 128 bits");
 
@@ -11924,7 +11926,7 @@ public:
       if (part) {
         // Preserve the lower 64 bits so, read from destination register
         // and insert to the upper 64 bits
-        Value *dest = readFromReg(op0.getReg());
+        Value *dest = readFromRegOld(op0.getReg());
         Value *original_dest_vector = createBitCast(dest, getVecTy(64, 2));
 
         Value *element = createBitCast(final_vector, i64);
@@ -12458,7 +12460,7 @@ public:
       stringstream Name;
       Name << "X" << Reg - AArch64::X0;
       createRegStorage(Reg, 64, Name.str());
-      initialReg[Reg - AArch64::X0] = readFromReg(Reg);
+      initialReg[Reg - AArch64::X0] = readFromRegOld(Reg);
     }
 
     // Allocating storage for thirty-two 128 bit NEON registers
@@ -12475,7 +12477,7 @@ public:
     // case
     auto paramBase = createGEP(i8, stackMem, {getIntConst(stackBytes, 64)}, "");
     createStore(paramBase, RegFile[AArch64::SP]);
-    initialSP = readFromReg(AArch64::SP);
+    initialSP = readFromRegOld(AArch64::SP);
 
     // FP is X29; we'll initialize it later
     createRegStorage(AArch64::FP, 64, "FP");
@@ -12568,7 +12570,7 @@ public:
     auto initFP = createGEP(i64, paramBase, {getIntConst(stackSlot, 64)}, "");
     createStore(initFP, RegFile[AArch64::FP]);
 
-    *out << "\n\nabout to lift the instructions\n";
+    *out << "\n\nlifting ARM instructions to LLVM\n";
 
     for (auto &[llvm_bb, mc_bb] : BBs) {
       LLVMBB = llvm_bb;
@@ -12577,6 +12579,7 @@ public:
 
       for (auto &inst : mc_instrs) {
         llvmInstNum = 0;
+	*out << armInstNum << " : " << (string)InstPrinter->getOpcodeName(inst.getOpcode()) << "\n";
         ++armInstNum;
         liftInst(inst);
       }
@@ -12631,11 +12634,11 @@ public:
   MCFunction MF;
   unsigned cnt{0};
 
-  MCStreamerWrapper(MCContext &Context, MCInstrAnalysis *IA, MCInstPrinter *IP,
+  MCStreamerWrapper(MCContext &Context, MCInstrAnalysis *IA, MCInstPrinter *InstPrinter,
                     MCRegisterInfo *MRI)
       : MCStreamer(Context), IA(IA) {
     MF.IA = IA;
-    MF.IP = IP;
+    MF.InstPrinter = InstPrinter;
     MF.MRI = MRI;
   }
 
@@ -12748,8 +12751,10 @@ public:
   virtual void emitBytes(StringRef Data) override {
     auto len = Data.size();
     *out << "[emitBytes " << len << " bytes]\n";
-    for (unsigned i = 0; i < len; ++i)
-      curROData.push_back(RODataItem{Data[i]});
+    for (unsigned i = 0; i < len; ++i) {
+      auto rod = RODataItem{Data[i]};
+      curROData.push_back(rod);
+    }
   }
 
   virtual void emitFill(const MCExpr &NumBytes, uint64_t FillValue,
@@ -12760,8 +12765,10 @@ public:
       auto bytes = ce->getValue();
       *out << "[emitFill value = " << FillValue << ", size = " << bytes
            << "]\n";
-      for (int i = 0; i < bytes; ++i)
-        curROData.push_back(RODataItem{(char)FillValue});
+      for (int i = 0; i < bytes; ++i) {
+        auto rod = RODataItem{(char)FillValue};
+        curROData.push_back(rod);
+      }
     } else {
       *out << "[emitFill is unknown!]\n";
     }
