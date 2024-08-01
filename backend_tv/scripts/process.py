@@ -5,7 +5,7 @@ import numpy as np
 
 csv_file = sys.argv[1]
 
-def main():
+def timeout_regressions():
   df = pd.read_csv(csv_file, index_col=0)
 
   # drop instruction name for unsupported instructions to reduce number of distinct rows
@@ -38,8 +38,8 @@ def main():
   nonregressed = df.loc[(df['old_outcome'] == '[c]') & (df['aslp_outcome'] == '[c]')]
 
   # for each encoding, computes the proportion of (non)regressed tests in which it appears
-  reg = regressed[num_cols].clip(0,1).sum().div(len(regressed))
-  nonreg = nonregressed[num_cols].clip(0,1).sum().div(len(nonregressed))
+  reg = regressed[num_cols].clip(0,1).sum()
+  nonreg = nonregressed[num_cols].clip(0,1).sum()
 
   # print(reg.sort_values())
   # print(nonreg.sort_values())
@@ -49,9 +49,32 @@ def main():
   rel = rel.loc[(rel['regressed'] != 0) | (rel['nonregressed'] != 0)]
   rel['relative'] = rel['regressed'] / rel['nonregressed']
   rel.sort_values('relative', inplace=True)
-  print(rel.tail(10).to_string())
+  print(rel.to_string())
+  print()
+
+  worst = rel.iloc[-1].name
+  print(regressed.sort_values(worst).tail(10)[[worst, 'old_outcome', 'aslp_detail']].to_string())
+
 
   # TODO: we should look at encodings which are in /no/ successful tests.
 
+def missing_instructions_progress():
+  df = pd.read_csv(csv_file, index_col=0)
+
+  # fetch only tests which failed due to unsupported instructions
+  changed = (df.loc[df['old_outcome'] == '[i]'])
+
+  # select only one test case for each failing instruction,
+  # reducing the outsized impact of unsup instructions which reoccur often.
+  # changed = changed.drop_duplicates(subset=['old_detail'])
+
+
+  print(changed[['old_detail', 'aslp_detail']].value_counts().to_string())
+  print()
+  print(changed[['old_outcome', 'aslp_outcome']].value_counts().to_string())
+  print(changed[['old_outcome', 'aslp_outcome']].value_counts(normalize=True).to_string())
+
+
 if __name__ == '__main__':
-  main()
+  # missing_instructions_progress()
+  timeout_regressions()

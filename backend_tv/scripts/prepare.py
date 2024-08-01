@@ -64,7 +64,7 @@ def extract_asm_and_output(log):
   match d:
     case _header, asm, _debug, output, *_:
       assert 'AArch64 Assembly' in asm, log
-      assert '\n=>\n' in output, log
+      # assert '\n=>\n' in output, log
       asm = '\n'.join(asm.splitlines()[1:])
       output = output.lstrip('-')
   return asm, output
@@ -112,7 +112,7 @@ def process_log(log: Path, aslplog: Path) -> Row:
   _, aoutput = extract_asm_and_output(aslplog)
 
   def outcome(s):
-    assert s.startswith('['), s
+    assert s.startswith('['), f'{log}: >{s!r}<'
     return s.split(' ', 1)[0]
 
   return Row(log.stem, outcome(out), out, outcome(aout), aout, counts, cmdline, asm, output, aoutput)
