@@ -33,4 +33,4 @@ cmake -B build -DBUILD_TV=1 \
   "$@"
   # -DLLVM_DIR=~/progs/llvm-regehr/llvm/build/lib/cmake/llvm/ \
   # -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp \
-cmake --build build -j10 -t backend-tv
+cmake --build build -j12
