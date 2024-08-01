@@ -180,7 +180,7 @@ void doit(llvm::Module *M1, llvm::Function *srcFn, Verifier &verifier,
        it != AsmBuffer->getBuffer().end(); ++it) {
     *out << *it;
   }
-  *out << "-------------\n";
+  *out << "-------------" << std::endl;
 
   if (opt_asm_only)
     exit(0);
@@ -195,7 +195,7 @@ void doit(llvm::Module *M1, llvm::Function *srcFn, Verifier &verifier,
   auto [F1, F2] = lifter::liftFunc(M1, M2.get(), srcFn, std::move(AsmBuffer));
 
   *out << "\n\nabout to optimize lifted code:\n\n";
-  *out << lifter::moduleToString(M2.get());
+  *out << lifter::moduleToString(M2.get()) << std::endl;
 
   auto err = optimize_module(M2.get(), opt_optimize_tgt);
   if (!err.empty()) {
