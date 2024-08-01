@@ -1,11 +1,31 @@
 #!/usr/bin/env python3
+
+import os
 import sys
+import shutil
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
 
 csv_file = sys.argv[1]
 
+def underline(s):
+  print()
+  print(s)
+  print('-'*len(s))
+  print(flush=True)
+
+def make_retry_folder(df, name):
+  d = Path('.') / ('retry-' + name)
+  print(f'making retry folder {d} for {len(df)} tests')
+  os.makedirs(d, exist_ok=False)
+  for i, _ in df.iterrows():
+    shutil.copy((Path.home() / 'Downloads/arm-tests' / i.replace('_0','')).with_suffix('.bc'), d)
+
 def timeout_regressions():
+  underline('regressions')
+
   df = pd.read_csv(csv_file, index_col=0)
 
   # drop instruction name for unsupported instructions to reduce number of distinct rows
@@ -49,14 +69,25 @@ def timeout_regressions():
   rel = rel.loc[(rel['regressed'] != 0) | (rel['nonregressed'] != 0)]
   rel['relative'] = rel['regressed'] / rel['nonregressed']
   rel.sort_values('relative', inplace=True)
-  print(rel.to_string())
+  underline('regressions by instruction')
+  print(rel.tail(15).to_string())
   print()
 
   worst = rel.iloc[-1].name
   print(regressed.sort_values(worst).tail(10)[[worst, 'old_outcome', 'aslp_detail']].to_string())
 
-
   # TODO: we should look at encodings which are in /no/ successful tests.
+
+
+  # underline('closer manual examination')
+  more_poison = df.loc[(df['old_outcome'] == '[c]') & (df['aslp_detail'] == '[f] ERROR: Target is more poisonous than source')]
+  # print(more_poison[['old_outcome', 'aslp_detail']])
+  # make_retry_folder(more_poison, 'more-poisonous')
+
+  # less_defined = df.loc[(df['old_outcome'] == '[c]') & (df['aslp_detail'] == '[f] ERROR: Source is more defined than target')]
+  # print(less_defined[['old_outcome', 'aslp_detail']])
+  # make_retry_folder(less_defined, 'less_defined')
+
 
 def missing_instructions_progress():
   df = pd.read_csv(csv_file, index_col=0)
