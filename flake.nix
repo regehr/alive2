@@ -1,4 +1,7 @@
-{
+{ 
+  nixConfig.extra-substituters = [ "https://pac-nix.cachix.org/" ];
+  nixConfig.extra-trusted-public-keys = [ "pac-nix.cachix.org-1:l29Pc2zYR5yZyfSzk1v17uEZkhEw0gI4cXuOIsxIGpc=" ];
+
   inputs.pac-nix.url = "github:katrinafyi/pac-nix";
 
   outputs = {self, pac-nix}:
@@ -18,7 +21,11 @@
         default =
           pac-nix.alive2-aslp.overrideAttrs {
             name = "alive2-local-build";
-            src = nixpkgs.lib.cleanSource ./.;
+            src = nixpkgs.lib.cleanSourceWith {
+              # exclude tests directory from build for faster copy
+              filter = name: type: !(baseNameOf name == "tests" || baseNameOf name == "slurm");
+              src = ./.;
+            };
           };
       });
     };
