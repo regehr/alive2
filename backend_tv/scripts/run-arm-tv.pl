@@ -21,12 +21,12 @@ my $ret = setrlimit(RLIMIT_RSS, $MAXKB, $MAXKB);
 die unless $ret;
 # RLIMIT_VMEM prevents asan from functioning
 
-# my $NPROCS = Sys::CPU::cpu_count();
-my $NPROCS = 10;
+my $NPROCS = ($ENV{"NPROCS"} || ( Sys::CPU::cpu_count() - 1)) + 0;
 print "using $NPROCS cores\n";
 
 my $LLVMDIS = $ENV{"LLVMDIS"} || $ENV{"HOME"}."/progs/llvm-regehr/llvm/build/bin/llvm-dis";
 my $ARMTV = $ENV{"BACKENDTV"} || $ENV{"HOME"}."/progs/alive2-regehr/build/backend-tv";
+my $TIMEOUTBIN = $ENV{"TIMEOUTBIN"} || "/usr/bin/timeout";
 
 my @funcs = ();
 my $skipped = 0;
@@ -147,9 +147,9 @@ foreach my $ref (@funcs) {
     my ($out, $path, $suffix) = File::Basename::fileparse($file, ".bc");
     my $outfile = "logs/${out}_${num}.log";
     my $outfile_aslp = "logs-aslp/${out}_${num}.log";
-    my $cmd = "ASLP=false /usr/bin/timeout -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile 2>&1";
+    my $cmd = "ASLP=false $TIMEOUTBIN -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile 2>&1";
     go($cmd, $outfile);
-    $cmd = "/usr/bin/timeout -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile_aslp 2>&1";
+    $cmd = "$TIMEOUTBIN -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile_aslp 2>&1";
     go($cmd, $outfile_aslp);
     $count++;
     my $pctstr = sprintf("%.2f", $count * 100.0 / $total);
