@@ -22,7 +22,7 @@ die unless $ret;
 # RLIMIT_VMEM prevents asan from functioning
 
 # my $NPROCS = Sys::CPU::cpu_count();
-my $NPROCS = 15;
+my $NPROCS = 10;
 print "using $NPROCS cores\n";
 
 my $LLVMDIS = $ENV{"LLVMDIS"} || $ENV{"HOME"}."/progs/llvm-regehr/llvm/build/bin/llvm-dis";

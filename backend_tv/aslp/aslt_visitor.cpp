@@ -3,6 +3,7 @@
 #include "tree/TerminalNode.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/MDBuilder.h"
@@ -39,12 +40,43 @@ namespace {
     require(false, str, val);
     assert(false && "unreachable");
   }
+
+  template<typename T>
+  [[noreturn]] T undefined(const std::string_view& str, llvm::Value* val = nullptr) {
+    require(false, str, val);
+    assert(false && "unreachable");
+  }
 }
 
 #define require_(x) require(x, #x)
 #undef assert
 
 namespace aslp {
+
+llvm::Value* safe_shift(lifter_interface_llvm& iface, llvm::Value* x, llvm::Instruction::BinaryOps op, llvm::Value* shift) {
+  using llvm::Instruction::BinaryOps::Shl, llvm::Instruction::BinaryOps::AShr, llvm::Instruction::BinaryOps::LShr;
+
+  auto vecty = llvm::dyn_cast<llvm::VectorType>(x->getType());
+  auto elemty = vecty ? vecty->getElementType() : x->getType();
+  auto elemwd = elemty->getIntegerBitWidth();
+
+  expr_t (lifter_interface_llvm::*createrawshift)(expr_t, expr_t) =
+    op == Shl ? &lifter_interface_llvm::createRawShl :
+    op == AShr ? &lifter_interface_llvm::createRawAShr :
+    op == LShr ? &lifter_interface_llvm::createRawLShr :
+    undefined<decltype(createrawshift)>("invalid safe_shift op");
+
+  if (std::has_single_bit(elemwd)) {
+    auto mask = llvm::ConstantInt::get(x->getType(), elemwd - 1);
+    return (iface.*createrawshift)(x, iface.createAnd(shift, mask));
+  }
+
+  auto max = llvm::ConstantInt::get(x->getType(), elemwd - 1);
+  auto ok = iface.createICmp(llvm::ICmpInst::Predicate::ICMP_ULE, shift, max);
+  auto result = (iface.*createrawshift)(x, shift);
+  auto zeros = llvm::ConstantInt::get(x->getType(), 0);
+  return static_cast<expr_t>(iface.createSelect(ok, result, zeros));
+}
 
 
 std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instruction* before) {
@@ -523,36 +555,15 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 
     } else if (name == "lsl_bits.0") {
       std::tie(x, y) = unify_sizes(x, y);
-      auto wd = x->getType()->getIntegerBitWidth();
-      if (std::has_single_bit(wd))
-        return static_cast<expr_t>(iface.createMaskedShl(x, y));
-      auto max = iface.getIntConst(wd - 1, wd);
-      auto ok = iface.createICmp(llvm::ICmpInst::Predicate::ICMP_ULE, y, max);
-      auto shift = iface.createRawShl(x, y);
-      auto zero = iface.getIntConst(0, wd);
-      return static_cast<expr_t>(iface.createSelect(ok, shift, zero));
+      return static_cast<expr_t>(safe_shift(iface, x, llvm::Instruction::BinaryOps::Shl, y));
 
     } else if (name == "lsr_bits.0") {
       std::tie(x, y) = unify_sizes(x, y);
-      auto wd = x->getType()->getIntegerBitWidth();
-      if (std::has_single_bit(wd))
-        return static_cast<expr_t>(iface.createMaskedLShr(x, y));
-      auto max = iface.getIntConst(wd - 1, wd);
-      auto ok = iface.createICmp(llvm::ICmpInst::Predicate::ICMP_ULE, y, max);
-      auto shift = iface.createRawLShr(x, y);
-      auto zero = iface.getIntConst(0, wd);
-      return static_cast<expr_t>(iface.createSelect(ok, shift, zero));
+      return static_cast<expr_t>(safe_shift(iface, x, llvm::Instruction::BinaryOps::LShr, y));
 
     } else if (name == "asr_bits.0") {
       std::tie(x, y) = unify_sizes(x, y);
-      auto wd = x->getType()->getIntegerBitWidth();
-      if (std::has_single_bit(wd))
-        return static_cast<expr_t>(iface.createMaskedAShr(x, y));
-      auto max = iface.getIntConst(wd - 1, wd);
-      auto ok = iface.createICmp(llvm::ICmpInst::Predicate::ICMP_ULE, y, max);
-      auto shift = iface.createRawAShr(x, y);
-      auto zero = iface.getIntConst(0, wd);
-      return static_cast<expr_t>(iface.createSelect(ok, shift, zero));
+      return static_cast<expr_t>(safe_shift(iface, x, llvm::Instruction::BinaryOps::AShr, y));
 
     } else if (name == "append_bits.0") {
       auto upper = x, lower = y;
@@ -667,29 +678,23 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto trunced = iface.createTrunc(x_vector, iface.getVecTy(targs[1], targs[0]));
       return coerce(trunced, iface.getIntTy(targs[1] * targs[0]));
 
-    // TODO: This is not sound due to large shifts
     } else if (name == "asr_vec.0") {
       // bits(W * N) asr_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
-      auto shift = iface.createRawAShr(x_vector, y_vector);
-      return coerce(shift, iface.getIntTy(targs[1] * targs[0]));
+      return coerce(safe_shift(iface, x_vector, llvm::Instruction::BinaryOps::AShr, y_vector), iface.getIntTy(targs[1] * targs[0]));
 
-    // TODO: This is not sound due to large shifts
     } else if (name == "lsr_vec.0") {
       // bits(W * N) lsr_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
-      auto shift = iface.createRawLShr(x_vector, y_vector);
-      return coerce(shift, iface.getIntTy(targs[1] * targs[0]));
+      return coerce(safe_shift(iface, x_vector, llvm::Instruction::BinaryOps::LShr, y_vector), iface.getIntTy(targs[1] * targs[0]));
 
-    // TODO: This is not sound due to large shifts
     } else if (name == "lsl_vec.0") {
       // bits(W * N) lsr_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
-      auto shift = iface.createRawShl(x_vector, y_vector);
-      return coerce(shift, iface.getIntTy(targs[1] * targs[0]));
+      return coerce(safe_shift(iface, x_vector, llvm::Instruction::BinaryOps::Shl, y_vector), iface.getIntTy(targs[1] * targs[0]));
 
     } else if (name == "sle_vec.0") {
       // bits(N) sle_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)

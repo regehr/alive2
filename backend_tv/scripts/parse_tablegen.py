@@ -19,27 +19,27 @@ def main():
   print('#ifndef AARCH64_MAP_IMPL')
   print('')
   print('namespace aslp {')
-  print('  const std::map<std::string, int>& aarch64_map();')
-  print('  const std::map<int, const std::string>& aarch64_revmap();')
+  print('  const std::map<std::string, unsigned int>& aarch64_map();')
+  print('  const std::map<unsigned int, const std::string>& aarch64_revmap();')
   print('}')
   print('')
   print('#else')
   print()
   print('namespace aslp {')
-  print('const std::map<std::string, int>& aarch64_map() {')
-  print('  static std::map<std::string, int> map;')
+  print('const std::map<std::string, unsigned int>& aarch64_map() {')
+  print('  static std::map<std::string, unsigned int> map;')
   print('  if (map.size() == 0) {')
   for name, code in instructions:
-    print(f'    map.emplace("{name}", {code});')
+    print(f'    map.emplace("{name}", {code}u);')
   print('  }')
   print('  return map;')
   print('}')
 
-  print('const std::map<int, const std::string>& aarch64_revmap() {')
-  print('  static std::map<int, const std::string> map;')
+  print('const std::map<unsigned int, const std::string>& aarch64_revmap() {')
+  print('  static std::map<unsigned int, const std::string> map;')
   print('  if (map.size() == 0) {')
   for name, code in instructions:
-    print(f'    map.emplace({code}, "{name}");')
+    print(f'    map.emplace({code}u, "{name}");')
   print('  }')
   print('  return map;')
   print('}')
@@ -47,7 +47,7 @@ def main():
   print('\n} // namespace aslp\n')
 
   for name, code in instructions:
-    print(f'static_assert(llvm::AArch64::{name} == {code});')
+    print(f'static_assert(llvm::AArch64::{name} == {code}u);')
   print('#endif')
 
 

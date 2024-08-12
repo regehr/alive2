@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# vim: sw=2 ts=2 et sts=2
 
 import os
 import sys
@@ -82,11 +83,18 @@ def timeout_regressions():
   # underline('closer manual examination')
   more_poison = df.loc[(df['old_outcome'] == '[c]') & (df['aslp_detail'] == '[f] ERROR: Target is more poisonous than source')]
   # print(more_poison[['old_outcome', 'aslp_detail']])
-  # make_retry_folder(more_poison, 'more-poisonous')
+  make_retry_folder(more_poison, 'more-poisonous')
 
   # less_defined = df.loc[(df['old_outcome'] == '[c]') & (df['aslp_detail'] == '[f] ERROR: Source is more defined than target')]
   # print(less_defined[['old_outcome', 'aslp_detail']])
   # make_retry_folder(less_defined, 'less_defined')
+
+  underline('lexprvar unsup')
+  lexprvar = df.loc[(df['old_outcome'] == '[c]') & (df['aslp_detail'].str.contains('lexprvar unsup'))]
+  print(lexprvar[['old_outcome', 'aslp_detail']])
+  make_retry_folder(lexprvar, 'lexprvar')
+
+
 
 
 def missing_instructions_progress():

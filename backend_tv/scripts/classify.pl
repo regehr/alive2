@@ -135,6 +135,9 @@ sub classify($) {
         if ($data =~ /^SUMMARY: AddressSanitizer: stack-overflow/) {
             return "[u] stack-overflow";
         }
+        if ($data =~ /^SUMMARY: AddressSanitizer: (.*)$/) {
+            return "[u] AddressSanitizer $1";
+        }
     }
     return $UNKNOWN;
 }
