@@ -20,6 +20,7 @@ def underline(s):
 def make_retry_folder(df, name):
   d = Path('.') / ('retry-' + name)
   print(f'making retry folder {d} for {len(df)} tests')
+  if d.exists() and d.is_dir(): shutil.rmtree(d)
   os.makedirs(d, exist_ok=False)
   for i, _ in df.iterrows():
     shutil.copy((Path.home() / 'Downloads/arm-tests' / i.replace('_0','')).with_suffix('.bc'), d)
@@ -89,10 +90,14 @@ def timeout_regressions():
   # print(less_defined[['old_outcome', 'aslp_detail']])
   # make_retry_folder(less_defined, 'less_defined')
 
-  underline('lexprvar unsup')
   lexprvar = df.loc[(df['old_outcome'] == '[c]') & (df['aslp_detail'].str.contains('lexprvar unsup'))]
   print(lexprvar[['old_outcome', 'aslp_detail']])
   make_retry_folder(lexprvar, 'lexprvar')
+
+
+  oldtimeouts = df.loc[(df['old_detail'] == '[u] Timeout') & (df['aslp_outcome'] == '[c]')]
+  print(oldtimeouts[['old_outcome', 'aslp_detail']])
+  make_retry_folder(oldtimeouts, 'old-timeouts')
 
 
 
