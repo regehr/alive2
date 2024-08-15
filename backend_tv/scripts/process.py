@@ -19,11 +19,22 @@ def underline(s):
 
 def make_retry_folder(df, name):
   d = Path('.') / ('retry-' + name)
+  d2 = Path('.') / ('retry-logs-' + name)
   print(f'making retry folder {d} for {len(df)} tests')
+  
   if d.exists() and d.is_dir(): shutil.rmtree(d)
   os.makedirs(d, exist_ok=False)
+
+  if d2.exists() and d2.is_dir(): shutil.rmtree(d2)
+  os.makedirs(d2, exist_ok=False)
+
   for i, _ in df.iterrows():
     shutil.copy((Path.home() / 'Downloads/arm-tests' / i.replace('_0','')).with_suffix('.bc'), d)
+
+  for i, _ in df.iterrows():
+    i = Path(i).with_suffix('.log')
+    shutil.copy('logs' / i, d2 / i.with_suffix('.classic.log'))
+    shutil.copy('logs-aslp' / i, d2 / i.with_suffix('.aslp.log'))
 
 def timeout_regressions():
   underline('regressions')
@@ -86,9 +97,9 @@ def timeout_regressions():
   # print(more_poison[['old_outcome', 'aslp_detail']])
   make_retry_folder(more_poison, 'more-poisonous')
 
-  # less_defined = df.loc[(df['old_outcome'] == '[c]') & (df['aslp_detail'] == '[f] ERROR: Source is more defined than target')]
-  # print(less_defined[['old_outcome', 'aslp_detail']])
-  # make_retry_folder(less_defined, 'less_defined')
+  less_defined = df.loc[(df['old_outcome'] == '[c]') & (df['aslp_detail'] == '[f] ERROR: Source is more defined than target')]
+  print(less_defined[['old_outcome', 'aslp_detail']])
+  make_retry_folder(less_defined, 'less_defined')
 
   lexprvar = df.loc[(df['old_outcome'] == '[c]') & (df['aslp_detail'].str.contains('lexprvar unsup'))]
   print(lexprvar[['old_outcome', 'aslp_detail']])
@@ -98,6 +109,7 @@ def timeout_regressions():
   oldtimeouts = df.loc[(df['old_detail'] == '[u] Timeout') & (df['aslp_outcome'] == '[c]')]
   print(oldtimeouts[['old_outcome', 'aslp_detail']])
   make_retry_folder(oldtimeouts, 'old-timeouts')
+
 
 
 

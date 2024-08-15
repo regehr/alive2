@@ -98,6 +98,7 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instructi
 
     // add->eraseFromParent();
     base = ref_expr(_base);
+    base = llvm::cast<llvm::AllocaInst>(coerce(base, llvm::PointerType::get(context, 0)));
 
   } else if (auto load = llvm::dyn_cast<llvm::LoadInst>(x); load) {
     auto wd = load->getType()->getIntegerBitWidth();
@@ -107,7 +108,10 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instructi
 
   require(base && offset, "unable to coerce to pointer", x);
   auto load = iface.createLoad(base->getAllocatedType(), base);
-  auto ptr = new llvm::IntToPtrInst(load, llvm::PointerType::get(context, 0), "", iface.get_bb());
+  auto ptr = coerce(load, llvm::PointerType::get(context, 0));
+  // llvm::outs() << "ASDF:" << '\n';
+  // base->dump();
+  // ptr->dump();
   return {ptr, offset};
 }
 
@@ -188,7 +192,8 @@ std::any aslt_visitor::visitConstDecl(SemanticsParser::ConstDeclContext *ctx) {
   log() << name << '\n';
 
   auto v = new llvm::AllocaInst(ty, 0, name, s.second);
-  new llvm::StoreInst(rhs, v, s.second);
+  v->setAlignment(llvm::Align(1));
+  iface.createStore(rhs, v);
 
   add_local(name, v);
   return s;
@@ -205,7 +210,8 @@ std::any aslt_visitor::visitVarDecl(SemanticsParser::VarDeclContext *ctx) {
   log() << name << '\n';
 
   auto v = new llvm::AllocaInst(ty, 0, name, s.second);
-  new llvm::StoreInst(rhs, v, s.second);
+  v->setAlignment(llvm::Align(1));
+  iface.createStore(rhs, v);
 
   add_local(name, v);
   return s;
@@ -221,6 +227,7 @@ std::any aslt_visitor::visitVarDeclsNoInit(SemanticsParser::VarDeclsNoInitContex
   for (auto name : names) {
     log() << name << '\n';
     auto v = new llvm::AllocaInst(ty, 0, name, s.second);
+    v->setAlignment(llvm::Align(1));
     add_local(name, v);
   }
 
@@ -326,7 +333,8 @@ std::any aslt_visitor::visitLoopStmt(SemanticsParser::LoopStmtContext *ctx) {
   auto start = expr(ctx->start_index);
   auto name = ident(ctx->ident());
   auto v = new llvm::AllocaInst(ty, 0, name, entry.second);
-  new llvm::StoreInst(start, v, entry.second);
+  v->setAlignment(llvm::Align(1));
+  iface.createStore(start, v);
   add_local(name, v);
 
   /* Process loop body */
@@ -336,7 +344,7 @@ std::any aslt_visitor::visitLoopStmt(SemanticsParser::LoopStmtContext *ctx) {
   /* Increment/Decrement counter */
   auto v2 = iface.createLoad(ty, v);
   auto rhs2 = inc ? iface.createAdd(v2, iface.getIntConst(1, width)) : iface.createSub(v2, iface.getIntConst(1, width));
-  new llvm::StoreInst(rhs2, v, body.second);
+  iface.createStore(rhs2, v);
 
   /* Test stop, branching to exit or back to body entry */
   auto stop = expr(ctx->stop_index);

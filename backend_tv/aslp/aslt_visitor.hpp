@@ -123,6 +123,9 @@ protected:
     if (auto load = llvm::dyn_cast<llvm::LoadInst>(e)) {
       return iface.createLoad(ty, load->getPointerOperand());
     }
+    // if (llvm::dyn_cast<llvm::PointerType>(ty)) {
+    //   return llvm::IntToPtrInst::Create(e, ty);
+    // }
 
     // log() << "fallback aslp bitcast: " << std::flush;
     // e->print(llvm::outs());

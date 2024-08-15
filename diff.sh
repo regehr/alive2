@@ -21,9 +21,9 @@ aslp=$out/$filename.aslp.$extension
 classic=$out/$filename.classic.$extension 
 diff=$out/$filename.$extension.diff
 
-ASLP=1 ASLP_DEBUG=0 build/backend-tv "$pwd/$arg" "$@" >$aslp 2>&1
+ASLP=1 ASLP_DEBUG=0 build/backend-tv "$arg" "$@" >$aslp 2>&1
 aslp_status=$?
-ASLP=0 ASLP_DEBUG=0 build/backend-tv "$pwd/$arg" "$@" >$classic 2>&1
+ASLP=0 ASLP_DEBUG=0 build/backend-tv "$arg" "$@" >$classic 2>&1
 classic_status=$?
 
 diff -u --color=auto $classic $aslp
