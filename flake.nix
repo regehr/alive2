@@ -16,17 +16,31 @@
           "aarch64-darwin"
         ] (system: f system pac-nix.legacyPackages.${system});
 
+      arm-tests-dir = nixpkgs.lib.cleanSourceWith {
+        filter = name: type: nixpkgs.lib.hasSuffix ".ll" name;
+        src = ~/Downloads/arm-tests;
+      };
+
     in {
-      packages = forAllSystems (sys: pac-nix: {
+      packages = forAllSystems (sys: pac-nix:
+        let pkgs = nixpkgs.legacyPackages.${sys};
+        in {
         default =
           pac-nix.alive2-aslp.overrideAttrs {
             name = "alive2-local-build";
-            src = nixpkgs.lib.cleanSourceWith {
+            src = pkgs.lib.cleanSourceWith {
               # exclude tests directory from build for faster copy
               filter = name: type: !(baseNameOf name == "tests" || baseNameOf name == "slurm");
               src = ./.;
             };
           };
+
+        arm-tests = 
+          pkgs.runCommand "arm-tests" {} ''
+            mkdir $out
+            ${pkgs.lib.getExe pkgs.rsync} -rz ${arm-tests-dir}/. $out
+            find $out -name '*.ll' | sed 's/\.ll$/.bc/' | xargs touch
+          '';
       });
     };
 }
