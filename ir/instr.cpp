@@ -3803,6 +3803,7 @@ StateValue GEP::toSMT(State &s) const {
     AndExpr inbounds_np;
     AndExpr idx_all_zeros;
 
+    // FIXME: not implemented for physical pointers
     if (inbounds)
       inbounds_np.add(ptr.inbounds());
 
@@ -3858,7 +3859,7 @@ StateValue GEP::toSMT(State &s) const {
 
       // try to simplify the pointer
       if (all_zeros.isFalse())
-        ptr.inbounds();
+        ptr.inbounds(true);
     }
 
     return { std::move(ptr).release(), non_poison() };
