@@ -5,6 +5,7 @@
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/MDBuilder.h"
 
@@ -102,13 +103,44 @@ llvm::Value* safe_sdiv(lifter_interface_llvm& iface, llvm::Value* numerator, llv
 
   auto divbyzero = iface.createICmp(llvm::ICmpInst::ICMP_EQ, denominator, zero);
 
-  auto invalid = iface.createOr(overflowing, divbyzero);
+  // if overflowing, replace numerator with int_min and denominator with 1 to force a int_min result. 
+  numerator = iface.createSelect(overflowing, int_min, numerator);
+  denominator = iface.createSelect(overflowing, one, denominator);
 
-  // if overflowing, replace numerator with 0 and denominator with 1 to force a 0 result. 
-  numerator = iface.createSelect(invalid, zero, numerator);
-  denominator = iface.createSelect(invalid, one, denominator);
+  auto assertion = iface.createAnd(
+    iface.createICmp(llvm::ICmpInst::ICMP_EQ, numerator, int_min),
+    iface.createICmp(llvm::ICmpInst::ICMP_EQ, denominator, minus_one));
+  if (!assertion->getType()->isVectorTy())
+    assertion = iface.createBitCast(assertion, iface.getVecTy(1, 1));
 
-  return static_cast<expr_t>(iface.createSDiv(numerator, denominator));
+  auto decl = llvm::Intrinsic::getDeclaration(iface.ll_function().getParent(), llvm::Intrinsic::vector_reduce_and, { assertion->getType() });
+  auto assertionresult = (llvm::CallInst::Create(decl, { assertion }, "", iface.get_bb()));
+
+  numerator = iface.createSelect(divbyzero, zero, numerator);
+  denominator = iface.createSelect(divbyzero, one, denominator);
+
+
+
+  auto assertfalse = llvm::BasicBlock::Create(iface.ll_function().getContext(), "", &iface.ll_function());
+  auto dosdiv = llvm::BasicBlock::Create(iface.ll_function().getContext(), "", &iface.ll_function());
+  auto cont = llvm::BasicBlock::Create(iface.ll_function().getContext(), "", &iface.ll_function());
+  auto x = iface.createAlloca(numty, iface.getIntConst(1, 64), "sdiv");
+
+  llvm::BranchInst::Create(assertfalse, dosdiv, assertionresult, iface.get_bb());
+
+  iface.set_bb(assertfalse);
+  // iface.assertTrue(iface.getIntConst(0, 1));
+  iface.createStore(llvm::PoisonValue::get(numty), x);
+  llvm::BranchInst::Create(cont, assertfalse);
+
+  iface.set_bb(dosdiv);
+  auto sdiv = iface.createSDiv(numerator, denominator);
+  iface.createStore(sdiv, x);
+  llvm::BranchInst::Create(cont, dosdiv);
+
+  iface.set_bb(cont);
+
+  return static_cast<expr_t>(iface.createLoad(numty, x));
 }
 
 
