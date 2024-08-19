@@ -629,6 +629,10 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto sum = iface.createVectorReduceAdd(x_vector);
       return iface.createAdd(sum, args[1]);
 
+    } else if (name == "FPSqrt.0") {
+      // bits(N) FPSqrt(bits(N) op, FPCRType fpcr)
+      auto x = coerce(args[0], iface.getFPType(args[0]->getType()->getIntegerBitWidth()));
+      return iface.createSQRT(x);
     }
 
   } else if (args.size() == 3) {
@@ -751,7 +755,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto res = iface.createShuffleVector(y_vector, x_vector, {mask}) ;
       return coerce(res, iface.getIntTy(count * targs[2]));
 
-    } else if ((name == "FPAdd.0" || name == "FPSub.0" || name == "FPMul.0") && args.size() == 3) {
+    } else if (name == "FPAdd.0" || name == "FPSub.0" || name == "FPMul.0" || name == "FPDiv.0") {
       // bits(N) FPAdd(bits(N) op1, bits(N) op2, FPCRType fpcr)
       x = coerce(x, iface.getFPType(x->getType()->getIntegerBitWidth()));
       y = coerce(y, iface.getFPType(y->getType()->getIntegerBitWidth()));
@@ -763,7 +767,29 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
         op = llvm::BinaryOperator::BinaryOps::FSub;
       else if (name == "FPMul.0")
         op = llvm::BinaryOperator::BinaryOps::FMul;
+      else if (name == "FPDiv.0")
+        op = llvm::BinaryOperator::BinaryOps::FDiv;
       return static_cast<expr_t>(iface.createBinop(x, y, op));
+
+    } else if (name == "FPConvert.0") {
+      // Convert floating point OP with N-bit precision to M-bit precision,
+      // with rounding controlled by ROUNDING.
+      // This is used by the FP-to-FP conversion instructions and so for
+      // half-precision data ignores FZ16, but observes AHP.
+
+      // bits(M) FPConvert(bits(N) op, FPCRType fpcr, FPRounding rounding)
+      auto srcwd = x->getType()->getIntegerBitWidth();
+      auto dstwd = targs[0];
+
+      x = coerce(x, iface.getFPType(srcwd));
+      auto dstty = iface.getFPType(dstwd);
+
+      auto result =
+        dstwd < srcwd ? iface.createFPTrunc(x, dstty) :
+        dstwd > srcwd ? iface.createFPExt(x, dstty) :
+        x;
+
+      return result;
 
     } else if (name == "ite.0") {
       // bits(W) ite_vec ( W ) (bits(1) c, bits(W) x, bits(W) y)
@@ -802,26 +828,64 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       (void)fpcr;
 
       // XXX we do not support signalling nans
-      iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, signalnan, llvm::ConstantInt::get(signalnan->getType(), 0)));
+      // iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, signalnan, llvm::ConstantInt::get(signalnan->getType(), 0)));
+      (void)signalnan; // XXX: assume non-signalling for now
 
       a = coerce(a, iface.getFPType(a->getType()->getIntegerBitWidth()));
       b = coerce(b, iface.getFPType(b->getType()->getIntegerBitWidth()));
 
-      expr_t ret = iface.getIntConst(0, 4);
-      auto set = [&](unsigned shift, llvm::Value* cond) {
-
-        require(shift < 4, "");
-        auto flag = iface.createSelect(
-            cond, iface.getIntConst(1U << shift, 4), iface.getIntConst(0, 4));
-        ret = iface.createOr(ret, flag);
-
-      };
-
-      set(3, iface.createFCmp(llvm::FCmpInst::Predicate::FCMP_OLT, a, b));
-      set(2, iface.createFCmp(llvm::FCmpInst::Predicate::FCMP_OEQ, a, b));
-      set(1, iface.createFCmp(llvm::FCmpInst::Predicate::FCMP_UGT, a, b));
-      set(0, iface.createFCmp(llvm::FCmpInst::Predicate::FCMP_UNO, a, b));
+      auto i1x4 = iface.getVecTy(1, 4);
+      expr_t ret = llvm::PoisonValue::get(i1x4);
+      ret = iface.createInsertElement(ret, iface.createFCmp(llvm::FCmpInst::Predicate::FCMP_OLT, a, b), 3);
+      ret = iface.createInsertElement(ret, iface.createFCmp(llvm::FCmpInst::Predicate::FCMP_OEQ, a, b), 2);
+      ret = iface.createInsertElement(ret, iface.createFCmp(llvm::FCmpInst::Predicate::FCMP_UGT, a, b), 1);
+      ret = iface.createInsertElement(ret, iface.createFCmp(llvm::FCmpInst::Predicate::FCMP_UNO, a, b), 0);
       return ret;
+
+    } else if (name == "FPMulAdd.0") {
+      // bits(N) FPMulAdd(bits(N) addend, bits(N) op1, bits(N) op2, FPCRType fpcr)
+      auto addend = args[0], x = args[1], y = args[2], fpcr = args[3];
+      (void)fpcr;
+
+      x = coerce(x, iface.getFPType(x->getType()->getIntegerBitWidth()));
+      y = coerce(y, iface.getFPType(y->getType()->getIntegerBitWidth()));
+      addend = coerce(addend, iface.getFPType(addend->getType()->getIntegerBitWidth()));
+      return static_cast<expr_t>(iface.createFusedMultiplyAdd(x, y, addend));
+
+    } else if (name == "FPRoundInt.0") {
+      // enumeration FPRounding  {FPRounding_TIEEVEN, FPRounding_POSINF,
+      //                          FPRounding_NEGINF,  FPRounding_ZERO,
+      //                          FPRounding_TIEAWAY, FPRounding_ODD};
+
+      // FPRoundInt()
+      // ============
+      // Round OP to nearest integral floating point value using rounding mode ROUNDING.
+      // If EXACT is TRUE, set FPSR.IXC if result is not numerically equal to OP.
+      //
+      // bits(N) FPRoundInt(bits(N) op, FPCRType fpcr, FPRounding rounding, boolean exact)
+
+
+      auto a = args[0], fpcr = args[1], fprounding = args[2], exact = args[3];
+      (void)fpcr;
+
+      iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, exact, iface.getIntConst(0, 1)));
+
+      a = coerce(a, iface.getFPType(a->getType()->getIntegerBitWidth()));
+
+      auto roundingconst = llvm::dyn_cast<llvm::ConstantInt>(fprounding);
+      require(roundingconst, "FPRoundInt: dynamic fprounding parameter unsupported", fprounding);
+
+      uint64_t rounding = roundingconst->getZExtValue();
+      if (rounding == 1) {
+        return iface.createConstrainedCeil(a); // ceiling to posinf
+      } else if (rounding == 2) {
+        return iface.createConstrainedFloor(a); // flooring to neginf
+      } else if (rounding == 4) {
+        return iface.createConstrainedRound(a); // tie-away
+      } else {
+        require(false, "FPRoundInt: unsupported rounding mode", fprounding);
+      }
+
     }
 
   } else if (args.size() == 5) {

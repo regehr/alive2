@@ -2360,13 +2360,13 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
-  CallInst *createFusedMultiplyAdd(Value *a, Value *b, Value *c) {
+  CallInst *createFusedMultiplyAdd(Value *a, Value *b, Value *c) override {
     auto *decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::fma, a->getType());
     return CallInst::Create(decl, {a, b, c}, nextName(), LLVMBB);
   }
 
-  CallInst *createSQRT(Value *v) {
+  CallInst *createSQRT(Value *v) override {
     auto *decl =
         Intrinsic::getDeclaration(LiftedModule, Intrinsic::sqrt, v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
@@ -2391,6 +2391,18 @@ class arm2llvm : public aslp::lifter_interface_llvm {
         LiftedModule, Intrinsic::experimental_constrained_ceil, v->getType());
     return CallInst::Create(decl, {v, MetadataAsValue::get(Ctx, md)},
                             nextName(), LLVMBB);
+  }
+
+  CallInst *createConstrainedRound(Value *v) override {
+    return createConstrainedRound(v, MDString::get(Ctx, "fpexcept.strict"));
+  }
+
+  CallInst *createConstrainedFloor(Value *v) override {
+    return createConstrainedFloor(v, MDString::get(Ctx, "fpexcept.strict"));
+  }
+
+  CallInst *createConstrainedCeil(Value *v) override {
+    return createConstrainedCeil(v, MDString::get(Ctx, "fpexcept.strict"));
   }
 
   SelectInst *createSelect(Value *cond, Value *a, Value *b) override {
@@ -2554,11 +2566,11 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     return CastInst::Create(Instruction::SIToFP, v, t, nextName(), LLVMBB);
   }
 
-  CastInst *createFPTrunc(Value *v, Type *t) {
+  CastInst *createFPTrunc(Value *v, Type *t) override {
     return CastInst::Create(Instruction::FPTrunc, v, t, nextName(), LLVMBB);
   }
 
-  CastInst *createFPExt(Value *v, Type *t) {
+  CastInst *createFPExt(Value *v, Type *t) override {
     return CastInst::Create(Instruction::FPExt, v, t, nextName(), LLVMBB);
   }
 

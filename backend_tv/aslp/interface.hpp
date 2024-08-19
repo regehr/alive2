@@ -147,6 +147,8 @@ public:
 
   virtual expr_t createVectorReduceAdd(expr_t v) = 0;
 
+  virtual expr_t createFusedMultiplyAdd(expr_t a, expr_t b, expr_t c) = 0; 
+
   virtual expr_t createSelect(expr_t cond, expr_t a, expr_t b) = 0;
 
   virtual expr_t createICmp(llvm::ICmpInst::Predicate p, expr_t a, expr_t b) = 0;
@@ -201,6 +203,15 @@ public:
   virtual expr_t createSIToFP(expr_t v, type_t t) = 0;
 
   virtual expr_t createBitCast(expr_t v, type_t t) = 0;
+
+  virtual expr_t createFPTrunc(expr_t v, type_t t) = 0;
+  virtual expr_t createFPExt(expr_t v, type_t t) = 0;
+
+  virtual expr_t createSQRT(expr_t v) = 0;
+
+  virtual expr_t createConstrainedRound(expr_t v) = 0; 
+  virtual expr_t createConstrainedFloor(expr_t v) = 0; 
+  virtual expr_t createConstrainedCeil(expr_t v) = 0; 
 
   virtual expr_t createCast(expr_t v, type_t t, llvm::Instruction::CastOps op) = 0;
 
