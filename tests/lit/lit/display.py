@@ -124,6 +124,7 @@ class Display(object):
             if oldtest.isFailure():
                 self.progress_bar.barColor = "RED"
             percent = self.progress_predictor.update(oldtest)
+            # + f' [{len(self.queue)} results buffered]')
             self.progress_bar.update(percent, oldtest.getFullName())
 
 
