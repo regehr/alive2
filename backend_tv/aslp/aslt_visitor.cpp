@@ -83,7 +83,7 @@ llvm::Value* safe_shift(lifter_interface_llvm& iface, llvm::Value* x, llvm::Inst
 }
 
 /**
- * Wraps the sdiv operation to define (INT_MIN / -1) and (x / 0) as zeros. Supports scalars and vectors.
+ * Wraps the sdiv operation to define (INT_MIN / -1) as INT_MIN and (x / 0) as zeros. Supports scalars and vectors.
  */
 llvm::Value* safe_sdiv(lifter_interface_llvm& iface, llvm::Value* numerator, llvm::Value* denominator) {
 
@@ -107,40 +107,11 @@ llvm::Value* safe_sdiv(lifter_interface_llvm& iface, llvm::Value* numerator, llv
   numerator = iface.createSelect(overflowing, int_min, numerator);
   denominator = iface.createSelect(overflowing, one, denominator);
 
-  auto assertion = iface.createAnd(
-    iface.createICmp(llvm::ICmpInst::ICMP_EQ, numerator, int_min),
-    iface.createICmp(llvm::ICmpInst::ICMP_EQ, denominator, minus_one));
-  if (!assertion->getType()->isVectorTy())
-    assertion = iface.createBitCast(assertion, iface.getVecTy(1, 1));
-
-  auto decl = llvm::Intrinsic::getDeclaration(iface.ll_function().getParent(), llvm::Intrinsic::vector_reduce_and, { assertion->getType() });
-  auto assertionresult = (llvm::CallInst::Create(decl, { assertion }, "", iface.get_bb()));
-
   numerator = iface.createSelect(divbyzero, zero, numerator);
   denominator = iface.createSelect(divbyzero, one, denominator);
 
-
-
-  auto assertfalse = llvm::BasicBlock::Create(iface.ll_function().getContext(), "", &iface.ll_function());
-  auto dosdiv = llvm::BasicBlock::Create(iface.ll_function().getContext(), "", &iface.ll_function());
-  auto cont = llvm::BasicBlock::Create(iface.ll_function().getContext(), "", &iface.ll_function());
-  auto x = iface.createAlloca(numty, iface.getIntConst(1, 64), "sdiv");
-
-  llvm::BranchInst::Create(assertfalse, dosdiv, assertionresult, iface.get_bb());
-
-  iface.set_bb(assertfalse);
-  // iface.assertTrue(iface.getIntConst(0, 1));
-  iface.createStore(llvm::PoisonValue::get(numty), x);
-  llvm::BranchInst::Create(cont, assertfalse);
-
-  iface.set_bb(dosdiv);
   auto sdiv = iface.createSDiv(numerator, denominator);
-  iface.createStore(sdiv, x);
-  llvm::BranchInst::Create(cont, dosdiv);
-
-  iface.set_bb(cont);
-
-  return static_cast<expr_t>(iface.createLoad(numty, x));
+  return static_cast<expr_t>(sdiv);
 }
 
 
