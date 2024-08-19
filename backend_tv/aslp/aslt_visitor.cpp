@@ -82,10 +82,7 @@ llvm::Value* safe_shift(lifter_interface_llvm& iface, llvm::Value* x, llvm::Inst
 }
 
 /**
- * Wraps the sdiv operation to define INT_MIN / -1 as zeros. Supports scalars and vectors.
- *
- * Note! Makes no effort to handle a zero denominator. We assume this is checked explicitly
- * by the ASL specification.
+ * Wraps the sdiv operation to define (INT_MIN / -1) and (x / 0) as zeros. Supports scalars and vectors.
  */
 llvm::Value* safe_sdiv(lifter_interface_llvm& iface, llvm::Value* numerator, llvm::Value* denominator) {
 
@@ -97,13 +94,19 @@ llvm::Value* safe_sdiv(lifter_interface_llvm& iface, llvm::Value* numerator, llv
   auto int_min = llvm::ConstantInt::get(numty, llvm::APInt::getSignedMinValue(elemwd));
   auto minus_one = llvm::ConstantInt::get(numty, --llvm::APInt::getZero(elemwd));
   auto zero = llvm::ConstantInt::get(numty, llvm::APInt::getZero(elemwd));
+  auto one = llvm::ConstantInt::get(numty, ++llvm::APInt::getZero(elemwd));
 
   auto overflowing = iface.createAnd(
     iface.createICmp(llvm::ICmpInst::ICMP_EQ, numerator, int_min),
     iface.createICmp(llvm::ICmpInst::ICMP_EQ, denominator, minus_one));
 
-  // if overflowing, replace numerator with zero since 0 / x == 0.
-  numerator = iface.createSelect(overflowing, zero, numerator);
+  auto divbyzero = iface.createICmp(llvm::ICmpInst::ICMP_EQ, denominator, zero);
+
+  auto invalid = iface.createOr(overflowing, divbyzero);
+
+  // if overflowing, replace numerator with 0 and denominator with 1 to force a 0 result. 
+  numerator = iface.createSelect(invalid, zero, numerator);
+  denominator = iface.createSelect(invalid, one, denominator);
 
   return static_cast<expr_t>(iface.createSDiv(numerator, denominator));
 }
