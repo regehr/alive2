@@ -21,40 +21,26 @@ jobs:
       with:
         name: pac-nix
         useDaemon: false
+
     - run: ./build.sh
-      shell: "nix develop github:katrinafyi/pac-nix#alive2-aslp --command bash -e {0}"
+      shell: "nix develop github:katrinafyi/pac-nix#alive2-aslp --command bash -eo pipefail {0}"
 
-    # XXX this should be nixed eventually...
-    - run: sudo apt-get install libbsd-resource-perl libsys-cpu-perl
-    - run: |
-        wget https://users.cs.utah.edu/~regehr/arm-tests.tar.bz2
-        tar xf arm-tests.tar.bz2
-        rm -rf logs
-
-    - name: ./backend_tv/scripts/run-arm-tv.pl
+    - name: tests/lit/lit.py tests/arm-tv
       run: |
-        pushd arm-tests
-        find . -name '*.ll' -print0 | xargs -0 -n1 -P8 llvm-as
-        popd
-
         nix shell github:katrinafyi/pac-nix#aslp --command aslp-server >aslp-server.out &
         ASLP_PID=$!
 
-        export TIMEOUT=3
-        export LLVMDIS=$(which llvm-dis)
-        export BACKENDTV=$(realpath build/backend-tv)
-
-        ./backend_tv/scripts/run-arm-tv.pl ./arm-tests
+        tests/lit/lit.py tests/arm-tv -s --no-progress-bar | tee lit.txt
 
         kill $ASLP_PID
-      shell: "nix develop github:katrinafyi/pac-nix#alive2-aslp --command bash -eo pipefail {0}"
+      # shell: "nix develop github:katrinafyi/pac-nix#alive2-aslp --command bash -eo pipefail {0}"
 
-    - run: tar caf logs.tar.zst logs
-      if: always()
+    # - run: tar caf logs.tar.zst logs
+    #   if: always()
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: logs
-        path: logs.tar.zst
+        name: lit-log.txt
+        path: lit.txt
 
 
