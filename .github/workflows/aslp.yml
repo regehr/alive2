@@ -1,7 +1,9 @@
 name: Build and test arm-tv+aslp
 
 on:
-  push:
+  # push:
+
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
