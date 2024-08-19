@@ -89,6 +89,7 @@ class Display(object):
         self.test_order = [(t.getFullName(), t) for t in tests]
         self.test_order.sort(reverse=True)
         self.queue = []  # enqueues completed test cases before printing in-order.
+        self.prev_name = None
 
     def print_header(self):
         if self.header:
@@ -97,8 +98,6 @@ class Display(object):
             self.progress_bar.update(0.0, "")
 
     def update(self, test):
-        self.completed += 1
-
         oldtest = test
         self.queue.append((oldtest.getFullName(), oldtest))
         self.queue.sort(reverse=True)
@@ -106,7 +105,9 @@ class Display(object):
         # assert len(self.queue) <= 100, "output queue seems to be growing too much"
 
         while self.queue and self.queue[-1][0] == self.test_order[-1][0]:
-            _, test = self.queue.pop()
+            self.completed += 1
+
+            name, test = self.queue.pop()
             self.test_order.pop()
 
             show_result = (
@@ -133,6 +134,12 @@ class Display(object):
     def print_result(self, test):
         # Show the test result line.
         test_name = test.getFullName()
+
+        # insert a blank line between pairs of classic & aslp test cases, for easier reading
+        if self.prev_name and self.prev_name.split(' (')[0] != test_name.split(' (')[0]:
+            print()
+        self.prev_name = test_name
+
         print(
             "%s: %s (%d of %d)"
             % (test.result.code.name, test_name, self.completed, self.num_tests)
