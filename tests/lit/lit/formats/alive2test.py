@@ -5,17 +5,24 @@ import lit.TestRunner
 import lit.util
 from .base import TestFormat
 import os, re, signal, shutil, string, subprocess
+from pathlib import Path
 
 ok_string = 'Transformation seems to be correct!'
 ok_interp = 'functions interpreted successfully'
 
-assert os.path.isfile('./backend-tv'), 'alive2 lit.py should be run from build directory.'
-assert (env_binary := shutil.which('env'))
+backend_tvs = [Path('./backend-tv'), Path('build/backend-tv')]
+backend_tvs = [p for p in backend_tvs if p.is_file()]
+assert backend_tvs, "arm-tv's lit.py should be run from either the repo root or the build directory."
 
-def executeCommand(command):
+backend_tv = backend_tvs[0]
+
+def executeCommand(command, extra_env=None):
+  env = {**os.environ, **(extra_env or {})}
   p = subprocess.Popen(command,
                        stdout=subprocess.PIPE,
-                       stderr=subprocess.PIPE)
+                       stderr=subprocess.PIPE,
+                       cwd=backend_tv.parent,
+                       env=env)
   out,err = p.communicate()
   exitCode = p.wait()
 
@@ -101,24 +108,24 @@ class Alive2Test(TestFormat):
     alive_tv_5 = test.endswith('.asminput.ll')
     if alive_tv_1 or alive_tv_2 or alive_tv_3:
       cmd = ['./alive-tv', '-smt-to=20000', '-always-verify']
-      if not os.path.isfile('alive-tv'):
-        return lit.Test.UNSUPPORTED, ''
+      # if not os.path.isfile('alive-tv'):
+      #   return lit.Test.UNSUPPORTED, ''
 
     if alive_tv_4:
       cmd = ['./backend-tv', '-smt-to=20000', '-always-verify']
-      if not os.path.isfile('backend-tv'):
-        return lit.Test.UNSUPPORTED, ''      
+      # if not os.path.isfile('backend-tv'):
+      #   return lit.Test.UNSUPPORTED, ''
 
     if alive_tv_5:
       cmd = ['./backend-tv', '-smt-to=20000', '-always-verify', '-asm-input']
-      if not os.path.isfile('backend-tv'):
-        return lit.Test.UNSUPPORTED, ''      
+      # if not os.path.isfile('backend-tv'):
+      #   return lit.Test.UNSUPPORTED, ''
 
     opt_tv = test.endswith('.opt.ll')
     if opt_tv:
       cmd = ['./opt-alive-test.sh', '-disable-output', '-tv-always-verify']
-      if not os.path.isfile('opt-alive-test.sh'):
-        return lit.Test.UNSUPPORTED, ''
+      # if not os.path.isfile('opt-alive-test.sh'):
+      #   return lit.Test.UNSUPPORTED, ''
 
     clang_tv = test.endswith('.c') or test.endswith('.cpp')
     if clang_tv:
@@ -126,22 +133,22 @@ class Alive2Test(TestFormat):
                                      else "alive++")
       # 30 seconds is too long to apply to all passes, just use the default to
       cmd = [execpath, "-c", "-o", "/dev/null"]
-      if not os.path.isfile(execpath):
-        return lit.Test.UNSUPPORTED, ''
+      # if not os.path.isfile(execpath):
+      #   return lit.Test.UNSUPPORTED, ''
 
     alive_exec = test.endswith('exec.ll')
     if alive_exec:
       cmd = ['./alive-interp']
-      if not os.path.isfile('alive-interp'):
-        return lit.Test.UNSUPPORTED, ''
+      # if not os.path.isfile('alive-interp'):
+      #   return lit.Test.UNSUPPORTED, ''
     
     # TODO hacky way of using interpreter with .ll files
     llvm_exec = test.endswith('.ll')
     if llvm_exec and not alive_tv_1 and not alive_tv_2 and \
        not alive_tv_3 and not alive_tv_4 and not alive_tv_5:
       cmd = ['./alive-interp']
-      if not os.path.isfile('alive-interp'):
-        return lit.Test.UNSUPPORTED, ''
+      # if not os.path.isfile('alive-interp'):
+      #   return lit.Test.UNSUPPORTED, ''
 
     if not alive_tv_1 and not alive_tv_2 and not alive_tv_3 and not alive_tv_4 and \
        not alive_tv_5 and not clang_tv and not opt_tv and not alive_exec and not llvm_exec:
@@ -182,9 +189,7 @@ class Alive2Test(TestFormat):
     elif alive_tv_3:
       cmd.append(test)
 
-    cmd = [env_binary, f'ASLP={int(testcase.aslp)}'] + cmd
-
-    out, err, exitCode = executeCommand(cmd)
+    out, err, exitCode = executeCommand(cmd, {'ASLP': str(int(testcase.aslp))})
     output = out + err
 
     xfail = self.regex_xfail.search(input)

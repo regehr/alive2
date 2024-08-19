@@ -85,6 +85,11 @@ class Display(object):
         self.progress_bar = progress_bar
         self.completed = 0
 
+        # reverse-sorted lists of (fullName, test). that is, the smallest element is at the end.
+        self.test_order = [(t.getFullName(), t) for t in tests]
+        self.test_order.sort(reverse=True)
+        self.queue = []  # enqueues completed test cases before printing in-order.
+
     def print_header(self):
         if self.header:
             print(self.header)
@@ -94,21 +99,32 @@ class Display(object):
     def update(self, test):
         self.completed += 1
 
-        show_result = (
-            test.isFailure()
-            or self.opts.showAllOutput
-            or (not self.opts.quiet and not self.opts.succinct)
-        )
-        if show_result:
-            if self.progress_bar:
-                self.progress_bar.clear(interrupted=False)
-            self.print_result(test)
+        oldtest = test
+        self.queue.append((oldtest.getFullName(), oldtest))
+        self.queue.sort(reverse=True)
+
+        # assert len(self.queue) <= 100, "output queue seems to be growing too much"
+
+        while self.queue and self.queue[-1][0] == self.test_order[-1][0]:
+            _, test = self.queue.pop()
+            self.test_order.pop()
+
+            show_result = (
+                test.isFailure()
+                or self.opts.showAllOutput
+                or (not self.opts.quiet and not self.opts.succinct)
+            )
+            if show_result:
+                if self.progress_bar:
+                    self.progress_bar.clear(interrupted=False)
+                self.print_result(test)
 
         if self.progress_bar:
-            if test.isFailure():
+            if oldtest.isFailure():
                 self.progress_bar.barColor = "RED"
-            percent = self.progress_predictor.update(test)
-            self.progress_bar.update(percent, test.getFullName())
+            percent = self.progress_predictor.update(oldtest)
+            self.progress_bar.update(percent, oldtest.getFullName())
+
 
     def clear(self, interrupted):
         if self.progress_bar:
