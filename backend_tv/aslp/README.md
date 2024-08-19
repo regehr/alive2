@@ -84,6 +84,12 @@ finished! backend-tv './tests/arm-tv/vectors/ucvtf/UCVTFUWSri.aarch64.ll'
   diff: /home/rina/progs/alive2-regehr/out/UCVTFUWSri.aarch64.ll.diff
 ```
 
+To process the output of `lit.py -s` and identify test cases which differ
+between aslp and classic, one can use:
+```bash
+python3 -c '[print(x) for x in open("/dev/stdin").read().split("\n\n") if "\n" not in x]' < tests.txt
+```
+
 ## structure
 
 The Aslp-specific files are placed in this folder. In a roughly bottom-up order,
