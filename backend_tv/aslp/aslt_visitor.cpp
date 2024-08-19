@@ -53,6 +53,9 @@ namespace {
 
 namespace aslp {
 
+/**
+ * Wraps the shift operations to define shifts by >= bitwidth as zero. Supports scalars and vectors.
+ */
 llvm::Value* safe_shift(lifter_interface_llvm& iface, llvm::Value* x, llvm::Instruction::BinaryOps op, llvm::Value* shift) {
   using llvm::Instruction::BinaryOps::Shl, llvm::Instruction::BinaryOps::AShr, llvm::Instruction::BinaryOps::LShr;
 
@@ -76,6 +79,33 @@ llvm::Value* safe_shift(lifter_interface_llvm& iface, llvm::Value* x, llvm::Inst
   auto result = (iface.*createrawshift)(x, shift);
   auto zeros = llvm::ConstantInt::get(x->getType(), 0);
   return static_cast<expr_t>(iface.createSelect(ok, result, zeros));
+}
+
+/**
+ * Wraps the sdiv operation to define INT_MIN / -1 as zeros. Supports scalars and vectors.
+ *
+ * Note! Makes no effort to handle a zero denominator. We assume this is checked explicitly
+ * by the ASL specification.
+ */
+llvm::Value* safe_sdiv(lifter_interface_llvm& iface, llvm::Value* numerator, llvm::Value* denominator) {
+
+  auto numty = numerator->getType();
+  auto vecty = llvm::dyn_cast<llvm::VectorType>(numty);
+  auto elemty = vecty ? vecty->getElementType() : numty;
+  auto elemwd = elemty->getIntegerBitWidth();
+
+  auto int_min = llvm::ConstantInt::get(numty, llvm::APInt::getSignedMinValue(elemwd));
+  auto minus_one = llvm::ConstantInt::get(numty, --llvm::APInt::getZero(elemwd));
+  auto zero = llvm::ConstantInt::get(numty, llvm::APInt::getZero(elemwd));
+
+  auto overflowing = iface.createAnd(
+    iface.createICmp(llvm::ICmpInst::ICMP_EQ, numerator, int_min),
+    iface.createICmp(llvm::ICmpInst::ICMP_EQ, denominator, minus_one));
+
+  // if overflowing, replace numerator with zero since 0 / x == 0.
+  numerator = iface.createSelect(overflowing, zero, numerator);
+
+  return static_cast<expr_t>(iface.createSDiv(numerator, denominator));
 }
 
 
@@ -529,31 +559,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       return static_cast<expr_t>(iface.createMul(x, y));
 
     } else if (name == "sdiv_bits.0") {
-      unsigned long wd = x->getType()->getIntegerBitWidth();
-      auto result = iface.createAlloca(x->getType(), iface.getIntConst(1, 64), "sdiv_result");
-
-      auto overflowing = iface.createAnd(
-          iface.createICmp(llvm::ICmpInst::ICMP_EQ, x, llvm::ConstantInt::get(context, llvm::APInt::getSignedMinValue(wd))),
-          iface.createICmp(llvm::ICmpInst::ICMP_EQ, y, llvm::ConstantInt::get(context, --llvm::APInt::getZero(wd))));
-
-      auto oldbb = iface.get_bb();
-      auto overflowbb = new_stmt("sdiv_overflowing");
-      auto okbb = new_stmt("sdiv_non_overflowing");
-      auto contbb = new_stmt("sdiv_continuation");
-
-      iface.set_bb(oldbb);
-      iface.createBranch(overflowing, overflowbb, okbb);
-
-      iface.set_bb(overflowbb.second);
-      iface.createStore(iface.getIntConst(0, wd), result);
-      link(overflowbb, contbb);
-
-      iface.set_bb(okbb.second);
-      iface.createStore(iface.createSDiv(x, y), result);
-      link(okbb, contbb);
-
-      iface.set_bb(contbb.first);
-      return static_cast<expr_t>(iface.createLoad(x->getType(), result));
+      return static_cast<expr_t>(safe_sdiv(iface, x, y));
 
     } else if (name == "slt_bits.0") {
       return static_cast<expr_t>(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_SLT, x, y));
@@ -666,6 +672,13 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
       auto cast = iface.createMul(x_vector, y_vector);
+      return coerce(cast, x->getType());
+
+    } else if (name == "sdiv_vec.0") {
+      // bits(W * N) sdiv_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
+      auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
+      auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
+      auto cast = safe_sdiv(iface, x_vector, y_vector);
       return coerce(cast, x->getType());
 
     } else if (name == "scast_vec.0") {

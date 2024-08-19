@@ -138,6 +138,13 @@ sub classify($) {
         if ($data =~ /^SUMMARY: AddressSanitizer: (.*)$/) {
             return "[u] AddressSanitizer $1";
         }
+        if ($data =~ /^(malloc\(\): unaligned tcache chunk detected)/) {
+            return "[f] $1";
+        }
+        if ($data =~ /^(free\(\): invalid pointer)/) {
+            return "[f] $1";
+        }
+
     }
     return $UNKNOWN;
 }
