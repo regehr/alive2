@@ -305,7 +305,9 @@ def execute_in_tmp_dir(run, lit_config):
 
 def print_histogram(tests):
     test_times = [
-        (t.getFullName(), t.result.elapsed) for t in tests if t.result.elapsed
+        (t.getFullName(), t.result.elapsed)
+        for t in tests
+        if t.result.elapsed and t.result.code != lit.Test.TIMEOUT
     ]
     if test_times:
         lit.util.printHistogram(test_times, title="Tests")

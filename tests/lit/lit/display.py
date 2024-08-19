@@ -137,7 +137,7 @@ class Display(object):
         test_name = test.getFullName()
 
         # insert a blank line between pairs of classic & aslp test cases, for easier reading
-        if self.prev_name and self.prev_name.split(' (')[0] != test_name.split(' (')[0]:
+        if self.prev_name and self.prev_name.rsplit(' (', 1)[0] != test_name.rsplit(' (', 1)[0]:
             print()
         self.prev_name = test_name
 
