@@ -27,9 +27,9 @@ using stmt_t = lifter_interface_llvm::stmt_t;
 class aslt_visitor : public aslt::SemanticsBaseVisitor { 
 public:
   using super = aslt::SemanticsBaseVisitor;
+  lifter_interface_llvm &iface;
 
 private:
-  lifter_interface_llvm &iface;
   bool debug;
   llvm::Function &func;  // needed to create basic blocks in here
   llvm::LLVMContext &context;
@@ -62,7 +62,7 @@ public:
   {
     assert(xreg_sentinel);
   }
-protected:
+public:
   std::ostream& log() const& {
     static std::ostream nullstream(nullptr);
     if (debug)

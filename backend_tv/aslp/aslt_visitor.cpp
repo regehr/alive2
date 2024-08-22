@@ -85,7 +85,8 @@ llvm::Value* safe_shift(lifter_interface_llvm& iface, llvm::Value* x, llvm::Inst
 /**
  * Wraps the sdiv operation to define (INT_MIN / -1) as INT_MIN and (x / 0) as zeros. Supports scalars and vectors.
  */
-llvm::Value* safe_sdiv(lifter_interface_llvm& iface, llvm::Value* numerator, llvm::Value* denominator) {
+llvm::Value* safe_sdiv(aslt_visitor& vis, llvm::Value* numerator, llvm::Value* denominator) {
+  auto& iface = vis.iface;
 
   auto numty = numerator->getType();
   auto vecty = llvm::dyn_cast<llvm::VectorType>(numty);
@@ -101,17 +102,37 @@ llvm::Value* safe_sdiv(lifter_interface_llvm& iface, llvm::Value* numerator, llv
     iface.createICmp(llvm::ICmpInst::ICMP_EQ, numerator, int_min),
     iface.createICmp(llvm::ICmpInst::ICMP_EQ, denominator, minus_one));
 
-  auto divbyzero = iface.createICmp(llvm::ICmpInst::ICMP_EQ, denominator, zero);
+  auto vector_reduce_or = vecty ? llvm::Intrinsic::getDeclaration(iface.ll_function().getParent(), llvm::Intrinsic::vector_reduce_or, { overflowing->getType() }) : nullptr;
+  auto any_overflowing = vecty ? llvm::CallInst::Create(vector_reduce_or, { overflowing }, "", iface.get_bb()) : overflowing;
+
+  // auto divbyzero = iface.createICmp(llvm::ICmpInst::ICMP_EQ, denominator, zero);
+  auto oldbb = iface.get_bb();
+
+  auto result = iface.createAlloca(numty, iface.getIntConst(1, 64), iface.nextName() + "_sdiv_result");
+
+  auto safe_stmt = vis.new_stmt("sdiv_is_safe");
+  auto overflow_stmt = vis.new_stmt("sdiv_is_overflow");
+  auto continuation = vis.new_stmt("sdiv_continuation");
+
+  llvm::BranchInst::Create(overflow_stmt.first, safe_stmt.first, any_overflowing, oldbb);
 
   // if overflowing, replace numerator with int_min and denominator with 1 to force a int_min result. 
-  numerator = iface.createSelect(overflowing, int_min, numerator);
-  denominator = iface.createSelect(overflowing, one, denominator);
+  iface.set_bb(overflow_stmt.first);
+  auto numerator2 = iface.createSelect(overflowing, int_min, numerator);
+  auto denominator2 = iface.createSelect(overflowing, one, denominator);
 
-  numerator = iface.createSelect(divbyzero, zero, numerator);
-  denominator = iface.createSelect(divbyzero, one, denominator);
+  // numerator = iface.createSelect(divbyzero, zero, numerator);
+  // denominator = iface.createSelect(divbyzero, one, denominator);
 
-  auto sdiv = iface.createSDiv(numerator, denominator);
-  return static_cast<expr_t>(sdiv);
+  iface.createStore(iface.createSDiv(numerator2, denominator2), result);
+  vis.link(overflow_stmt, continuation);
+
+  iface.set_bb(safe_stmt.first);
+  iface.createStore(iface.createSDiv(numerator, denominator), result);
+  vis.link(safe_stmt, continuation);
+
+  iface.set_bb(continuation.first);
+  return static_cast<expr_t>(iface.createLoad(numty, result));
 }
 
 
@@ -565,7 +586,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       return static_cast<expr_t>(iface.createMul(x, y));
 
     } else if (name == "sdiv_bits.0") {
-      return static_cast<expr_t>(safe_sdiv(iface, x, y));
+      return static_cast<expr_t>(safe_sdiv(*this, x, y));
 
     } else if (name == "slt_bits.0") {
       return static_cast<expr_t>(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_SLT, x, y));
@@ -688,7 +709,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       // bits(W * N) sdiv_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
-      auto cast = safe_sdiv(iface, x_vector, y_vector);
+      auto cast = safe_sdiv(*this, x_vector, y_vector);
       return coerce(cast, x->getType());
 
     } else if (name == "scast_vec.0") {
