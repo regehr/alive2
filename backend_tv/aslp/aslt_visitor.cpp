@@ -117,7 +117,7 @@ llvm::Value* safe_sdiv(aslt_visitor& vis, llvm::Value* numerator, llvm::Value* d
   llvm::BranchInst::Create(overflow_stmt.first, safe_stmt.first, any_overflowing, oldbb);
 
   // if overflowing, replace numerator with int_min and denominator with 1 to force a int_min result. 
-  iface.set_bb(overflow_stmt.first);
+  iface.set_bb(overflow_stmt.second);
   auto numerator2 = iface.createSelect(overflowing, int_min, numerator);
   auto denominator2 = iface.createSelect(overflowing, one, denominator);
 
@@ -127,11 +127,11 @@ llvm::Value* safe_sdiv(aslt_visitor& vis, llvm::Value* numerator, llvm::Value* d
   iface.createStore(iface.createSDiv(numerator2, denominator2), result);
   vis.link(overflow_stmt, continuation);
 
-  iface.set_bb(safe_stmt.first);
+  iface.set_bb(safe_stmt.second);
   iface.createStore(iface.createSDiv(numerator, denominator), result);
   vis.link(safe_stmt, continuation);
 
-  iface.set_bb(continuation.first);
+  iface.set_bb(continuation.second);
   return static_cast<expr_t>(iface.createLoad(numty, result));
 }
 
@@ -209,8 +209,11 @@ stmt_t aslt_visitor::visit_stmt(const std::vector<aslt::SemanticsParser::StmtCon
   stmt_counts[depth+1] = 0;
   stmt_t s = stmt(stmts.at(0));
   s.second = iface.get_bb(); // XXX: this is a hack to support expressions which add basic blocks
+
   for (auto& s2 : stmts | std::ranges::views::drop(1)) {
-    s = link(s, stmt(s2));
+    auto stmt2 = stmt(s2);
+    stmt2.second = iface.get_bb();
+    s = link(s, stmt2);
   }
 
   iface.set_bb(bb);
