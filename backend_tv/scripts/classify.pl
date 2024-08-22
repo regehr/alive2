@@ -163,12 +163,21 @@ foreach my $f (@files) {
         push @lines, $line;
     }
     close $INF;
-    my $line = classify(\@lines);
+    my $cls = classify(\@lines);
     print "$f|";
 
-    if ($line eq $UNKNOWN) {
-        print "unknown\n";
+    if ($cls eq $UNKNOWN) {
+        print "unknown";
     } else {
-        print "$line\n";
+        print "$cls";
     }
+
+    if ($lines[-1] =~ /runtime: (\d+)/) {
+        print "|$1";
+    } else {
+        print "|";
+    }
+
+
+    print "\n";
 }

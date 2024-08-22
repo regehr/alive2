@@ -74,7 +74,7 @@ def classify_logs(d: Path) -> dict[Path, str]:
   proc = subprocess.run([classify_pl, d], stdin=DEVNULL, stdout=PIPE, encoding='utf-8')
   out = proc.stdout.strip()
   # assert not err, f"classify.py {d} returned error: {err}"
-  return {Path(p): v for p,v in map(lambda l: l.split('|',1), out.splitlines())}
+  return {Path(p): v for p,v in map(lambda l: l.split('|')[:2], out.splitlines())}
 
 
 def process_log(log: Path, aslplog: Path) -> Row:
