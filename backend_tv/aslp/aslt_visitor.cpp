@@ -102,7 +102,7 @@ llvm::Value* safe_sdiv(aslt_visitor& vis, llvm::Value* numerator, llvm::Value* d
     iface.createICmp(llvm::ICmpInst::ICMP_EQ, numerator, int_min),
     iface.createICmp(llvm::ICmpInst::ICMP_EQ, denominator, minus_one));
 
-  auto vector_reduce_or = vecty ? llvm::Intrinsic::getDeclaration(iface.ll_function().getParent(), llvm::Intrinsic::vector_reduce_or, { overflowing->getType() }) : nullptr;
+  auto vector_reduce_or = vecty ? llvm::Intrinsic::getOrInsertDeclaration(iface.ll_function().getParent(), llvm::Intrinsic::vector_reduce_or, { overflowing->getType() }) : nullptr;
   auto any_overflowing = vecty ? llvm::CallInst::Create(vector_reduce_or, { overflowing }, "", iface.get_bb()) : overflowing;
 
   // auto divbyzero = iface.createICmp(llvm::ICmpInst::ICMP_EQ, denominator, zero);

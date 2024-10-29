@@ -31,6 +31,6 @@ cmake -B build -DBUILD_TV=1 \
   -DCMAKE_PREFIX_PATH="$(realpath build/antlr-dev);$(realpath build/llvm-dev)" \
   -DANTLR4_JAR_LOCATION="$(realpath build/antlr-jar)" \
   "$@"
-  # -DLLVM_DIR=~/progs/llvm-regehr/llvm/build/lib/cmake/llvm/ \
+  # -DLLVM_DIR=~/progs/llvm-regehr/build/lib/cmake/llvm/ \
   # -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp \
 cmake --build build -j12
