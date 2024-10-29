@@ -2,7 +2,9 @@
 // Distributed under the MIT license that can be found in the LICENSE file.
 
 #include "ir/attrs.h"
+#include "ir/function.h"
 #include "ir/globals.h"
+#include "ir/instr.h"
 #include "ir/memory.h"
 #include "ir/state.h"
 #include "ir/state_value.h"
@@ -617,6 +619,93 @@ ostream& operator<<(std::ostream &os, FpExceptionMode ex) {
   case FpExceptionMode::Strict:  str = "strict"; break;
   }
   return os << str;
+}
+
+ostream& operator<<(std::ostream &os, const TailCallInfo &tci) {
+  const char *str = nullptr;
+  switch (tci.type) {
+    case TailCallInfo::None:     str = ""; break;
+    case TailCallInfo::Tail:     str = "tail "; break;
+    case TailCallInfo::MustTail: str = "musttail "; break;
+  }
+  return os << str;
+}
+
+void TailCallInfo::check(State &s, const Instr &i,
+                         const vector<PtrInput> &args) const {
+  if (type == TailCallInfo::None)
+    return;
+
+  // Cannot access allocas, va_args, or byval arguments from the caller.
+  // Exception: alloca or byval arg may be passed to the callee as byval
+  for (const auto &arg : args) {
+    Pointer ptr(s.getMemory(), arg.val.value);
+    s.addUB(arg.val.non_poison.implies(
+      (ptr.isStackAllocated() || ptr.isByval()).implies(arg.byval != 0) &&
+      true // TODO: check for !var_args
+    ));
+  }
+
+  if (type != TailCallInfo::MustTail)
+    return;
+
+  // additional rules for musttail
+
+  auto *call = dynamic_cast<const FnCall*>(&i);
+
+  // - The call must immediately precede a ret instruction, or a bitcast
+  // - The ret instruction must return the (possibly bitcasted) value produced
+  // by the call, undef/poison, or void.
+
+  bool found_instr = false, found_ret = false;
+  const Value *val = &i;
+  for (auto &instr : s.getFn().bbOf(i).instrs()) {
+    if (&instr == val) {
+      assert(!found_instr);
+      found_instr = true;
+      continue;
+    }
+
+    if (found_instr) {
+      if (auto *cast = isCast(ConversionOp::BitCast, instr)) {
+        if (&cast->getValue() != val) {
+          s.addUB(expr(false));
+          return;
+        }
+        val = cast;
+        continue;
+      }
+      if (auto *ret = dynamic_cast<const Return*>(&instr)) {
+        found_ret = true;
+        if (ret->getType().isVoid() && i.getType().isVoid())
+          break;
+        auto *ret_val = ret->operands()[0];
+        if (dynamic_cast<UndefValue*>(ret_val) ||
+            dynamic_cast<PoisonValue*>(ret_val) ||
+            ret_val == val)
+          break;
+      }
+      s.addUB(expr(false));
+    }
+  }
+  ENSURE(found_instr);
+  if (!found_ret)
+    s.addUB(expr(false));
+
+  // The calling conventions of the caller and callee must match.
+  if (!has_same_calling_convention)
+    s.addUB(expr(false));
+
+  // The callee must be varargs iff the caller is varargs.
+  if (call) {
+    bool callee_is_vararg = call->getVarArgIdx() != -1u;
+    bool caller_is_vararg = s.getFn().isVarArgs();
+    if (callee_is_vararg && !caller_is_vararg)
+      s.addUB(expr(false));
+  }
+
+  // TODO:
+  // - The return type must not undergo automatic conversion to an sret pointer.
 }
 
 }

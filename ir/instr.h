@@ -3,6 +3,7 @@
 // Copyright (c) 2018-present The Alive2 Authors.
 // Distributed under the MIT license that can be found in the LICENSE file.
 
+#include "ir/attrs.h"
 #include "ir/value.h"
 #include <string>
 #include <utility>
@@ -418,17 +419,20 @@ public:
     PROVENANCE, // compare pointer provenance & offsets
     OFFSETONLY // cmp ofs only. meaningful only when ptrs are based on same obj
   };
+  enum Flags { None = 0, SameSign = 1 << 0 };
 
 private:
   Value *a, *b;
   std::string cond_name;
   Cond cond;
+  unsigned flags;
   bool defined;
   PtrCmpMode pcmode = INTEGRAL;
   smt::expr cond_var() const;
 
 public:
-  ICmp(Type &type, std::string &&name, Cond cond, Value &a, Value &b);
+  ICmp(Type &type, std::string &&name, Cond cond, Value &a, Value &b,
+       unsigned flags = None);
 
   bool isPtrCmp() const;
   PtrCmpMode getPtrCmpMode() const { return pcmode; }
@@ -511,6 +515,9 @@ public:
   void addValue(Value &val, std::string &&BB_name);
   void removeValue(const std::string &BB_name);
   void replaceSourceWith(const std::string &from, const std::string &to);
+
+  void setValue(size_t index, Value &val);
+  void setSource(size_t index, std::string &&BB_name);
 
   const auto& getValues() const { return values; }
   std::vector<std::string> sources() const;
@@ -938,10 +945,12 @@ public:
 class Memset final : public MemInstr {
   Value *ptr, *val, *bytes;
   uint64_t align;
+  TailCallInfo tci;
+
 public:
-  Memset(Value &ptr, Value &val, Value &bytes, uint64_t align)
-    : MemInstr(Type::voidTy, "memset"), ptr(&ptr), val(&val), bytes(&bytes),
-            align(align) {}
+  Memset(Value &ptr, Value &val, Value &bytes, uint64_t align, TailCallInfo tci)
+      : MemInstr(Type::voidTy, "memset"), ptr(&ptr), val(&val), bytes(&bytes),
+        align(align), tci(tci) {}
 
   Value& getPtr() const { return *ptr; }
   Value& getBytes() const { return *bytes; }
@@ -967,9 +976,11 @@ public:
 class MemsetPattern final : public MemInstr {
   Value *ptr, *pattern, *bytes;
   unsigned pattern_length;
+  TailCallInfo tci;
+
 public:
   MemsetPattern(Value &ptr, Value &pattern, Value &bytes,
-                unsigned pattern_length);
+                unsigned pattern_length, TailCallInfo tci);
 
   unsigned getPatternLength() const { return pattern_length; }
 
@@ -1014,11 +1025,13 @@ class Memcpy final : public MemInstr {
   Value *dst, *src, *bytes;
   uint64_t align_dst, align_src;
   bool move;
+  TailCallInfo tci;
+
 public:
-  Memcpy(Value &dst, Value &src, Value &bytes,
-         uint64_t align_dst, uint64_t align_src, bool move)
-    : MemInstr(Type::voidTy, "memcpy"), dst(&dst), src(&src), bytes(&bytes),
-            align_dst(align_dst), align_src(align_src), move(move) {}
+  Memcpy(Value &dst, Value &src, Value &bytes, uint64_t align_dst,
+         uint64_t align_src, bool move, TailCallInfo tci)
+      : MemInstr(Type::voidTy, "memcpy"), dst(&dst), src(&src), bytes(&bytes),
+        align_dst(align_dst), align_src(align_src), move(move), tci(tci) {}
 
   Value& getSrc() const { return *src; }
   Value& getDst() const { return *dst; }
@@ -1048,10 +1061,13 @@ public:
 class Memcmp final : public MemInstr {
   Value *ptr1, *ptr2, *num;
   bool is_bcmp;
+  TailCallInfo tci;
+
 public:
   Memcmp(Type &type, std::string &&name, Value &ptr1, Value &ptr2, Value &num,
-         bool is_bcmp): MemInstr(type, std::move(name)), ptr1(&ptr1),
-                        ptr2(&ptr2), num(&num), is_bcmp(is_bcmp) {}
+         bool is_bcmp, TailCallInfo tci)
+      : MemInstr(type, std::move(name)), ptr1(&ptr1), ptr2(&ptr2), num(&num),
+        is_bcmp(is_bcmp), tci(tci) {}
 
   Value &getBytes() const { return *num; }
   bool isBCmp() const { return is_bcmp; }
@@ -1074,9 +1090,11 @@ public:
 
 class Strlen final : public MemInstr {
   Value *ptr;
+  TailCallInfo tci;
+
 public:
-  Strlen(Type &type, std::string &&name, Value &ptr)
-    : MemInstr(type, std::move(name)), ptr(&ptr) {}
+  Strlen(Type &type, std::string &&name, Value &ptr, TailCallInfo tci)
+      : MemInstr(type, std::move(name)), ptr(&ptr), tci(tci) {}
 
   Value *getPointer() const { return ptr; }
 
@@ -1104,6 +1122,7 @@ private:
   FnAttrs attrs;
   unsigned var_arg_idx;
   bool approx = false;
+  TailCallInfo tci;
 
   Value* getAlignArg() const;
 
@@ -1122,6 +1141,7 @@ public:
   void setApproximated(bool flag) { approx = flag; }
   uint64_t getAlign() const;
   bool isIndirect() const { return fnptr != nullptr; }
+  void setTailCallSite(TailCallInfo tci) { this->tci = tci; }
 
   std::pair<uint64_t, uint64_t> getMaxAllocSize() const override;
   uint64_t getMaxAccessSize() const override;

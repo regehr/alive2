@@ -9,6 +9,7 @@
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/IRReader/IRReader.h"
@@ -286,6 +287,31 @@ Value* get_operand(llvm::Value *v,
   if (!ty)
     return nullptr;
 
+  // automatic splat of constant values
+  if (auto vty = dyn_cast<llvm::FixedVectorType>(v->getType());
+      vty && isa<llvm::ConstantInt, llvm::ConstantFP>(v)) {
+    llvm::Value *llvm_splat = nullptr;
+    if (auto cnst = dyn_cast<llvm::ConstantInt>(v)) {
+      llvm_splat
+        = llvm::ConstantInt::get(vty->getElementType(), cnst->getValue());
+    } else if (auto cnst = dyn_cast<llvm::ConstantFP>(v)) {
+      llvm_splat
+        = llvm::ConstantFP::get(vty->getElementType(), cnst->getValue());
+    } else
+      UNREACHABLE();
+
+    auto splat = get_operand(llvm_splat, constexpr_conv, copy_inserter,
+                             register_fn_decl);
+    if (!splat)
+      return nullptr;
+
+    vector<Value*> vals(vty->getNumElements(), splat);
+    auto val = make_unique<AggregateValue>(*ty, std::move(vals));
+    auto ret = val.get();
+    current_fn->addConstant(std::move(val));
+    RETURN_CACHE(ret);
+  }
+
   if (auto cnst = dyn_cast<llvm::ConstantInt>(v)) {
     RETURN_CACHE(make_intconst(cnst->getValue()));
   }
@@ -521,4 +547,13 @@ llvm::Function *findFunction(llvm::Module &M, const string &FName) {
   return F && !F->isDeclaration() ? F : nullptr;
 }
 
+TailCallInfo parse_fn_tailcall(const llvm::CallInst &i) {
+  bool is_tailcall = i.isTailCall() || i.isMustTailCall();
+  if (!is_tailcall)
+    return {};
+  auto tail_type =
+      i.isMustTailCall() ? TailCallInfo::MustTail : TailCallInfo::Tail;
+  bool has_same_cc = i.getCallingConv() == i.getCaller()->getCallingConv();
+  return {tail_type, has_same_cc};
+}
 }

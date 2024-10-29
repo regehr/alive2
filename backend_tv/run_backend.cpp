@@ -85,6 +85,7 @@ unique_ptr<MemoryBuffer> generateAsm(Module &M) {
    * these changes are non-trivial refinements
    */
   auto MClone = CloneModule(M);
+  MClone->setDataLayout(TM->createDataLayout());
   pass.run(*MClone.get());
   return MemoryBuffer::getMemBuffer(Asm.c_str());
 }

@@ -2295,7 +2295,7 @@ void FnCall::print(ostream &os) const {
   if (!isVoid())
     os << getName() << " = ";
 
-  os << "call " << print_type(getType())
+  os << tci << "call " << print_type(getType())
      << (fnptr ? fnptr->getName() : fnName) << '(';
 
   bool first = true;
@@ -2359,8 +2359,7 @@ static void check_can_store(State &s, const expr &p0) {
 static void unpack_inputs(State &s, Value &argv, Type &ty,
                           const ParamAttrs &argflag, StateValue value,
                           StateValue value2, vector<StateValue> &inputs,
-                          vector<Memory::PtrInput> &ptr_inputs,
-                          unsigned idx) {
+                          vector<PtrInput> &ptr_inputs, unsigned idx) {
   if (auto agg = ty.getAsAggregateType()) {
     for (unsigned i = 0, e = agg->numElementsConst(); i != e; ++i) {
       if (agg->isPadding(i))
@@ -2421,7 +2420,7 @@ StateValue FnCall::toSMT(State &s) const {
   auto &m = s.getMemory();
 
   vector<StateValue> inputs;
-  vector<Memory::PtrInput> ptr_inputs;
+  vector<PtrInput> ptr_inputs;
 
   unsigned indirect_hash = 0;
   auto ptr = fnptr;
@@ -2492,6 +2491,8 @@ StateValue FnCall::toSMT(State &s) const {
   if (s.getFn().has(FnAttrs::WillReturn) &&
       !attrs.has(FnAttrs::WillReturn))
     s.addGuardableUB(expr(false));
+
+  tci.check(s, *this, ptr_inputs);
 
   auto get_alloc_ptr = [&]() -> Value& {
     for (auto &[arg, flags] : args) {
@@ -2596,6 +2597,7 @@ unique_ptr<Instr> FnCall::dup(Function &f, const string &suffix) const {
                                FnAttrs(attrs), fnptr, var_arg_idx);
   r->args = args;
   r->approx = approx;
+  r->tci = tci;
   return r;
 }
 
@@ -2606,8 +2608,11 @@ InlineAsm::InlineAsm(Type &type, string &&name, const string &asm_str,
            std::move(attrs)) {}
 
 
-ICmp::ICmp(Type &type, string &&name, Cond cond, Value &a, Value &b)
-  : Instr(type, std::move(name)), a(&a), b(&b), cond(cond), defined(cond != Any) {
+ICmp::ICmp(Type &type, string &&name, Cond cond, Value &a, Value &b,
+           unsigned flags)
+    : Instr(type, std::move(name)), a(&a), b(&b), cond(cond), flags(flags),
+      defined(cond != Any) {
+  assert((flags & SameSign) == flags);
   if (!defined)
     cond_name = getName() + "_cond";
 }
@@ -2655,7 +2660,10 @@ void ICmp::print(ostream &os) const {
   case UGT: condtxt = "ugt "; break;
   case Any: condtxt = ""; break;
   }
-  os << getName() << " = icmp " << condtxt << *a << ", " << b->getName();
+  os << getName() << " = icmp ";
+  if (flags & SameSign)
+    os << "samesign ";
+  os << condtxt << *a << ", " << b->getName();
   switch (pcmode) {
   case INTEGRAL: break;
   case PROVENANCE: os << ", use_provenance"; break;
@@ -2682,7 +2690,7 @@ StateValue ICmp::toSMT(State &s) const {
   auto &b_eval = s[*b];
 
   function<expr(const expr&, const expr&, Cond)> fn =
-      [&](auto &av, auto &bv, Cond cond) {
+      [](auto &av, auto &bv, Cond cond) {
     switch (cond) {
     case EQ:  return av == bv;
     case NE:  return av != bv;
@@ -2724,7 +2732,8 @@ StateValue ICmp::toSMT(State &s) const {
   auto scalar = [&](const StateValue &a, const StateValue &b) -> StateValue {
     auto fn2 = [&](Cond c) { return fn(a.value, b.value, c); };
     auto v = cond != Any ? fn2(cond) : build_icmp_chain(cond_var(), fn2);
-    return { v.toBVBool(), a.non_poison && b.non_poison };
+    auto np = flags & SameSign ? a.value.sign() == b.value.sign() : true;
+    return { v.toBVBool(), a.non_poison && b.non_poison && np };
   };
 
   auto &elem_ty = a->getType();
@@ -2748,7 +2757,7 @@ expr ICmp::getTypeConstraints(const Function &f) const {
 }
 
 unique_ptr<Instr> ICmp::dup(Function &f, const string &suffix) const {
-  return make_unique<ICmp>(getType(), getName() + suffix, cond, *a, *b);
+  return make_unique<ICmp>(getType(), getName() + suffix, cond, *a, *b, flags);
 }
 
 
@@ -2937,6 +2946,14 @@ void Phi::replaceSourceWith(const string &from, const string &to) {
       break;
     }
   }
+}
+
+void Phi::setValue(size_t index, Value &val) {
+  values[index].first = &val;
+}
+
+void Phi::setSource(size_t index, string &&BB_name) {
+  values[index].second = std::move(BB_name);
 }
 
 vector<Value*> Phi::operands() const {
@@ -3803,6 +3820,7 @@ StateValue GEP::toSMT(State &s) const {
     AndExpr inbounds_np;
     AndExpr idx_all_zeros;
 
+    // FIXME: not implemented for physical pointers
     if (inbounds)
       inbounds_np.add(ptr.inbounds());
 
@@ -3858,7 +3876,7 @@ StateValue GEP::toSMT(State &s) const {
 
       // try to simplify the pointer
       if (all_zeros.isFalse())
-        ptr.inbounds();
+        ptr.inbounds(true);
     }
 
     return { std::move(ptr).release(), non_poison() };
@@ -4114,8 +4132,8 @@ void Memset::rauw(const Value &what, Value &with) {
 }
 
 void Memset::print(ostream &os) const {
-  os << "memset " << *ptr << " align " << align << ", " << *val
-     << ", " << *bytes;
+  os << tci << "memset " << *ptr << " align " << align << ", " << *val << ", "
+     << *bytes;
 }
 
 StateValue Memset::toSMT(State &s) const {
@@ -4135,6 +4153,8 @@ StateValue Memset::toSMT(State &s) const {
     vptr = sv_ptr.value;
   }
   check_can_store(s, vptr);
+  tci.check(s, *this, { vptr });
+
   s.getMemory().memset(vptr, s[*val].zextOrTrunc(8), vbytes, align,
                        s.getUndefVars());
   return {};
@@ -4147,7 +4167,7 @@ expr Memset::getTypeConstraints(const Function &f) const {
 }
 
 unique_ptr<Instr> Memset::dup(Function &f, const string &suffix) const {
-  return make_unique<Memset>(*ptr, *val, *bytes, align);
+  return make_unique<Memset>(*ptr, *val, *bytes, align, tci);
 }
 
 
@@ -4155,10 +4175,10 @@ DEFINE_AS_RETZEROALIGN(MemsetPattern, getMaxAllocSize);
 DEFINE_AS_RETZERO(MemsetPattern, getMaxGEPOffset);
 
 MemsetPattern::MemsetPattern(Value &ptr, Value &pattern, Value &bytes,
-                             unsigned pattern_length)
+                             unsigned pattern_length, TailCallInfo tci)
   : MemInstr(Type::voidTy, "memset_pattern" + to_string(pattern_length)),
     ptr(&ptr), pattern(&pattern), bytes(&bytes),
-    pattern_length(pattern_length) {}
+    pattern_length(pattern_length), tci(tci) {}
 
 uint64_t MemsetPattern::getMaxAccessSize() const {
   return getIntOr(*bytes, UINT64_MAX);
@@ -4186,7 +4206,7 @@ void MemsetPattern::rauw(const Value &what, Value &with) {
 }
 
 void MemsetPattern::print(ostream &os) const {
-  os << getName() << ' ' << *ptr << ", " << *pattern << ", " << *bytes;
+  os << getName() << ' ' << tci << *ptr << ", " << *pattern << ", " << *bytes;
 }
 
 StateValue MemsetPattern::toSMT(State &s) const {
@@ -4195,6 +4215,8 @@ StateValue MemsetPattern::toSMT(State &s) const {
   auto &vbytes = s.getAndAddPoisonUB(*bytes, true).value;
   check_can_store(s, vptr);
   check_can_load(s, vpattern);
+  tci.check(s, *this, { vptr });
+
   s.getMemory().memset_pattern(vptr, vpattern, vbytes, pattern_length);
   return {};
 }
@@ -4206,7 +4228,7 @@ expr MemsetPattern::getTypeConstraints(const Function &f) const {
 }
 
 unique_ptr<Instr> MemsetPattern::dup(Function &f, const string &suffix) const {
-  return make_unique<MemsetPattern>(*ptr, *pattern, *bytes, pattern_length);
+  return make_unique<MemsetPattern>(*ptr, *pattern, *bytes, pattern_length, tci);
 }
 
 
@@ -4288,7 +4310,7 @@ void Memcpy::rauw(const Value &what, Value &with) {
 }
 
 void Memcpy::print(ostream &os) const {
-  os << (move ? "memmove " : "memcpy ") << *dst  << " align " << align_dst
+  os << tci << (move ? "memmove " : "memcpy ") << *dst << " align " << align_dst
      << ", " << *src << " align " << align_src << ", " << *bytes;
 }
 
@@ -4321,6 +4343,8 @@ StateValue Memcpy::toSMT(State &s) const {
 
   check_can_load(s, vsrc);
   check_can_store(s, vdst);
+  tci.check(s, *this, { vsrc, vdst });
+
   s.getMemory().memcpy(vdst, vsrc, vbytes, align_dst, align_src, move);
   return {};
 }
@@ -4332,7 +4356,8 @@ expr Memcpy::getTypeConstraints(const Function &f) const {
 }
 
 unique_ptr<Instr> Memcpy::dup(Function &f, const string &suffix) const {
-  return make_unique<Memcpy>(*dst, *src, *bytes, align_dst, align_src, move);
+  return
+    make_unique<Memcpy>(*dst, *src, *bytes, align_dst, align_src, move, tci);
 }
 
 
@@ -4365,18 +4390,21 @@ void Memcmp::rauw(const Value &what, Value &with) {
 }
 
 void Memcmp::print(ostream &os) const {
-  os << getName() << " = " << (is_bcmp ? "bcmp " : "memcmp ") << *ptr1
+  os << getName() << " = " << tci << (is_bcmp ? "bcmp " : "memcmp ") << *ptr1
      << ", " << *ptr2 << ", " << *num;
 }
 
 StateValue Memcmp::toSMT(State &s) const {
-  auto &[vptr1, np1] = s[*ptr1];
-  auto &[vptr2, np2] = s[*ptr2];
+  auto &stptr1 = s[*ptr1];
+  auto &stptr2 = s[*ptr2];
+  auto &[vptr1, np1] = stptr1;
+  auto &[vptr2, np2] = stptr2;
   auto &vnum = s.getAndAddPoisonUB(*num).value;
   s.addGuardableUB((vnum != 0).implies(np1 && np2));
 
   check_can_load(s, vptr1);
   check_can_load(s, vptr2);
+  tci.check(s, *this, { stptr1, stptr2 });
 
   Pointer p1(s.getMemory(), vptr1), p2(s.getMemory(), vptr2);
   // memcmp can be optimized to load & icmps, and it requires this
@@ -4440,7 +4468,7 @@ expr Memcmp::getTypeConstraints(const Function &f) const {
 
 unique_ptr<Instr> Memcmp::dup(Function &f, const string &suffix) const {
   return make_unique<Memcmp>(getType(), getName() + suffix, *ptr1, *ptr2, *num,
-                             is_bcmp);
+                             is_bcmp, tci);
 }
 
 
@@ -4468,12 +4496,13 @@ void Strlen::rauw(const Value &what, Value &with) {
 }
 
 void Strlen::print(ostream &os) const {
-  os << getName() << " = strlen " << *ptr;
+  os << getName() << " = " << tci << "strlen " << *ptr;
 }
 
 StateValue Strlen::toSMT(State &s) const {
   auto &eptr = s.getWellDefinedPtr(*ptr);
   check_can_load(s, eptr);
+  tci.check(s, *this, { eptr });
 
   Pointer p(s.getMemory(), eptr);
   Type &ty = getType();
@@ -4500,7 +4529,7 @@ expr Strlen::getTypeConstraints(const Function &f) const {
 }
 
 unique_ptr<Instr> Strlen::dup(Function &f, const string &suffix) const {
-  return make_unique<Strlen>(getType(), getName() + suffix, *ptr);
+  return make_unique<Strlen>(getType(), getName() + suffix, *ptr, tci);
 }
 
 

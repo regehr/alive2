@@ -2151,31 +2151,31 @@ class arm2llvm : public aslp::lifter_interface_llvm {
   }
 
   Value *createTrap() override {
-    auto decl = Intrinsic::getDeclaration(LiftedModule, Intrinsic::trap);
+    auto decl = Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::trap);
     return CallInst::Create(decl, "", LLVMBB);
   }
 
   Value *createSMin(Value *a, Value *b) override {
     auto decl =
-        Intrinsic::getDeclaration(LiftedModule, Intrinsic::smin, a->getType());
+        Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::smin, a->getType());
     return CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
   }
 
   Value *createSMax(Value *a, Value *b) override {
     auto decl =
-        Intrinsic::getDeclaration(LiftedModule, Intrinsic::smax, a->getType());
+        Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::smax, a->getType());
     return CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
   }
 
   Value *createUMin(Value *a, Value *b) override {
     auto decl =
-        Intrinsic::getDeclaration(LiftedModule, Intrinsic::umin, a->getType());
+        Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::umin, a->getType());
     return CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
   }
 
   Value *createUMax(Value *a, Value *b) override {
     auto decl =
-        Intrinsic::getDeclaration(LiftedModule, Intrinsic::umax, a->getType());
+        Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::umax, a->getType());
     return CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
   }
 
@@ -2185,67 +2185,67 @@ class arm2llvm : public aslp::lifter_interface_llvm {
 
   Value *createFAbs(Value *v) override {
     auto fabs_decl =
-        Intrinsic::getDeclaration(LiftedModule, Intrinsic::fabs, v->getType());
+        Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::fabs, v->getType());
     return CallInst::Create(fabs_decl, {v}, nextName(), LLVMBB);
   }
 
   CallInst *createSSubOverflow(Value *a, Value *b) override {
-    auto ssub_decl = Intrinsic::getDeclaration(
+    auto ssub_decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::ssub_with_overflow, a->getType());
     return CallInst::Create(ssub_decl, {a, b}, nextName(), LLVMBB);
   }
 
   CallInst *createSAddOverflow(Value *a, Value *b) override {
-    auto sadd_decl = Intrinsic::getDeclaration(
+    auto sadd_decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::sadd_with_overflow, a->getType());
     return CallInst::Create(sadd_decl, {a, b}, nextName(), LLVMBB);
   }
 
   CallInst *createUSubOverflow(Value *a, Value *b) override {
-    auto usub_decl = Intrinsic::getDeclaration(
+    auto usub_decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::usub_with_overflow, a->getType());
     return CallInst::Create(usub_decl, {a, b}, nextName(), LLVMBB);
   }
 
   CallInst *createUAddOverflow(Value *a, Value *b) override {
-    auto uadd_decl = Intrinsic::getDeclaration(
+    auto uadd_decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::uadd_with_overflow, a->getType());
     return CallInst::Create(uadd_decl, {a, b}, nextName(), LLVMBB);
   }
 
   CallInst *createUAddSat(Value *a, Value *b) override {
-    auto uadd_decl = Intrinsic::getDeclaration(
+    auto uadd_decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::uadd_sat, a->getType());
     return CallInst::Create(uadd_decl, {a, b}, nextName(), LLVMBB);
   }
 
   CallInst *createUSubSat(Value *a, Value *b) override {
-    auto usub_decl = Intrinsic::getDeclaration(
+    auto usub_decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::usub_sat, a->getType());
     return CallInst::Create(usub_decl, {a, b}, nextName(), LLVMBB);
   }
 
   CallInst *createSAddSat(Value *a, Value *b) override {
-    auto sadd_decl = Intrinsic::getDeclaration(
+    auto sadd_decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::sadd_sat, a->getType());
     return CallInst::Create(sadd_decl, {a, b}, nextName(), LLVMBB);
   }
 
   CallInst *createSSubSat(Value *a, Value *b) override {
-    auto ssub_decl = Intrinsic::getDeclaration(
+    auto ssub_decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::ssub_sat, a->getType());
     return CallInst::Create(ssub_decl, {a, b}, nextName(), LLVMBB);
   }
 
   CallInst *createCtPop(Value *v) override {
     auto decl =
-        Intrinsic::getDeclaration(LiftedModule, Intrinsic::ctpop, v->getType());
+        Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::ctpop, v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
   // first argument is an i16
   CallInst *createConvertFromFP16(Value *v, Type *ty) override {
-    auto cvt_decl = Intrinsic::getDeclaration(LiftedModule,
+    auto cvt_decl = Intrinsic::getOrInsertDeclaration(LiftedModule,
                                               Intrinsic::convert_from_fp16, ty);
     return CallInst::Create(cvt_decl, {v}, nextName(), LLVMBB);
   }
@@ -2320,74 +2320,74 @@ class arm2llvm : public aslp::lifter_interface_llvm {
 
   CallInst *createFShr(Value *a, Value *b, Value *c) override {
     auto *decl =
-        Intrinsic::getDeclaration(LiftedModule, Intrinsic::fshr, a->getType());
+        Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::fshr, a->getType());
     return CallInst::Create(decl, {a, b, c}, nextName(), LLVMBB);
   }
 
   CallInst *createFShl(Value *a, Value *b, Value *c) override {
     auto *decl =
-        Intrinsic::getDeclaration(LiftedModule, Intrinsic::fshl, a->getType());
+        Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::fshl, a->getType());
     return CallInst::Create(decl, {a, b, c}, nextName(), LLVMBB);
   }
 
   CallInst *createBitReverse(Value *v) override {
-    auto *decl = Intrinsic::getDeclaration(LiftedModule, Intrinsic::bitreverse,
+    auto *decl = Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::bitreverse,
                                            v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
   CallInst *createAbs(Value *v) override {
     auto *decl =
-        Intrinsic::getDeclaration(LiftedModule, Intrinsic::abs, v->getType());
+        Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::abs, v->getType());
     return CallInst::Create(decl, {v, getIntConst(0, 1)}, nextName(), LLVMBB);
   }
 
   CallInst *createCtlz(Value *v) override {
     auto *decl =
-        Intrinsic::getDeclaration(LiftedModule, Intrinsic::ctlz, v->getType());
+        Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::ctlz, v->getType());
     return CallInst::Create(decl, {v, getIntConst(0, 1)}, nextName(), LLVMBB);
   }
 
   CallInst *createBSwap(Value *v) override {
     auto *decl =
-        Intrinsic::getDeclaration(LiftedModule, Intrinsic::bswap, v->getType());
+        Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::bswap, v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
   CallInst *createVectorReduceAdd(Value *v) override {
-    auto *decl = Intrinsic::getDeclaration(
+    auto *decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::vector_reduce_add, v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
   CallInst *createFusedMultiplyAdd(Value *a, Value *b, Value *c) override {
     auto *decl =
-        Intrinsic::getDeclaration(LiftedModule, Intrinsic::fma, a->getType());
+        Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::fma, a->getType());
     return CallInst::Create(decl, {a, b, c}, nextName(), LLVMBB);
   }
 
   CallInst *createSQRT(Value *v) override {
     auto *decl =
-        Intrinsic::getDeclaration(LiftedModule, Intrinsic::sqrt, v->getType());
+        Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::sqrt, v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
   CallInst *createConstrainedRound(Value *v, Metadata *md) {
-    auto *decl = Intrinsic::getDeclaration(
+    auto *decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::experimental_constrained_round, v->getType());
     return CallInst::Create(decl, {v, MetadataAsValue::get(Ctx, md)},
                             nextName(), LLVMBB);
   }
 
   CallInst *createConstrainedFloor(Value *v, Metadata *md) {
-    auto *decl = Intrinsic::getDeclaration(
+    auto *decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::experimental_constrained_floor, v->getType());
     return CallInst::Create(decl, {v, MetadataAsValue::get(Ctx, md)},
                             nextName(), LLVMBB);
   }
 
   CallInst *createConstrainedCeil(Value *v, Metadata *md) {
-    auto *decl = Intrinsic::getDeclaration(
+    auto *decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::experimental_constrained_ceil, v->getType());
     return CallInst::Create(decl, {v, MetadataAsValue::get(Ctx, md)},
                             nextName(), LLVMBB);

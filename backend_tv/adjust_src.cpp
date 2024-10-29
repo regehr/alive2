@@ -403,25 +403,26 @@ Function *adjustSrcReturn(Function *srcFn) {
         if (auto *RI = dyn_cast<ReturnInst>(&I))
           RIs.push_back(RI);
 
-    for (auto *RI : RIs) {
+    for (auto RI : RIs) {
+      BasicBlock::iterator it{RI};
       auto retVal = RI->getReturnValue();
       auto Name = retVal->getName();
       if (origRetTy->isVectorTy()) {
         retVal = new BitCastInst(
             retVal, Type::getIntNTy(srcFn->getContext(), origRetWidth),
-            Name + "_bitcast", RI);
+            Name + "_bitcast", it);
       }
       if (srcFn->hasRetAttribute(Attribute::ZExt)) {
-        retVal = new ZExtInst(retVal, i64, Name + "_zext", RI);
+        retVal = new ZExtInst(retVal, i64, Name + "_zext", it);
       } else {
         if (origRetWidth < 32) {
-          auto sext = new SExtInst(retVal, i32, Name + "_sext", RI);
-          retVal = new ZExtInst(sext, i64, Name + "_zext", RI);
+          auto sext = new SExtInst(retVal, i32, Name + "_sext", it);
+          retVal = new ZExtInst(sext, i64, Name + "_zext", it);
         } else {
-          retVal = new SExtInst(retVal, i64, Name + "_sext", RI);
+          retVal = new SExtInst(retVal, i64, Name + "_sext", it);
         }
       }
-      ReturnInst::Create(srcFn->getContext(), retVal, RI);
+      ReturnInst::Create(srcFn->getContext(), retVal, it);
       RI->eraseFromParent();
     }
     actualRetTy = i64;
