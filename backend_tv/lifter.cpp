@@ -70,8 +70,6 @@
 #include <utility>
 #include <vector>
 
-#define AARCH64_MAP_IMPL
-#include "aslp/aarch64_map.hpp"
 #include "aslp/aslp_bridge.hpp"
 
 using namespace std;
