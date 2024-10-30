@@ -19,12 +19,15 @@ if (NOT LLVM_FOUND)
 else()
   message(STATUS "... LLVM already found")
 endif()
-message(STATUS "Found LLVM: " ${LLVM_DIR} ", tools: " ${LLVM_TOOLS_BINARY_DIR})
+message(STATUS "Found LLVM: " ${LLVM_DIR} ", tools: " ${LLVM_TOOLS_BINARY_DIR} ", binary: " ${LLVM_BINARY_DIR})
 get_target_property(LLVM_CONFIG llvm-config LOCATION)
 
 message(STATUS "llvm-config: ${LLVM_CONFIG}")
 # list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 # include(AddLLVM)
+
+find_file(AARCH64_INSTR_INC "Target/AArch64/AArch64GenInstrInfo.inc" REQUIRED PATHS ${LLVM_BINARY_DIR}/lib ${LLVM_INCLUDE_DIRS})
+message(STATUS "AArch64GenInstrInfo.inc: ${AARCH64_INSTR_INC}")
 
 include(FetchContent)
 FetchContent_Declare(aslp-cpp
@@ -57,7 +60,20 @@ IF(CMAKE_BUILD_TYPE MATCHES DEBUG)
   target_link_options(bridge PRIVATE -g -O0 -fsanitize=address)    
 ENDIF()
 
-
+find_package(Python)
+add_custom_command(
+  OUTPUT aarch64_map.hpp
+  COMMAND
+    ${Python_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/parse_tablegen.py
+    ${AARCH64_INSTR_INC}
+    aarch64_map.hpp
+  DEPENDS ${AARCH64_INSTR_INC}
+  VERBATIM
+)
+add_custom_target(aarch64_map DEPENDS aarch64_map.hpp)
+add_dependencies(bridge aarch64_map)
+target_include_directories(bridge PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/..")
 
 execute_process(COMMAND "${LLVM_CONFIG}" --libs support core irreader bitwriter
                 COMMAND_ERROR_IS_FATAL ANY

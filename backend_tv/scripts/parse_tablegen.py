@@ -7,6 +7,10 @@ def main():
   with open(sys.argv[1], 'r') as f:
     inc = f.readlines()
 
+  # redirect output to second command line argument 
+  if len(sys.argv) >= 3:
+    sys.stdout = open(sys.argv[2], 'w')
+
   split = inc.index('#endif // GET_INSTRINFO_ENUM\n')
   assert split >= 0
   instructions = [(s[0].strip(), s[1].strip().strip(',')) for s in map(lambda x: x.split('='), inc[:split]) if len(s) == 2]
