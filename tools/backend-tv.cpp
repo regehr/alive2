@@ -166,6 +166,7 @@ void doit(llvm::Module *M1, llvm::Function *srcFn, Verifier &verifier,
 
   lifter::init();
   lifter::checkSupport(srcFn);
+  lifter::nameGlobals(M1);
 
   if (opt_use_debuginfo)
     lifter::addDebugInfo(srcFn);
@@ -185,7 +186,7 @@ void doit(llvm::Module *M1, llvm::Function *srcFn, Verifier &verifier,
   if (opt_asm_only)
     exit(0);
 
-  srcFn = lifter::adjustSrcReturn(srcFn);
+  srcFn = lifter::adjustSrc(srcFn);
 
   std::unique_ptr<llvm::Module> M2 =
       std::make_unique<llvm::Module>("M2", M1->getContext());

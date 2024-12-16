@@ -204,25 +204,31 @@ namespace lifter {
 
 void checkVectorTy(VectorType *Ty) {
   auto *EltTy = Ty->getElementType();
+  int Width = -1;
   if (auto *IntTy = dyn_cast<IntegerType>(EltTy)) {
-    auto Width = IntTy->getBitWidth();
-    if (Width != 8 && Width != 16 && Width != 32 && Width != 64) {
-      *out << "\nERROR: Only vectors of i8, i16, i32, i64 are supported\n\n";
-      exit(-1);
-    }
-    auto Count = Ty->getElementCount().getFixedValue();
-    auto VecSize = (Count * Width) / 8;
-    if (VecSize != 8 && VecSize != 16) {
-      *out << "\nERROR: Only short vectors 8 and 16 bytes long are supported, "
-              "in parameters and return values; please see Section 5.4 of "
-              "AAPCS64 for more details\n\n";
-      exit(-1);
-    }
+    Width = IntTy->getBitWidth();
+    if (Width != 8 && Width != 16 && Width != 32 && Width != 64)
+      goto vec_error;
+  } else if (EltTy->isFloatTy()) {
+    Width = 32;
+  } else if (EltTy->isDoubleTy()) {
+    Width = 64;
   } else {
-    // FIXME there's no reason for this restriction
-    *out << "\nERROR: Only vectors of integers supported for now\n\n";
+    *out << "\nERROR: Only vectors of integer, f32, f64, supported for now\n\n";
     exit(-1);
   }
+  {
+    auto Count = Ty->getElementCount().getFixedValue();
+    auto VecSize = (Count * Width) / 8;
+    if (VecSize != 8 && VecSize != 16)
+      goto vec_error;
+    return;
+  }
+vec_error:
+  *out << "\nERROR: Only short vectors 8 and 16 bytes long are supported, "
+          "in parameters and return values; please see Section 5.4 of "
+          "AAPCS64 for more details\n\n";
+  exit(-1);
 }
 
 std::unique_ptr<DIBuilder> DBuilder;
@@ -234,8 +240,8 @@ void addDebugInfo(Function *srcFn) {
   // start with a clean slate
   StripDebugInfo(M);
 
-  M.addModuleFlag(Module::Warning, "Dwarf Version", dwarf::DWARF_VERSION);
-  M.addModuleFlag(Module::Warning, "Debug Info Version",
+  M.setModuleFlag(Module::Warning, "Dwarf Version", dwarf::DWARF_VERSION);
+  M.setModuleFlag(Module::Warning, "Debug Info Version",
                   DEBUG_METADATA_VERSION);
 
   auto &Ctx = srcFn->getContext();
@@ -258,11 +264,14 @@ void addDebugInfo(Function *srcFn) {
     }
   }
 
+  if (false) {
+    M.dump();
+    *out << "\n\n\n";
+  }
+
   DBuilder->finalize();
   verifyModule(M);
   *out << "\n\n\n";
-  // M.dump();
-  //*out << "\n\n\n";
 }
 
 void checkSupport(Function *srcFn) {
@@ -351,6 +360,21 @@ void checkSupport(Function *srcFn) {
   *out << llvmInstCount << " LLVM instructions in source function\n";
 }
 
+void nameGlobals(Module *M) {
+  int num = 0;
+  for (auto G = M->global_begin(); G != M->global_end(); ++G) {
+    if (G->hasName())
+      continue;
+    G->setName("g" + std::to_string(num++));
+  }
+  num = 0;
+  for (auto &F : *M) {
+    if (F.hasName())
+      continue;
+    F.setName("f" + std::to_string(num++));
+  }
+}
+
 /*
  * a function that have the sext or zext attribute on its return value
  * is awkward: this obligates the function to sign- or zero-extend the
@@ -361,7 +385,7 @@ void checkSupport(Function *srcFn) {
  * test that sort of code, so we just unconditionally do that even
  * when we don't actually need to.
  */
-Function *adjustSrcReturn(Function *srcFn) {
+Function *adjustSrc(Function *srcFn) {
   auto *origRetTy = srcFn->getReturnType();
 
   if (!(origRetTy->isIntegerTy() || origRetTy->isVectorTy() ||
@@ -382,8 +406,8 @@ Function *adjustSrcReturn(Function *srcFn) {
     }
   } else {
     if (origRetWidth > 64) {
-      *out << "\nERROR: Unsupported Function Return: Only int/vec/ptr types 64 "
-              "bits or smaller supported for now\n\n";
+      *out << "\nERROR: Scalar return values larger than 64 bits are not "
+              "supported\n\n";
       exit(-1);
     }
   }

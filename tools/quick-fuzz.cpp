@@ -888,10 +888,11 @@ void BBFuzzer::go() {
 void doit(llvm::Module *M1, llvm::Function *srcFn, Verifier &verifier) {
   lifter::init();
   lifter::checkSupport(srcFn);
+  lifter::nameGlobals(M1);
 
   // this has to return a fresh function since it rewrites the
   // signature
-  srcFn = lifter::adjustSrcReturn(srcFn);
+  srcFn = lifter::adjustSrc(srcFn);
 
   std::unique_ptr<llvm::Module> M2 =
       std::make_unique<llvm::Module>("M2", M1->getContext());

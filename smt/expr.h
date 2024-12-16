@@ -135,6 +135,7 @@ public:
   bool isConcat(expr &a, expr &b) const;
   bool isExtract(expr &e, unsigned &high, unsigned &low) const;
   bool isSignExt(expr &val) const;
+  bool isAShr(expr &a, expr &b) const;
   bool isAnd(expr &a, expr &b) const;
   bool isNot(expr &neg) const;
   bool isAdd(expr &a, expr &b) const;
@@ -220,6 +221,8 @@ public:
   expr abs() const;
 
   expr round_up(const expr &power_of_two) const;
+  expr round_up_bits(const expr &nbits) const;
+  expr round_up_bits_no_overflow(const expr &nbits) const;
 
   expr isNaN() const;
   expr isInf() const;
@@ -299,6 +302,7 @@ public:
   expr sgt(const expr &rhs) const;
 
   expr ule(uint64_t rhs) const;
+  expr ule_extend(uint64_t rhs) const;
   expr ult(uint64_t rhs) const;
   expr uge(uint64_t rhs) const;
   expr ugt(uint64_t rhs) const;

@@ -15,7 +15,7 @@ namespace IR {
 class Memory;
 
 class Pointer {
-  const Memory &m;
+  Memory &m;
 
   // [0, padding, bid, offset, attributes (1 bit for each)] -- logical pointer
   // [1, padding, address, attributes] -- physical pointer
@@ -88,6 +88,8 @@ public:
 
   smt::expr blockSize() const;
   smt::expr blockSizeOffsetT() const; // to compare with offsets
+  smt::expr blockSizeAligned() const;
+  smt::expr blockSizeAlignedOffsetT() const; // to compare with offsets
 
   const smt::expr& operator()() const { return p; }
   smt::expr release() && { return std::move(p); }
@@ -96,7 +98,7 @@ public:
   smt::expr reprWithoutAttrs() const;
   static Pointer mkPointerFromNoAttrs(const Memory &m, const smt::expr &e);
 
-  Pointer operator+(unsigned) const;
+  Pointer operator+(uint64_t bytes) const;
   Pointer operator+(const smt::expr &bytes) const;
   void operator+=(const smt::expr &bytes);
 

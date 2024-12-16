@@ -9,6 +9,10 @@
 #include <utility>
 #include <vector>
 
+#define RAUW(val)                                                              \
+  if (val == &what)                                                            \
+  val = &with
+
 namespace IR {
 
 class Function;
@@ -67,7 +71,7 @@ public:
 class FpBinOp final : public Instr {
 public:
   enum Op { FAdd, FSub, FMul, FDiv, FRem, FMax, FMin, FMaximum, FMinimum,
-            CopySign };
+            FMaximumnum, FMinimumnum, CopySign };
 
 private:
   Value *lhs, *rhs;
@@ -309,8 +313,8 @@ public:
 
 class FpConversionOp final : public Instr {
 public:
-  enum Op { SIntToFP, UIntToFP, FPToSInt, FPToUInt, FPExt, FPTrunc, LRInt,
-            LRound };
+  enum Op { SIntToFP, UIntToFP, FPToSInt, FPToSInt_Sat, FPToUInt, FPToUInt_Sat,
+            FPExt, FPTrunc, LRInt, LRound };
   enum Flags { None = 0, NNEG = 1 << 0 };
 
 private:
@@ -319,16 +323,20 @@ private:
   FpRoundingMode rm;
   FpExceptionMode ex;
   unsigned flags;
+  FastMathFlags fmath;
 
 public:
   FpConversionOp(Type &type, std::string &&name, Value &val, Op op,
                  FpRoundingMode rm = {}, FpExceptionMode ex = {},
-                 unsigned flags = None);
+                 unsigned flags = None, FastMathFlags fmath = {});
 
   Op getOp() const { return op; }
   FpRoundingMode getRoundingMode() const { return rm; }
   FpExceptionMode getExceptionMode() const { return ex; }
   unsigned getFlags() const { return flags; }
+  FastMathFlags getFastMathFlags() const {
+    return fmath;
+  }
 
   std::vector<Value*> operands() const override;
   bool propagatesPoison() const override;
@@ -637,72 +645,6 @@ public:
 };
 
 
-class Assume final : public Instr {
-public:
-  enum Kind {
-    AndNonPoison, /// cond should be non-poison and hold
-    WellDefined,  /// cond only needs to be well defined (can be false)
-    Align,        /// args[0] satisfies alignment args[1]
-    Dereferenceable,       /// args[0] is dereferenceable at least args[1]
-    DereferenceableOrNull, /// args[0] is null or deref least args[1]
-    NonNull       /// args[0] is a nonnull pointer
-  };
-
-private:
-  std::vector<Value*> args;
-  Kind kind;
-
-public:
-  Assume(Value &cond, Kind kind);
-  Assume(std::vector<Value *> &&args, Kind kind);
-
-  Kind getKind() const { return kind; }
-  std::vector<Value*> operands() const override;
-  bool propagatesPoison() const override;
-  bool hasSideEffects() const override;
-  void rauw(const Value &what, Value &with) override;
-  void print(std::ostream &os) const override;
-  StateValue toSMT(State &s) const override;
-  smt::expr getTypeConstraints(const Function &f) const override;
-  std::unique_ptr<Instr>
-    dup(Function &f, const std::string &suffix) const override;
-};
-
-
-// yields poison if invalid
-class AssumeVal final : public Instr {
-public:
-  enum Kind {
-    Align,
-    NonNull,
-    Range,
-  };
-
-private:
-  Value *val;
-  std::vector<Value*> args;
-  Kind kind;
-  bool is_welldefined;
-
-public:
-  AssumeVal(Type &type, std::string &&name, Value &val,
-            std::vector<Value *> &&args, Kind kind,
-            bool is_welldefined = false);
-
-  Kind getKind() const { return kind; }
-  bool isWellDefined() const { return is_welldefined; }
-  std::vector<Value*> operands() const override;
-  bool propagatesPoison() const override;
-  bool hasSideEffects() const override;
-  void rauw(const Value &what, Value &with) override;
-  void print(std::ostream &os) const override;
-  StateValue toSMT(State &s) const override;
-  smt::expr getTypeConstraints(const Function &f) const override;
-  std::unique_ptr<Instr>
-    dup(Function &f, const std::string &suffix) const override;
-};
-
-
 class MemInstr : public Instr {
 public:
   MemInstr(Type &type, std::string &&name) : Instr(type, std::move(name)) {}
@@ -745,6 +687,82 @@ public:
   };
 
   virtual ByteAccessInfo getByteAccessInfo() const = 0;
+};
+
+
+class Assume final : public MemInstr {
+public:
+  enum Kind {
+    AndNonPoison, /// cond should be non-poison and hold
+    WellDefined,  /// cond only needs to be well defined (can be false)
+    Align,        /// args[0] satisfies alignment args[1]
+    Dereferenceable,       /// args[0] is dereferenceable at least args[1]
+    DereferenceableOrNull, /// args[0] is null or deref least args[1]
+    NonNull       /// args[0] is a nonnull pointer
+  };
+
+private:
+  std::vector<Value*> args;
+  Kind kind;
+
+public:
+  Assume(Value &cond, Kind kind);
+  Assume(std::vector<Value *> &&args, Kind kind);
+
+  std::pair<uint64_t, uint64_t> getMaxAllocSize() const override;
+  uint64_t getMaxAccessSize() const override;
+  uint64_t getMaxGEPOffset() const override;
+  ByteAccessInfo getByteAccessInfo() const override;
+
+  Kind getKind() const { return kind; }
+  std::vector<Value*> operands() const override;
+  bool propagatesPoison() const override;
+  bool hasSideEffects() const override;
+  void rauw(const Value &what, Value &with) override;
+  void print(std::ostream &os) const override;
+  StateValue toSMT(State &s) const override;
+  smt::expr getTypeConstraints(const Function &f) const override;
+  std::unique_ptr<Instr>
+    dup(Function &f, const std::string &suffix) const override;
+};
+
+
+// yields poison if invalid
+class AssumeVal final : public MemInstr {
+public:
+  enum Kind {
+    Align,
+    NonNull,
+    Range,
+  };
+
+private:
+  Value *val;
+  std::vector<Value*> args;
+  Kind kind;
+  bool is_welldefined;
+
+public:
+  AssumeVal(Type &type, std::string &&name, Value &val,
+            std::vector<Value *> &&args, Kind kind,
+            bool is_welldefined = false);
+
+  std::pair<uint64_t, uint64_t> getMaxAllocSize() const override;
+  uint64_t getMaxAccessSize() const override;
+  uint64_t getMaxGEPOffset() const override;
+  ByteAccessInfo getByteAccessInfo() const override;
+
+  Kind getKind() const { return kind; }
+  bool isWellDefined() const { return is_welldefined; }
+  std::vector<Value*> operands() const override;
+  bool propagatesPoison() const override;
+  bool hasSideEffects() const override;
+  void rauw(const Value &what, Value &with) override;
+  void print(std::ostream &os) const override;
+  StateValue toSMT(State &s) const override;
+  smt::expr getTypeConstraints(const Function &f) const override;
+  std::unique_ptr<Instr>
+    dup(Function &f, const std::string &suffix) const override;
 };
 
 

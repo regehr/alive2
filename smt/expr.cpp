@@ -497,6 +497,10 @@ bool expr::isSignExt(expr &val) const {
   return isUnOp(val, Z3_OP_SIGN_EXT);
 }
 
+bool expr::isAShr(expr &a, expr &b) const {
+  return isBinOp(a, b, Z3_OP_BASHR);
+}
+
 bool expr::isAnd(expr &a, expr &b) const {
   return isBinOp(a, b, Z3_OP_AND);
 }
@@ -728,7 +732,7 @@ expr expr::sdiv(const expr &rhs) const {
   if (rhs.isZero())
     return rhs;
 
-  if (isZero())
+  if (isZero() || rhs.isOne())
     return *this;
 
   if (isSMin() && rhs.isAllOnes())
@@ -744,7 +748,7 @@ expr expr::udiv(const expr &rhs) const {
   if (rhs.isZero())
     return rhs;
 
-  if (isZero())
+  if (isZero() || rhs.isOne())
     return *this;
 
   return binop_fold(rhs, Z3_mk_bvudiv);
@@ -1127,6 +1131,16 @@ expr expr::abs() const {
 expr expr::round_up(const expr &power_of_two) const {
   expr minus_1 = power_of_two - mkUInt(1, power_of_two);
   return (*this + minus_1) & ~minus_1;
+}
+
+expr expr::round_up_bits(const expr &nbits) const {
+  return round_up(mkUInt(1, *this) << nbits.zextOrTrunc(bits()));
+}
+
+expr expr::round_up_bits_no_overflow(const expr &nbits) const {
+  expr power_2 = mkUInt(1, *this) << nbits.zextOrTrunc(bits());
+  expr minus_1 = power_2 - mkUInt(1, power_2);
+  return add_no_uoverflow(minus_1);
 }
 
 #define fold_fp_neg(fn)                                  \
@@ -1720,6 +1734,13 @@ expr expr::ule(uint64_t rhs) const {
   return ule(mkUInt(rhs, sort()));
 }
 
+expr expr::ule_extend(uint64_t rhs) const {
+  C();
+  if ((unsigned)bit_width(rhs) > bits())
+    return true;
+  return ule(rhs);
+}
+
 expr expr::ult(uint64_t rhs) const {
   C();
   return ult(mkUInt(rhs, sort()));
@@ -1849,6 +1870,16 @@ expr expr::extract(unsigned high, unsigned low, unsigned depth) const {
       if (high < val_bits)
         return val.extract(high, 0);
       return val.sext(high - val_bits + 1);
+    }
+  }
+  {
+    expr a, b;
+    if (isAShr(a, b)) {
+      uint64_t shift;
+      if (b.isUInt(shift) && high + shift < a.bits()) {
+        assert(shift < a.bits());
+        return a.extract(high + shift, low + shift);
+      }
     }
   }
   {

@@ -154,6 +154,9 @@ class Memory {
   smt::expr non_local_block_liveness; // BV w/ 1 bit per bid (1 if live)
   smt::expr local_block_liveness;
 
+  // TODO: change from short idx to arg number
+  smt::expr has_stored_arg; // (short idx, short offset) -> bool
+
   smt::FunctionExpr local_blk_addr; // bid -> (bits_size_t - 1)
   smt::FunctionExpr local_blk_size;
   smt::FunctionExpr local_blk_align;
@@ -177,6 +180,7 @@ class Memory {
   std::map<smt::expr, AliasSet> ptr_alias; // blockid -> alias
   unsigned next_nonlocal_bid = 0;
   unsigned nextNonlocalBid();
+  unsigned numCurrentNonLocals() const;
 
   static bool observesAddresses();
   static int isInitialMemBlock(const smt::expr &e, bool match_any_init);
@@ -222,6 +226,10 @@ class Memory {
                    const smt::expr &bytes,
                    const std::vector<std::pair<unsigned, smt::expr>> &data,
                    const std::set<smt::expr> &undef, uint64_t align);
+
+  // to implement the 'initializes' parameter attribute
+  smt::expr hasStored(const Pointer &p, const smt::expr &bytes) const;
+  void record_store(const Pointer &p, const smt::expr &bytes);
 
   smt::expr blockValRefined(const Memory &other, unsigned bid, bool local,
                             const smt::expr &offset,
@@ -303,7 +311,8 @@ public:
   std::pair<smt::expr, smt::expr> alloc(const smt::expr *size, uint64_t align,
       BlockKind blockKind, const smt::expr &precond = true,
       const smt::expr &nonnull = false,
-      std::optional<unsigned> bid = std::nullopt, unsigned *bid_out = nullptr);
+      std::optional<unsigned> bid = std::nullopt, unsigned *bid_out = nullptr,
+      bool is_function = false);
 
   // Start lifetime of a local block.
   void startLifetime(const smt::expr &ptr_local);
@@ -339,17 +348,19 @@ public:
   void fillPoison(const smt::expr &bid);
 
   smt::expr ptr2int(const smt::expr &ptr);
-  smt::expr int2ptr(const smt::expr &val) const;
+  smt::expr int2ptr(const smt::expr &val);
 
   std::tuple<smt::expr, Pointer, std::set<smt::expr>>
     refined(const Memory &other, bool fncall,
             const std::vector<PtrInput> *set_ptrs = nullptr,
             const std::vector<PtrInput> *set_ptrs_other = nullptr) const;
 
-  // Returns true if a nocapture pointer byte is not in the memory.
-  smt::expr checkNocapture() const;
   void escapeLocalPtr(const smt::expr &ptr, const smt::expr &is_ptr);
   void observesAddr(const Pointer &ptr);
+
+  smt::expr returnChecks() const;
+  smt::expr checkNocapture() const;
+  smt::expr checkInitializes() const;
 
   static Memory mkIf(const smt::expr &cond, Memory &&then, Memory &&els);
 
@@ -368,6 +379,7 @@ public:
   friend class Pointer;
 
 private:
+  static unsigned bitsAlignmentInfo();
   smt::expr mk_block_val_array(unsigned bid) const;
   Byte raw_load(bool local, unsigned bid, const smt::expr &offset) const;
   void print_array(std::ostream &os, const smt::expr &a,

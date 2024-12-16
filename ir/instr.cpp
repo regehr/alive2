@@ -19,9 +19,6 @@ using namespace smt;
 using namespace util;
 using namespace std;
 
-#define RAUW(val)    \
-  if (val == &what)  \
-    val = &with
 #define DEFINE_AS_RETZERO(cls, method) \
   uint64_t cls::method() const { return 0; }
 #define DEFINE_AS_RETZEROALIGN(cls, method) \
@@ -29,8 +26,7 @@ using namespace std;
 #define DEFINE_AS_RETFALSE(cls, method) \
   bool cls::method() const { return false; }
 #define DEFINE_AS_EMPTYACCESS(cls) \
-  MemInstr::ByteAccessInfo cls::getByteAccessInfo() const \
-  { return {}; }
+  MemInstr::ByteAccessInfo cls::getByteAccessInfo() const { return {}; }
 
 // log2 of max number of var args per function
 #define VARARG_BITS 8
@@ -645,6 +641,8 @@ void FpBinOp::print(ostream &os) const {
   case FMin:     str = "fmin "; break;
   case FMaximum: str = "fmaximum "; break;
   case FMinimum: str = "fminimum "; break;
+  case FMaximumnum: str = "fmaximumnum "; break;
+  case FMinimumnum: str = "fminimumnum "; break;
   case CopySign: str = "copysign "; break;
   }
   os << getName() << " = " << str << fmath << *lhs << ", " << rhs->getName();
@@ -732,9 +730,10 @@ static StateValue fm_poison(State &s, expr a, const expr &ap, expr b,
                             const expr &bp, expr c, const expr &cp,
                             function<expr(const expr&, const expr&,
                                           const expr&, const expr&)> fn,
-                            const Type &ty, FastMathFlags fmath,
+                            const Type &from_ty, FastMathFlags fmath,
                             FpRoundingMode rm, bool bitwise,
-                            bool flags_in_only = false, int nary = 3) {
+                            bool flags_in_only = false,
+                            const Type *to_ty = nullptr, int nary = 3) {
   AndExpr non_poison;
   non_poison.add(ap);
   if (nary >= 2)
@@ -742,10 +741,10 @@ static StateValue fm_poison(State &s, expr a, const expr &ap, expr b,
   if (nary >= 3)
     non_poison.add(cp);
 
-  if (!ty.isFloatType())
+  if (!from_ty.isFloatType())
     return { fn(a, b, c, {}), non_poison() };
 
-  auto fpty = ty.getAsFloatType();
+  auto &fpty = *from_ty.getAsFloatType();
 
   if (fmath.flags & FastMathFlags::NSZ) {
     a = any_fp_zero(s, a);
@@ -756,12 +755,12 @@ static StateValue fm_poison(State &s, expr a, const expr &ap, expr b,
     }
   }
 
-  expr fp_a = fpty->getFloat(a);
-  expr fp_b = fpty->getFloat(b);
-  expr fp_c = fpty->getFloat(c);
+  expr fp_a = fpty.getFloat(a);
+  expr fp_b = fpty.getFloat(b);
+  expr fp_c = fpty.getFloat(c);
 
   if (!bitwise) {
-    auto fpdenormal = s.getFn().getFnAttrs().getFPDenormal(ty).input;
+    auto fpdenormal = s.getFn().getFnAttrs().getFPDenormal(from_ty).input;
     fp_a = handle_subnormal(s, fpdenormal, std::move(fp_a));
     fp_b = handle_subnormal(s, fpdenormal, std::move(fp_b));
     fp_c = handle_subnormal(s, fpdenormal, std::move(fp_c));
@@ -809,9 +808,11 @@ static StateValue fm_poison(State &s, expr a, const expr &ap, expr b,
     val = any_fp_zero(s, std::move(val));
 
   if (!bitwise && val.isFloat()) {
-    val = handle_subnormal(s, s.getFn().getFnAttrs().getFPDenormal(ty).output,
+    val = handle_subnormal(s,
+                           s.getFn().getFnAttrs().getFPDenormal(from_ty).output,
                            std::move(val));
-    val = fpty->fromFloat(s, val, *fpty, nary, a, b, c);
+    const FloatType &ty = to_ty ? *to_ty->getAsFloatType() : fpty;
+    val = ty.fromFloat(s, val, fpty, nary, a, b, c);
   }
 
   return { std::move(val), non_poison() };
@@ -823,21 +824,23 @@ static StateValue fm_poison(State &s, expr a, const expr &ap, expr b,
                                           const expr&)> fn,
                             const Type &ty, FastMathFlags fmath,
                             FpRoundingMode rm, bool bitwise,
-                            bool flags_in_only = false) {
+                            bool flags_in_only = false,
+                            const Type *to_ty = nullptr) {
   return fm_poison(s, std::move(a), ap, std::move(b), bp, expr(), expr(),
                    [fn](auto &a, auto &b, auto &c, auto &rm) {
                     return fn(a, b, rm);
-                   }, ty, fmath, rm, bitwise, flags_in_only, 2);
+                   }, ty, fmath, rm, bitwise, flags_in_only, to_ty, 2);
 }
 
 static StateValue fm_poison(State &s, expr a, const expr &ap,
                             function<expr(const expr&, const expr&)> fn,
                             const Type &ty, FastMathFlags fmath,
                             FpRoundingMode rm, bool bitwise,
-                            bool flags_in_only = false) {
+                            bool flags_in_only = false,
+                            const Type *to_ty = nullptr) {
   return fm_poison(s, std::move(a), ap, expr(), expr(), expr(), expr(),
                    [fn](auto &a, auto &b, auto &c, auto &rm) {return fn(a, rm);},
-                   ty, fmath, rm, bitwise, flags_in_only, 1);
+                   ty, fmath, rm, bitwise, flags_in_only, to_ty, 1);
 }
 
 StateValue FpBinOp::toSMT(State &s) const {
@@ -895,7 +898,7 @@ StateValue FpBinOp::toSMT(State &s) const {
   case FMaximum:
     fn = [&](const expr &a, const expr &b, const expr &rm) {
       expr zpos = expr::mkNumber("0", a), zneg = expr::mkNumber("-0", a);
-      expr cmp = (op == FMinimum) ? a.fole(b) : a.foge(b);
+      expr cmp = op == FMinimum ? a.fole(b) : a.foge(b);
       expr neg_cond = op == FMinimum ? (a.isFPNegative() || b.isFPNegative())
                                      : (a.isFPNegative() && b.isFPNegative());
       expr e = expr::mkIf(a.isFPZero() && b.isFPZero(),
@@ -903,6 +906,21 @@ StateValue FpBinOp::toSMT(State &s) const {
                           expr::mkIf(cmp, a, b));
 
       return expr::mkIf(a.isNaN(), a, expr::mkIf(b.isNaN(), b, e));
+    };
+    break;
+
+  case FMinimumnum:
+  case FMaximumnum:
+    fn = [&](const expr &a, const expr &b, const expr &rm) {
+      expr zpos = expr::mkNumber("0", a), zneg = expr::mkNumber("-0", a);
+      expr cmp = op == FMinimumnum ? a.fole(b) : a.foge(b);
+      expr neg_cond = op == FMinimumnum ? (a.isFPNegative() || b.isFPNegative())
+                                        : (a.isFPNegative() && b.isFPNegative());
+      expr e = expr::mkIf(a.isFPZero() && b.isFPZero(),
+                          expr::mkIf(neg_cond, zneg, zpos),
+                          expr::mkIf(cmp, a, b));
+
+      return expr::mkIf(a.isNaN(), b, expr::mkIf(b.isNaN(), a, e));
     };
     break;
 
@@ -1340,8 +1358,6 @@ StateValue TernaryOp::toSMT(State &s) const {
     e = expr::umul_fix_sat(a.value, b.value, c.value);
     np = true;
     break;
-  default:
-    UNREACHABLE();
   }
   return { std::move(e), np && a.non_poison && b.non_poison && c.non_poison };
   };
@@ -1384,8 +1400,6 @@ expr TernaryOp::getTypeConstraints(const Function &f) const {
       c->getType().enforceIntType(32) &&
       getType().enforceIntOrVectorType();
     break;
-  default:
-    UNREACHABLE();
   }
   return Value::getTypeConstraints() && instrconstr;
 }
@@ -1716,15 +1730,23 @@ unique_ptr<Instr> ConversionOp::dup(Function &f, const string &suffix) const {
 
 FpConversionOp::FpConversionOp(Type &type, std::string &&name, Value &val,
                                Op op, FpRoundingMode rm, FpExceptionMode ex,
-                               unsigned flags)
+                               unsigned flags, FastMathFlags fmath)
     : Instr(type, std::move(name)), val(&val), op(op), rm(rm), ex(ex),
-      flags(flags) {
+      flags(flags), fmath(fmath) {
   switch (op) {
   case UIntToFP:
     assert((flags & NNEG) == flags);
     break;
   default:
     assert(flags == 0);
+    break;
+  }
+  switch (op) {
+  case FPTrunc:
+  case FPExt:
+    break;
+  default:
+    assert(fmath.isNone());
     break;
   }
 }
@@ -1748,19 +1770,23 @@ void FpConversionOp::rauw(const Value &what, Value &with) {
 void FpConversionOp::print(ostream &os) const {
   const char *str = nullptr;
   switch (op) {
-  case SIntToFP: str = "sitofp "; break;
-  case UIntToFP: str = "uitofp "; break;
-  case FPToSInt: str = "fptosi "; break;
-  case FPToUInt: str = "fptoui "; break;
-  case FPExt:    str = "fpext "; break;
-  case FPTrunc:  str = "fptrunc "; break;
-  case LRInt:    str = "lrint "; break;
-  case LRound:   str = "lround "; break;
+  case SIntToFP:     str = "sitofp "; break;
+  case UIntToFP:     str = "uitofp "; break;
+  case FPToSInt:     str = "fptosi "; break;
+  case FPToSInt_Sat: str = "fptosi_sat "; break;
+  case FPToUInt:     str = "fptoui "; break;
+  case FPToUInt_Sat: str = "fptoui_sat "; break;
+  case FPExt:        str = "fpext "; break;
+  case FPTrunc:      str = "fptrunc "; break;
+  case LRInt:        str = "lrint "; break;
+  case LRound:       str = "lround "; break;
   }
 
   os << getName() << " = " << str;
   if (flags & NNEG)
     os << "nneg ";
+  if (!fmath.isNone())
+    os << fmath;
   os << *val << print_type(getType(), " to ", "");
   if (!rm.isDefault())
     os << ", rounding=" << rm;
@@ -1770,7 +1796,8 @@ void FpConversionOp::print(ostream &os) const {
 
 StateValue FpConversionOp::toSMT(State &s) const {
   auto &v = s[*val];
-  function<StateValue(const expr &, const Type &, const expr&)> fn;
+  function<StateValue(const expr &, const Type &, const expr &)> fn;
+  function<StateValue(const StateValue &, const Type &, const Type &)> scalar;
 
   switch (op) {
   case SIntToFP:
@@ -1786,6 +1813,7 @@ StateValue FpConversionOp::toSMT(State &s) const {
     };
     break;
   case FPToSInt:
+  case FPToSInt_Sat:
   case LRInt:
   case LRound:
     fn = [&](auto &val, auto &to_type, auto &rm_in) -> StateValue {
@@ -1793,6 +1821,7 @@ StateValue FpConversionOp::toSMT(State &s) const {
       bool is_poison = false;
       switch (op) {
       case FPToSInt:
+      case FPToSInt_Sat:
         rm = expr::rtz();
         is_poison = true;
         break;
@@ -1804,7 +1833,8 @@ StateValue FpConversionOp::toSMT(State &s) const {
         break;
       default: UNREACHABLE();
       }
-      expr bv  = val.fp2sint(to_type.bits(), rm);
+      auto bits = to_type.bits();
+      expr bv  = val.fp2sint(bits, rm);
       expr fp2 = bv.sint2fp(val, rm);
       // -0.xx is converted to 0 and then to 0.0, though -0.xx is ok to convert
       expr val_rounded = val.round(rm);
@@ -1818,52 +1848,76 @@ StateValue FpConversionOp::toSMT(State &s) const {
         bv = expr::mkIf(overflow, s.getFreshNondetVar("nondet", bv), bv);
       }
 
+      if (op == FPToSInt_Sat)
+        return
+          { expr::mkIf(val.isNaN(),
+                       expr::mkUInt(0, bv),
+                       expr::mkIf(np, bv, expr::mkIf(val.isFPNegative(),
+                                                     expr::IntSMin(bits),
+                                                     expr::IntSMax(bits)))),
+            true };
+
       return { std::move(bv), std::move(np) };
     };
     break;
   case FPToUInt:
-    fn = [](auto &val, auto &to_type, auto &rm_) -> StateValue {
+  case FPToUInt_Sat:
+    fn = [&](auto &val, auto &to_type, auto &rm_) -> StateValue {
+      auto bits = to_type.bits();
       expr rm = expr::rtz();
-      expr bv  = val.fp2uint(to_type.bits(), rm);
+      expr bv  = val.fp2uint(bits, rm);
       expr fp2 = bv.uint2fp(val, rm);
       // -0.xx must be converted to 0, not poison.
       expr val_rounded = val.round(rm);
-      return { std::move(bv), val_rounded.isFPZero() || fp2 == val_rounded };
+      expr no_overflow = val_rounded.isFPZero() || fp2 == val_rounded;
+      if (op == FPToUInt)
+        return { std::move(bv), std::move(no_overflow) };
+
+      return { expr::mkIf(val.isNaN() || val.isFPNegative(),
+                          expr::mkUInt(0, bv),
+                          expr::mkIf(no_overflow, bv, expr::IntUMax(bits))),
+               true };
     };
     break;
   case FPExt:
   case FPTrunc:
-    fn = [](auto &val, auto &to_type, auto &rm) -> StateValue {
-      return { val.float2Float(to_type.getAsFloatType()->getDummyFloat(), rm),
-               true };
+    scalar = [&](const StateValue &sv, const Type &from_type,
+                 const Type &to_type) -> StateValue {
+      auto fn = [&](auto &v, auto &rm) {
+        return v.float2Float(to_type.getAsFloatType()->getDummyFloat(), rm);
+      };
+      return fm_poison(s, sv.value, sv.non_poison, fn, from_type, fmath, rm,
+                       false, false, &to_type);
     };
     break;
   }
 
-  auto scalar = [&](const StateValue &sv, const Type &from_type,
-                    const Type &to_type) -> StateValue {
-    auto val = sv.value;
+  if (!scalar)
+    scalar = [&](const StateValue &sv, const Type &from_type,
+                 const Type &to_type) -> StateValue {
+      auto val = sv.value;
 
-    if (from_type.isFloatType()) {
-      auto ty = from_type.getAsFloatType();
-      val     = ty->getFloat(val);
-    }
+      if (from_type.isFloatType()) {
+        auto ty = from_type.getAsFloatType();
+        val = ty->getFloat(val);
+      }
 
-    function<StateValue(const expr&)> fn_rm
-      = [&](auto &rm) { return fn(val, to_type, rm); };
-    AndExpr np;
-    np.add(sv.non_poison);
+      function<StateValue(const expr &)> fn_rm = [&](auto &rm) {
+        return fn(val, to_type, rm);
+      };
+      AndExpr np;
+      np.add(sv.non_poison);
 
-    StateValue ret = to_type.isFloatType() ? round_value(s, rm, np, fn_rm)
-                                           : fn(val, to_type, rm.toSMT());
-    np.add(std::move(ret.non_poison));
+      StateValue ret = to_type.isFloatType() ? round_value(s, rm, np, fn_rm)
+                                             : fn(val, to_type, rm.toSMT());
+      np.add(std::move(ret.non_poison));
 
-    return { to_type.isFloatType()
-               ? to_type.getAsFloatType()
-                   ->fromFloat(s, ret.value, from_type, from_type.isFloatType(),
-                               sv.value)
-               : std::move(ret.value), np()};
-  };
+      return {to_type.isFloatType() ? to_type.getAsFloatType()->fromFloat(
+                                          s, ret.value, from_type,
+                                          from_type.isFloatType(), sv.value)
+                                    : std::move(ret.value),
+              np()};
+    };
 
   if (getType().isVectorType()) {
     vector<StateValue> vals;
@@ -1888,7 +1942,9 @@ expr FpConversionOp::getTypeConstraints(const Function &f) const {
         val->getType().enforceIntOrVectorType();
     break;
   case FPToSInt:
+  case FPToSInt_Sat:
   case FPToUInt:
+  case FPToUInt_Sat:
   case LRInt:
   case LRound:
     c = getType().enforceIntOrVectorType() &&
@@ -1909,8 +1965,8 @@ expr FpConversionOp::getTypeConstraints(const Function &f) const {
 }
 
 unique_ptr<Instr> FpConversionOp::dup(Function &f, const string &suffix) const {
-  return
-    make_unique<FpConversionOp>(getType(), getName() + suffix, *val, op, rm);
+  return make_unique<FpConversionOp>(getType(), getName() + suffix, *val, op,
+                                     rm, ex, flags, fmath);
 }
 
 
@@ -2142,7 +2198,7 @@ unique_ptr<Instr> InsertValue::dup(Function &f, const string &suffix) const {
 }
 
 
-DEFINE_AS_RETZERO(FnCall, getMaxGEPOffset);
+DEFINE_AS_RETZERO(FnCall, getMaxGEPOffset)
 
 FnCall::FnCall(Type &type, string &&name, string &&fnName, FnAttrs &&attrs,
                Value *fnptr, unsigned var_arg_idx)
@@ -3233,7 +3289,6 @@ check_ret_attributes(State &s, StateValue &&sv, const StateValue &returned_arg,
 
   if (t.isPtrType()) {
     Pointer p(s.getMemory(), sv.value);
-    sv.non_poison &= !p.isStackAllocated();
     sv.non_poison &= !p.isNocapture();
   }
 
@@ -3247,7 +3302,7 @@ StateValue Return::toSMT(State &s) const {
   auto &attrs = s.getFn().getFnAttrs();
   StateValue retval = s.getMaybeUB(*val, attrs.poisonImpliesUB());
 
-  s.addGuardableUB(s.getMemory().checkNocapture());
+  s.addGuardableUB(s.getMemory().returnChecks());
 
   vector<pair<Value*, ParamAttrs>> args;
   for (auto &arg : s.getFn().getInputs()) {
@@ -3278,12 +3333,12 @@ bool Return::isTerminator() const {
 }
 
 Assume::Assume(Value &cond, Kind kind)
-    : Instr(Type::voidTy, "assume"), args({&cond}), kind(kind) {
+    : MemInstr(Type::voidTy, "assume"), args({&cond}), kind(kind) {
   assert(kind == AndNonPoison || kind == WellDefined || kind == NonNull);
 }
 
 Assume::Assume(vector<Value *> &&args0, Kind kind)
-    : Instr(Type::voidTy, "assume"), args(std::move(args0)), kind(kind) {
+    : MemInstr(Type::voidTy, "assume"), args(std::move(args0)), kind(kind) {
   switch (kind) {
     case AndNonPoison:
     case WellDefined:
@@ -3320,6 +3375,24 @@ bool Assume::hasSideEffects() const {
     break;
   }
   return true;
+}
+
+DEFINE_AS_RETZERO(Assume, getMaxGEPOffset)
+DEFINE_AS_RETZEROALIGN(Assume, getMaxAllocSize)
+DEFINE_AS_EMPTYACCESS(Assume)
+
+uint64_t Assume::getMaxAccessSize() const {
+  switch (kind) {
+  case AndNonPoison:
+  case WellDefined:
+  case NonNull:
+    return 0;
+  case Align:
+  case Dereferenceable:
+  case DereferenceableOrNull:
+    return getIntOr(*args[1], UINT64_MAX);
+  }
+  UNREACHABLE();
 }
 
 void Assume::rauw(const Value &what, Value &with) {
@@ -3410,7 +3483,7 @@ unique_ptr<Instr> Assume::dup(Function &f, const string &suffix) const {
 
 AssumeVal::AssumeVal(Type &type, string &&name, Value &val,
                      vector<Value *> &&args0, Kind kind, bool is_welldefined)
-    : Instr(type, std::move(name)), val(&val), args(std::move(args0)),
+    : MemInstr(type, std::move(name)), val(&val), args(std::move(args0)),
       kind(kind), is_welldefined(is_welldefined) {
   switch (kind) {
   case Align:
@@ -3437,6 +3510,21 @@ bool AssumeVal::propagatesPoison() const {
 
 bool AssumeVal::hasSideEffects() const {
   return false;
+}
+
+DEFINE_AS_RETZERO(AssumeVal, getMaxGEPOffset)
+DEFINE_AS_RETZEROALIGN(AssumeVal, getMaxAllocSize)
+DEFINE_AS_EMPTYACCESS(AssumeVal)
+
+uint64_t AssumeVal::getMaxAccessSize() const {
+  switch (kind) {
+  case NonNull:
+  case Range:
+    return 0;
+  case Align:
+    return getIntOr(*args[0], UINT64_MAX);
+  }
+  UNREACHABLE();
 }
 
 void AssumeVal::rauw(const Value &what, Value &with) {
@@ -3586,9 +3674,9 @@ MemInstr::ByteAccessInfo MemInstr::ByteAccessInfo::full(unsigned byteSize) {
 }
 
 
-DEFINE_AS_RETZERO(Alloc, getMaxAccessSize);
-DEFINE_AS_RETZERO(Alloc, getMaxGEPOffset);
-DEFINE_AS_EMPTYACCESS(Alloc);
+DEFINE_AS_RETZERO(Alloc, getMaxAccessSize)
+DEFINE_AS_RETZERO(Alloc, getMaxGEPOffset)
+DEFINE_AS_EMPTYACCESS(Alloc)
 
 pair<uint64_t, uint64_t> Alloc::getMaxAllocSize() const {
   if (auto bytes = getInt(*size)) {
@@ -3664,10 +3752,10 @@ unique_ptr<Instr> Alloc::dup(Function &f, const string &suffix) const {
 }
 
 
-DEFINE_AS_RETZEROALIGN(StartLifetime, getMaxAllocSize);
-DEFINE_AS_RETZERO(StartLifetime, getMaxAccessSize);
-DEFINE_AS_RETZERO(StartLifetime, getMaxGEPOffset);
-DEFINE_AS_EMPTYACCESS(StartLifetime);
+DEFINE_AS_RETZEROALIGN(StartLifetime, getMaxAllocSize)
+DEFINE_AS_RETZERO(StartLifetime, getMaxAccessSize)
+DEFINE_AS_RETZERO(StartLifetime, getMaxGEPOffset)
+DEFINE_AS_EMPTYACCESS(StartLifetime)
 
 vector<Value*> StartLifetime::operands() const {
   return { ptr };
@@ -3700,10 +3788,10 @@ unique_ptr<Instr> StartLifetime::dup(Function &f, const string &suffix) const {
 }
 
 
-DEFINE_AS_RETZEROALIGN(EndLifetime, getMaxAllocSize);
-DEFINE_AS_RETZERO(EndLifetime, getMaxAccessSize);
-DEFINE_AS_RETZERO(EndLifetime, getMaxGEPOffset);
-DEFINE_AS_EMPTYACCESS(EndLifetime);
+DEFINE_AS_RETZEROALIGN(EndLifetime, getMaxAllocSize)
+DEFINE_AS_RETZERO(EndLifetime, getMaxAccessSize)
+DEFINE_AS_RETZERO(EndLifetime, getMaxGEPOffset)
+DEFINE_AS_EMPTYACCESS(EndLifetime)
 
 vector<Value*> EndLifetime::operands() const {
   return { ptr };
@@ -3740,9 +3828,9 @@ void GEP::addIdx(uint64_t obj_size, Value &idx) {
   idxs.emplace_back(obj_size, &idx);
 }
 
-DEFINE_AS_RETZEROALIGN(GEP, getMaxAllocSize);
-DEFINE_AS_RETZERO(GEP, getMaxAccessSize);
-DEFINE_AS_EMPTYACCESS(GEP);
+DEFINE_AS_RETZEROALIGN(GEP, getMaxAllocSize)
+DEFINE_AS_RETZERO(GEP, getMaxAccessSize)
+DEFINE_AS_EMPTYACCESS(GEP)
 
 static unsigned off_used_bits(const Value &v) {
   if (auto c = isCast(ConversionOp::SExt, v))
@@ -3822,7 +3910,7 @@ StateValue GEP::toSMT(State &s) const {
 
     // FIXME: not implemented for physical pointers
     if (inbounds)
-      inbounds_np.add(ptr.inbounds());
+      inbounds_np.add(ptr.inbounds(false));
 
     expr offset_sum = expr::mkUInt(0, bits_for_offset);
     for (auto &[sz, idx] : offsets) {
@@ -3862,7 +3950,7 @@ StateValue GEP::toSMT(State &s) const {
       non_poison.add(np);
 
       if (inbounds)
-        inbounds_np.add(ptr.inbounds());
+        inbounds_np.add(ptr.inbounds(false));
     }
 
     if (inbounds) {
@@ -3928,9 +4016,9 @@ unique_ptr<Instr> GEP::dup(Function &f, const string &suffix) const {
 }
 
 
-DEFINE_AS_RETZEROALIGN(PtrMask, getMaxAllocSize);
-DEFINE_AS_RETZERO(PtrMask, getMaxAccessSize);
-DEFINE_AS_EMPTYACCESS(PtrMask);
+DEFINE_AS_RETZEROALIGN(PtrMask, getMaxAllocSize)
+DEFINE_AS_RETZERO(PtrMask, getMaxAccessSize)
+DEFINE_AS_EMPTYACCESS(PtrMask)
 
 uint64_t PtrMask::getMaxGEPOffset() const {
   if (auto n = getInt(*mask))
@@ -4004,8 +4092,8 @@ unique_ptr<Instr> PtrMask::dup(Function &f, const string &suffix) const {
 }
 
 
-DEFINE_AS_RETZEROALIGN(Load, getMaxAllocSize);
-DEFINE_AS_RETZERO(Load, getMaxGEPOffset);
+DEFINE_AS_RETZEROALIGN(Load, getMaxAllocSize)
+DEFINE_AS_RETZERO(Load, getMaxGEPOffset)
 
 uint64_t Load::getMaxAccessSize() const {
   return round_up(Memory::getStoreByteSize(getType()), align);
@@ -4050,8 +4138,8 @@ unique_ptr<Instr> Load::dup(Function &f, const string &suffix) const {
 }
 
 
-DEFINE_AS_RETZEROALIGN(Store, getMaxAllocSize);
-DEFINE_AS_RETZERO(Store, getMaxGEPOffset);
+DEFINE_AS_RETZEROALIGN(Store, getMaxAllocSize)
+DEFINE_AS_RETZERO(Store, getMaxGEPOffset)
 
 uint64_t Store::getMaxAccessSize() const {
   return round_up(Memory::getStoreByteSize(val->getType()), align);
@@ -4082,7 +4170,7 @@ StateValue Store::toSMT(State &s) const {
   // skip large initializers. FIXME: this should be moved to memory so it can
   // fold subsequent trivial loads
   if (s.isInitializationPhase() &&
-      Memory::getStoreByteSize(val->getType()) / (bits_byte / 8) > 256) {
+      Memory::getStoreByteSize(val->getType()) / (bits_byte / 8) > 128) {
     s.doesApproximation("Large constant initializer removed");
     return {};
   }
@@ -4103,8 +4191,8 @@ unique_ptr<Instr> Store::dup(Function &f, const string &suffix) const {
 }
 
 
-DEFINE_AS_RETZEROALIGN(Memset, getMaxAllocSize);
-DEFINE_AS_RETZERO(Memset, getMaxGEPOffset);
+DEFINE_AS_RETZEROALIGN(Memset, getMaxAllocSize)
+DEFINE_AS_RETZERO(Memset, getMaxGEPOffset)
 
 uint64_t Memset::getMaxAccessSize() const {
   return getIntOr(*bytes, UINT64_MAX);
@@ -4171,8 +4259,8 @@ unique_ptr<Instr> Memset::dup(Function &f, const string &suffix) const {
 }
 
 
-DEFINE_AS_RETZEROALIGN(MemsetPattern, getMaxAllocSize);
-DEFINE_AS_RETZERO(MemsetPattern, getMaxGEPOffset);
+DEFINE_AS_RETZEROALIGN(MemsetPattern, getMaxAllocSize)
+DEFINE_AS_RETZERO(MemsetPattern, getMaxGEPOffset)
 
 MemsetPattern::MemsetPattern(Value &ptr, Value &pattern, Value &bytes,
                              unsigned pattern_length, TailCallInfo tci)
@@ -4232,8 +4320,8 @@ unique_ptr<Instr> MemsetPattern::dup(Function &f, const string &suffix) const {
 }
 
 
-DEFINE_AS_RETZEROALIGN(FillPoison, getMaxAllocSize);
-DEFINE_AS_RETZERO(FillPoison, getMaxGEPOffset);
+DEFINE_AS_RETZEROALIGN(FillPoison, getMaxAllocSize)
+DEFINE_AS_RETZERO(FillPoison, getMaxGEPOffset)
 
 uint64_t FillPoison::getMaxAccessSize() const {
   return getGlobalVarSize(ptr);
@@ -4275,8 +4363,8 @@ unique_ptr<Instr> FillPoison::dup(Function &f, const string &suffix) const {
 }
 
 
-DEFINE_AS_RETZEROALIGN(Memcpy, getMaxAllocSize);
-DEFINE_AS_RETZERO(Memcpy, getMaxGEPOffset);
+DEFINE_AS_RETZEROALIGN(Memcpy, getMaxAllocSize)
+DEFINE_AS_RETZERO(Memcpy, getMaxGEPOffset)
 
 uint64_t Memcpy::getMaxAccessSize() const {
   return getIntOr(*bytes, UINT64_MAX);
@@ -4362,8 +4450,8 @@ unique_ptr<Instr> Memcpy::dup(Function &f, const string &suffix) const {
 
 
 
-DEFINE_AS_RETZEROALIGN(Memcmp, getMaxAllocSize);
-DEFINE_AS_RETZERO(Memcmp, getMaxGEPOffset);
+DEFINE_AS_RETZEROALIGN(Memcmp, getMaxAllocSize)
+DEFINE_AS_RETZERO(Memcmp, getMaxGEPOffset)
 
 uint64_t Memcmp::getMaxAccessSize() const {
   return getIntOr(*num, UINT64_MAX);
@@ -4472,8 +4560,8 @@ unique_ptr<Instr> Memcmp::dup(Function &f, const string &suffix) const {
 }
 
 
-DEFINE_AS_RETZEROALIGN(Strlen, getMaxAllocSize);
-DEFINE_AS_RETZERO(Strlen, getMaxGEPOffset);
+DEFINE_AS_RETZEROALIGN(Strlen, getMaxAllocSize)
+DEFINE_AS_RETZERO(Strlen, getMaxGEPOffset)
 
 uint64_t Strlen::getMaxAccessSize() const {
   return getGlobalVarSize(ptr);

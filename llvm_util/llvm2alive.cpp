@@ -2,6 +2,7 @@
 // Distributed under the MIT license that can be found in the LICENSE file.
 
 #include "llvm_util/llvm2alive.h"
+#include "ir/x86_intrinsics.h"
 #include "llvm_util/known_fns.h"
 #include "llvm_util/utils.h"
 #include "util/sort.h"
@@ -15,8 +16,10 @@
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/ModRef.h"
+#include <algorithm>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -315,7 +318,7 @@ public:
     }
     return make_unique<FpConversionOp>(*ty, value_name(i), *val, op,
                                        FpRoundingMode{}, FpExceptionMode{},
-                                       flags);
+                                       flags, parse_fmath(i));
   }
 
   RetTy visitFreezeInst(llvm::FreezeInst &i) {
@@ -1017,6 +1020,8 @@ public:
     case llvm::Intrinsic::maxnum:
     case llvm::Intrinsic::minimum:
     case llvm::Intrinsic::maximum:
+    case llvm::Intrinsic::minimumnum:
+    case llvm::Intrinsic::maximumnum:
     case llvm::Intrinsic::experimental_constrained_fadd:
     case llvm::Intrinsic::experimental_constrained_fsub:
     case llvm::Intrinsic::experimental_constrained_fmul:
@@ -1038,6 +1043,8 @@ public:
       case llvm::Intrinsic::experimental_constrained_minimum: op = FpBinOp::FMinimum; break;
       case llvm::Intrinsic::maximum:
       case llvm::Intrinsic::experimental_constrained_maximum: op = FpBinOp::FMaximum; break;
+      case llvm::Intrinsic::minimumnum:                       op = FpBinOp::FMinimumnum; break;
+      case llvm::Intrinsic::maximumnum:                       op = FpBinOp::FMaximumnum; break;
       case llvm::Intrinsic::experimental_constrained_fadd:    op = FpBinOp::FAdd; break;
       case llvm::Intrinsic::experimental_constrained_fsub:    op = FpBinOp::FSub; break;
       case llvm::Intrinsic::experimental_constrained_fmul:    op = FpBinOp::FMul; break;
@@ -1109,6 +1116,8 @@ public:
     case llvm::Intrinsic::experimental_constrained_lround:
     case llvm::Intrinsic::llround:
     case llvm::Intrinsic::experimental_constrained_llround:
+    case llvm::Intrinsic::fptoui_sat:
+    case llvm::Intrinsic::fptosi_sat:
     {
       PARSE_UNOP();
       FpConversionOp::Op op;
@@ -1128,6 +1137,8 @@ public:
       case llvm::Intrinsic::experimental_constrained_lround:
       case llvm::Intrinsic::llround:
       case llvm::Intrinsic::experimental_constrained_llround: op = FpConversionOp::LRound; break;
+      case llvm::Intrinsic::fptosi_sat:                       op = FpConversionOp::FPToSInt_Sat; break;
+      case llvm::Intrinsic::fptoui_sat:                       op = FpConversionOp::FPToUInt_Sat; break;
       default: UNREACHABLE();
       }
       ret = make_unique<FpConversionOp>(*ty, value_name(i), *val, op,
@@ -1221,6 +1232,45 @@ public:
     case llvm::Intrinsic::instrprof_value_profile:
     case llvm::Intrinsic::prefetch:
       return NOP(i);
+
+      // Intel X86 intrinsics
+#define PROCESS(NAME, A, B, C, D, E, F) case llvm::Intrinsic::NAME:
+#include "ir/x86_intrinsics_binop.inc"
+#undef PROCESS
+      {
+        PARSE_BINOP();
+        X86IntrinBinOp::Op op;
+        switch (i.getIntrinsicID()) {
+#define PROCESS(NAME, A, B, C, D, E, F)                                        \
+  case llvm::Intrinsic::NAME:                                                  \
+    op = X86IntrinBinOp::NAME;                                                 \
+    break;
+#include "ir/x86_intrinsics_binop.inc"
+#undef PROCESS
+        default:
+          UNREACHABLE();
+        }
+        return make_unique<X86IntrinBinOp>(*ty, value_name(i), *a, *b, op);
+      }
+
+#define PROCESS(NAME, A, B, C, D, E, F, G, H) case llvm::Intrinsic::NAME:
+#include "ir/x86_intrinsics_terop.inc"
+#undef PROCESS
+      {
+        PARSE_TRIOP();
+        X86IntrinTerOp::Op op;
+        switch (i.getIntrinsicID()) {
+#define PROCESS(NAME, A, B, C, D, E, F, G, H)                                  \
+  case llvm::Intrinsic::NAME:                                                  \
+    op = X86IntrinTerOp::NAME;                                                 \
+    break;
+#include "ir/x86_intrinsics_terop.inc"
+#undef PROCESS
+        default:
+          UNREACHABLE();
+        }
+        return make_unique<X86IntrinTerOp>(*ty, value_name(i), *a, *b, *c, op);
+      }
 
     default:
       break;
@@ -1462,7 +1512,7 @@ public:
   unique_ptr<Instr>
   handleRangeAttrNoInsert(const llvm::Attribute &attr, Value &val,
                           bool is_welldefined = false) {
-    auto CR = attr.getValueAsConstantRange();
+    auto &CR = attr.getValueAsConstantRange();
     vector<Value*> bounds{ make_intconst(CR.getLower()),
                            make_intconst(CR.getUpper()) };
     string name = "%#range_" + to_string(range_idx++) + "_" + val.getName();
@@ -1584,6 +1634,19 @@ public:
 
       case llvm::Attribute::DeadOnUnwind:
         attrs.set(ParamAttrs::DeadOnUnwind);
+        break;
+
+      case llvm::Attribute::Initializes:
+        for (auto &CR : llvmattr.getInitializes()) {
+          auto l = CR.getLower().tryZExtValue();
+          auto h = CR.getUpper().tryZExtValue();
+          if (!l || !h) {
+            errorAttr(llvmattr);
+            return false;
+          }
+          attrs.initializes.emplace_back(*l, *h);
+        }
+        ranges::sort(attrs.initializes);
         break;
 
       default:

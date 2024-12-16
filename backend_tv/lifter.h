@@ -7,8 +7,6 @@
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/SourceMgr.h"
 
-#include "ir/function.h"
-
 namespace llvm {
 class Function;
 class Module;
@@ -54,7 +52,8 @@ extern std::unordered_map<unsigned, llvm::Instruction *> lineMap;
 
 void init();
 
-llvm::Function *adjustSrcReturn(llvm::Function *srcFn);
+void nameGlobals(llvm::Module *M);
+llvm::Function *adjustSrc(llvm::Function *srcFn);
 void addDebugInfo(llvm::Function *srcFn);
 void checkSupport(llvm::Function *srcFn);
 

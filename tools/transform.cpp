@@ -960,6 +960,7 @@ static void calculateAndInitConstants(Transform &t) {
   uint64_t glb_alloc_aligned_size = 0;
 
   num_consts_src = 0;
+  has_globals_diff_align = false;
 
   for (auto GV : globals_src) {
     if (GV->isConst())
@@ -974,7 +975,10 @@ static void calculateAndInitConstants(Transform &t) {
       [GVT](auto *GV) -> bool { return GVT->getName() == GV->getName(); });
     if (I == globals_src.end()) {
       ++num_globals;
+    } else {
+      has_globals_diff_align |= GVT->getAlignment() != (*I)->getAlignment();
     }
+
     glb_alloc_aligned_size
       = add_saturate(glb_alloc_aligned_size,
                      aligned_alloc_size(GVT->size(), GVT->getAlignment()));
@@ -1017,6 +1021,7 @@ static void calculateAndInitConstants(Transform &t) {
   bool does_any_byte_access = false;
   has_indirect_fncalls = false;
   has_ptr_arg = false;
+  has_initializes_attr = false;
   num_sub_byte_bits = 0;
 
   set<string> inaccessiblememonly_fns;
@@ -1061,6 +1066,8 @@ static void calculateAndInitConstants(Transform &t) {
       max_access_size
         = max(max_access_size, i->getAttributes().maxAccessSize());
 
+      has_initializes_attr |= !i->getAttributes().initializes.empty();
+
       if (i->hasAttribute(ParamAttrs::Dereferenceable)) {
         does_mem_access = true;
       }
@@ -1080,6 +1087,7 @@ static void calculateAndInitConstants(Transform &t) {
                             : sz;
       }
     }
+    max_access_size = round_up(max_access_size, heap_block_alignment);
 
     for (auto &i : fn->instrs()) {
       if (returns_local(i))

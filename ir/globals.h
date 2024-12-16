@@ -77,6 +77,7 @@ extern bool has_nocapture;
 extern bool has_noread;
 extern bool has_nowrite;
 extern bool has_ptr_arg;
+extern bool has_initializes_attr;
 
 /// Whether there null pointers appear in the program
 extern bool has_null_pointer;
@@ -85,6 +86,9 @@ extern bool has_null_pointer;
 extern bool has_null_block;
 
 extern bool null_is_dereferenceable;
+
+/// Whether there is at least one global with different alignment in src/tgt
+extern bool has_globals_diff_align;
 
 /// Whether the programs do memory accesses that load/store int/ptrs
 extern bool does_int_mem_access;

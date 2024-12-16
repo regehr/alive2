@@ -55,7 +55,7 @@ add_custom_command(
   OUTPUT "${PROJECT_BINARY_DIR}/version_gen.h.tmp"
   COMMAND "${CMAKE_COMMAND}" -E echo_append "#define ALIVE_VERSION_MACRO " > "${PROJECT_BINARY_DIR}/version_gen.h.tmp"
   COMMAND "${GIT_EXECUTABLE}" describe --tags --dirty --always >> "${PROJECT_BINARY_DIR}/version_gen.h.tmp"
-  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+  WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
   VERBATIM
 )
 add_custom_command(
@@ -63,13 +63,13 @@ add_custom_command(
   OUTPUT "${PROJECT_BINARY_DIR}/version_gen.h"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${PROJECT_BINARY_DIR}/version_gen.h.tmp" "${PROJECT_BINARY_DIR}/version_gen.h"
   COMMAND "${CMAKE_COMMAND}" -E remove -f "${PROJECT_BINARY_DIR}/version_gen.h.tmp"
-  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+  WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
   VERBATIM
 )
 add_custom_target(
   generate_version ALL
   DEPENDS "${PROJECT_BINARY_DIR}/version_gen.h"
-  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+  WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
 )
 
 find_package(ZLIB)
@@ -107,6 +107,7 @@ set(IR_SRCS
   ir/state_value.cpp
   ir/type.cpp
   ir/value.cpp
+  ir/x86_intrinsics.cpp
 )
 
 add_library(ir STATIC ${IR_SRCS})
@@ -183,10 +184,6 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
     message(FATAL_ERROR "LLVM must be built with '-DLLVM_ENABLE_RTTI=ON'")
   endif()
 
-  if (NOT LLVM_ENABLE_EH)
-    message(FATAL_ERROR "LLVM must be built with '-DLLVM_ENABLE_EH=ON'")
-  endif()
-
   list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
   include(AddLLVM)
 
@@ -220,6 +217,7 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
   add_llvm_executable(alive-tv
     "tools/alive-tv.cpp"
   )
+  target_compile_options(alive-tv PRIVATE -fexceptions)
 
   add_llvm_executable(backend-tv
     "tools/backend-tv.cpp"
@@ -228,10 +226,12 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
   add_llvm_executable(quick-fuzz
     "tools/quick-fuzz.cpp"
   )
+  target_compile_options(quick-fuzz PRIVATE -fexceptions)
 
   add_llvm_executable(alive-exec
     "tools/alive-exec.cpp"
   )
+  target_compile_options(alive-exec PRIVATE -fexceptions)
 
   add_subdirectory(backend_tv/aslp)
 
@@ -248,14 +248,14 @@ if (BUILD_TV)
   add_subdirectory(tv)
   set(FOR_ALIVE2_TEST 0)
   configure_file(
-    ${CMAKE_SOURCE_DIR}/scripts/opt-alive.sh.in
-    ${CMAKE_BINARY_DIR}/opt-alive.sh
+    ${PROJECT_SOURCE_DIR}/scripts/opt-alive.sh.in
+    ${PROJECT_BINARY_DIR}/opt-alive.sh
     @ONLY
   )
   set(FOR_ALIVE2_TEST 1)
   configure_file(
-    ${CMAKE_SOURCE_DIR}/scripts/opt-alive.sh.in
-    ${CMAKE_BINARY_DIR}/opt-alive-test.sh
+    ${PROJECT_SOURCE_DIR}/scripts/opt-alive.sh.in
+    ${PROJECT_BINARY_DIR}/opt-alive-test.sh
     @ONLY
   )
   unset(FOR_ALIVE2_TEST)
@@ -309,3 +309,10 @@ add_custom_target("check"
 if (BUILD_TV)
   add_dependencies("check" "alive-tv" "backend-tv" "quick-fuzz" "tv")
 endif()
+
+# EXTERNAL_PROJECTS option that works analogous to LLVM's LLVM_EXTERNAL_PROJECTS option
+foreach(EXTERNAL_PROJECT IN LISTS EXTERNAL_PROJECTS)
+  canonicalize_tool_name(${EXTERNAL_PROJECT} PROJECT_CANON)
+  message(STATUS "Adding external project ${EXTERNAL_PROJECT} at ${EXTERNAL_${PROJECT_CANON}_SOURCE_DIR}")
+  add_subdirectory(${EXTERNAL_${PROJECT_CANON}_SOURCE_DIR} ${EXTERNAL_PROJECT})
+endforeach()

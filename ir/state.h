@@ -278,8 +278,8 @@ public:
   void addReturn(StateValue &&val);
 
   /*--- Axioms, preconditions, domains ---*/
-  void addAxiom(smt::AndExpr &&ands) { axioms.add(std::move(ands)); }
-  void addAxiom(smt::expr &&axiom) { axioms.add(std::move(axiom)); }
+  void addAxiom(smt::AndExpr &&ands);
+  void addAxiom(smt::expr &&axiom);
   void addPre(smt::expr &&cond) { precondition.add(std::move(cond)); }
 
   // we have 2 types of UB to support -disallow-ub-exploitation
@@ -363,6 +363,7 @@ public:
   bool hasGlobalVarBid(const std::string &glbvar, unsigned &bid,
                        bool &allocated) const;
   void markGlobalAsAllocated(const std::string &glbvar);
+  bool isGVUsed(unsigned bid) const;
   void syncSEdataWithSrc(State &src);
 
   void mkAxioms(State &tgt);
