@@ -12980,7 +12980,6 @@ case AArch64::FCMGE64:
         liftInst(inst);
         *out << "    lifted\n";
         ++armInstNum;
-        liftInst(inst);
       }
 
       // machine code falls through but LLVM isn't allowed to
