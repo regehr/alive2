@@ -123,6 +123,9 @@ public:
     if (auto load = llvm::dyn_cast<llvm::LoadInst>(e)) {
       return iface.createLoad(ty, load->getPointerOperand());
     }
+    // } else if (auto trunc = llvm::dyn_cast<llvm::TruncInst>(e)) {
+    //   return coerce(trunc->getOperand(0), ty);  // XXX: are truncs always guaranteed to obtain the lowest bytes?? seems susipcious
+    // }
     // if (llvm::dyn_cast<llvm::PointerType>(ty)) {
     //   return llvm::IntToPtrInst::Create(e, ty);
     // }
