@@ -7,7 +7,7 @@ Given an LLVM MCInst, it consults Aslp for partially-evaluated semantics then tr
 its Aslt format into LLVM IR compatible with the existing lifter.
 
 Requirements:
-- very recent LLVM (tested with 19.0.0git or 18.1.0-rc2), built with RTTI+EH.
+- very recent LLVM (tested with 20.0.0git at https://github.com/llvm/llvm-project/commit/35710ab392b50c815765f03c12409147502dfb86), built with RTTI+EH.
 - ANTLR4 parser framework.
 - [aslp-cpp](https://github.com/UQ-PAC/aslp/tree/partial_eval/aslp-cpp), which should be fetched automatically.
 - [aslp-server](https://github.com/UQ-PAC/aslp), running alongside the backend-tv tool, see below.
@@ -162,3 +162,6 @@ It is conceivable that an LLVM optimisation pass could detect and replace these 
 but it does not do so right now.
 
 Floating-point operations are also limited, specifically by ignoring the FPSR and FPCR (status and control, resp.) registers.
+
+Edit 2024-12-17: During this year, improvements have been made to both ASLp (by adding specialised vector operations and floating-point intrinsics)
+and arm-tv (by memory model improvements) which make address these shortcomings.
