@@ -207,17 +207,26 @@ public:
 // that, and there's no way to do it other than hard-coding this
 // mapping
 const unordered_map<string, string> intrinsic_names = {
-    {"powf", "llvm.pow.f32"},
-    {"pow", "llvm.pow.f64"},
-    {"memcpy", "llvm.memcpy.p0.p0.i64"},
-    {"memset", "llvm.memset.p0.i64"},
-    {"memmove", "llvm.memmove.p0.p0.i64"},
-    {"ldexpf", "llvm.ldexp.f32.i32"},
-    {"__llvm_memset_element_unordered_atomic_16",
-     "llvm.memset.element.unordered.atomic.p0.i32"}, // FIXME
-    {"cosf", "llvm.cos.f32"},
-    {"coshf", "llvm.cosh.f32"},
-    {"sincos", "llvm.cos.f64"},
+  // memory
+  {"memcpy", "llvm.memcpy.p0.p0.i64"},
+  {"memset", "llvm.memset.p0.i32"},
+  {"memset", "llvm.memset.p0.i64"},
+  {"memmove", "llvm.memmove.p0.p0.i64"},
+  {"__llvm_memset_element_unordered_atomic_16",
+   "llvm.memset.element.unordered.atomic.p0.i32"}, // FIXME
+  
+  // FP
+  {"cosf", "llvm.cos.f32"},
+  {"coshf", "llvm.cosh.f32"},
+  {"powf", "llvm.pow.f32"},
+  {"pow", "llvm.pow.f64"},
+  {"expf", "@llvm.exp.f32"},
+  {"exp", "@llvm.exp.f64"},
+  {"exp10f", "llvm.exp10.f32"},
+  {"exp10", "llvm.exp10.f64"},
+  
+  {"ldexpf", "llvm.ldexp.f32.i32"},
+  {"sincos", "llvm.cos.f64"},  
 };
 
 
@@ -825,6 +834,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::FMINNMSrr,
       AArch64::FMAXSrr,
       AArch64::FMAXNMSrr,
+      AArch64::FCCMPSrr,
   };
 
   const set<int> instrs_64 = {
@@ -1336,6 +1346,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
       AArch64::FADDv2f32,
       AArch64::FSUBv2f32,
       AArch64::FMULv2f32,
+      AArch64::FCCMPDrr,
   };
 
   const set<int> instrs_128 = {
@@ -3830,6 +3841,25 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     }
   }
 
+  tuple<Value *, Value *, Value *, Value *> FPCompare(Value *a, Value *b) {
+    return {
+      createFCmp(FCmpInst::Predicate::FCMP_OLT, a, b),
+      createFCmp(FCmpInst::Predicate::FCMP_OEQ, a, b),
+      createFCmp(FCmpInst::Predicate::FCMP_UGT, a, b),
+      createFCmp(FCmpInst::Predicate::FCMP_UNO, a, b),
+    };
+  }
+
+  tuple<Value *, Value *, Value *, Value *> splitImmNZVC(uint64_t imm_flags) {
+    assert(imm_flags < 16);
+    return {
+      getBoolConst((imm_flags & 8) != 0),
+      getBoolConst((imm_flags & 4) != 0),
+      getBoolConst((imm_flags & 2) != 0),
+      getBoolConst((imm_flags & 1) != 0),
+    };
+  }
+
   bool disjoint(const set<int> &a, const set<int> &b) {
     set<int> i;
     std::set_intersection(a.begin(), a.end(), b.begin(), b.end(),
@@ -5277,11 +5307,7 @@ public:
       if (!lhs || !imm_rhs)
         visitError();
 
-      auto imm_flags = getImm(2);
-      auto imm_v_val = getBoolConst((imm_flags & 1) != 0);
-      auto imm_c_val = getBoolConst((imm_flags & 2) != 0);
-      auto imm_z_val = getBoolConst((imm_flags & 4) != 0);
-      auto imm_n_val = getBoolConst((imm_flags & 8) != 0);
+      auto [imm_n, imm_z, imm_v, imm_c] = splitImmNZVC(getImm(2));
 
       auto cond_val_imm = getImm(3);
       auto cond_val = conditionHolds(cond_val_imm);
@@ -5295,10 +5321,10 @@ public:
       auto new_c = createICmp(ICmpInst::Predicate::ICMP_UGE, lhs, imm_rhs);
       auto new_v = createExtractValue(ssub, {1});
 
-      auto new_n_flag = createSelect(cond_val, new_n, imm_n_val);
-      auto new_z_flag = createSelect(cond_val, new_z, imm_z_val);
-      auto new_c_flag = createSelect(cond_val, new_c, imm_c_val);
-      auto new_v_flag = createSelect(cond_val, new_v, imm_v_val);
+      auto new_n_flag = createSelect(cond_val, new_n, imm_n);
+      auto new_z_flag = createSelect(cond_val, new_z, imm_z);
+      auto new_c_flag = createSelect(cond_val, new_c, imm_c);
+      auto new_v_flag = createSelect(cond_val, new_v, imm_v);
 
       setN(new_n_flag);
       setZ(new_z_flag);
@@ -8574,14 +8600,39 @@ public:
           opcode == AArch64::FCMPESri || opcode == AArch64::FCMPEDri) {
         b = ConstantFP::get(getFPType(operandSize), 0.0);
       } else {
-        b = readFromFPOperand(1, getRegSize(CurInst->getOperand(1).getReg()));
+        b = readFromFPOperand(1, operandSize);
       }
-      setN(createFCmp(FCmpInst::Predicate::FCMP_OLT, a, b));
-      setZ(createFCmp(FCmpInst::Predicate::FCMP_OEQ, a, b));
-      setC(createFCmp(FCmpInst::Predicate::FCMP_UGT, a, b));
-      setV(createFCmp(FCmpInst::Predicate::FCMP_UNO, a, b));
+      auto [n, z, c, v] = FPCompare(a, b);
+      setN(n);
+      setZ(z);
+      setC(c);
+      setV(v);
       break;
     }
+      
+    case AArch64::FCCMPSrr:
+    case AArch64::FCCMPDrr: {
+      auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+      auto a = readFromFPOperand(0, operandSize);
+      auto b = readFromFPOperand(1, operandSize);
+
+      auto [imm_n, imm_z, imm_c, imm_v] = splitImmNZVC(getImm(2));
+      auto [n, z, c, v] = FPCompare(a, b);
+
+      auto cond = conditionHolds(getImm(3));
+
+      auto new_n = createSelect(cond, n, imm_n);
+      auto new_z = createSelect(cond, z, imm_z);
+      auto new_c = createSelect(cond, c, imm_c);
+      auto new_v = createSelect(cond, v, imm_v);
+
+      setN(new_n);
+      setZ(new_z);
+      setC(new_c);
+      setV(new_v);
+      break;
+    }
+      
     case AArch64::SMOVvi8to32_idx0:
     case AArch64::SMOVvi8to32:
     case AArch64::SMOVvi16to32_idx0:
