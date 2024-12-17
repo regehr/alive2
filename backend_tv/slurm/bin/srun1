@@ -1,0 +1,8 @@
+#!/bin/bash
+
+if ! ( hostname | grep -q "^login" ); then
+  echo "blocked: attempt to srun1 on worker node: $(hostname)"
+  exit 100
+fi
+
+srun --partition=cpu --nodes=1 --tasks-per-node=1 --cpus-per-task=4 --gres=gpu:0 --pty "$@"

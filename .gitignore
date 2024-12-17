@@ -5,3 +5,6 @@ build*/
 CMakeSettings.json
 temp/*
 tests/temp/*
+
+logs/
+commands_*.txt

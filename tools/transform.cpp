@@ -1884,6 +1884,7 @@ void Transform::print(ostream &os, const TransformPrintOpts &opt) const {
     os << "=>\n";
     tgt.print(os, opt.print_fn_header);
   }
+  std::flush(os);
 }
 
 ostream& operator<<(ostream &os, const Transform &t) {

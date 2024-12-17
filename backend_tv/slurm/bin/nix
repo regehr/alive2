@@ -1,0 +1,5 @@
+#!/bin/bash
+
+export NIX_SSL_CERT_FILE="/etc/ssl/certs/ca-bundle.trust.crt"
+NIX_REMOTE="local"
+$(dirname $0)/nix-static --store /tmp/nix-root --experimental-features "nix-command flakes" "$@"
