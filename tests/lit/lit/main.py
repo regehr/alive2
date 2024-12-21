@@ -129,8 +129,8 @@ def main(builtin_params={}):
     #selected_tests, discovered_tests = GoogleTest.post_process_shard_results(
     #    selected_tests, discovered_tests
     #)
-    selected_tests   = []
-    discovered_tests = []
+    # selected_tests   = []
+    # discovered_tests = []
 
     if opts.time_tests:
         print_histogram(discovered_tests)
@@ -305,7 +305,9 @@ def execute_in_tmp_dir(run, lit_config):
 
 def print_histogram(tests):
     test_times = [
-        (t.getFullName(), t.result.elapsed) for t in tests if t.result.elapsed
+        (t.getFullName(), t.result.elapsed)
+        for t in tests
+        if t.result.elapsed and t.result.code != lit.Test.TIMEOUT
     ]
     if test_times:
         lit.util.printHistogram(test_times, title="Tests")

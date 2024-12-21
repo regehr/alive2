@@ -89,7 +89,7 @@ class TerminalController:
     _COLORS = """BLACK BLUE GREEN CYAN RED MAGENTA YELLOW WHITE""".split()
     _ANSICOLORS = "BLACK RED GREEN YELLOW BLUE MAGENTA CYAN WHITE".split()
 
-    def __init__(self, term_stream=sys.stdout):
+    def __init__(self, term_stream=sys.stderr):
         """
         Create a `TerminalController` and initialize its attributes
         with appropriate values for the current terminal.
@@ -97,6 +97,7 @@ class TerminalController:
         output; if this stream is not a tty, then the terminal is
         assumed to be a dumb terminal (i.e., have no capabilities).
         """
+        self.stream = term_stream
         # Curses isn't available on all platforms
         try:
             import curses
@@ -263,7 +264,7 @@ class ProgressBar:
 
     def update(self, percent, message):
         if self.cleared:
-            sys.stdout.write(self.header)
+            self.term.stream.write(self.header)
             self.cleared = 0
         prefix = "%3d%% " % (percent * 100,)
         suffix = ""
@@ -285,7 +286,7 @@ class ProgressBar:
         bc = self.barColor
         bar = self.BAR % (prefix, bc, "=" * n, "-" * (barWidth - n), bc, suffix)
         bar = self.term.render(bar)
-        sys.stdout.write(
+        self.term.stream.write(
             self.BOL
             + self.term.UP
             + self.term.CLEAR_EOL
@@ -295,11 +296,11 @@ class ProgressBar:
             + message
         )
         if not self.term.XN:
-            sys.stdout.flush()
+            self.term.stream.flush()
 
     def clear(self, interrupted):
         if not self.cleared:
-            sys.stdout.write(
+            self.term.stream.write(
                 self.BOL
                 + self.term.CLEAR_EOL
                 + self.term.UP
@@ -308,9 +309,9 @@ class ProgressBar:
                 + self.term.CLEAR_EOL
             )
             if interrupted:  # ^C creates extra line. Gobble it up!
-                sys.stdout.write(self.term.UP + self.term.CLEAR_EOL)
-                sys.stdout.write("^C")
-            sys.stdout.flush()
+                self.term.stream.write(self.term.UP + self.term.CLEAR_EOL)
+                self.term.stream.write("^C")
+            self.term.stream.flush()
             self.cleared = 1
 
 

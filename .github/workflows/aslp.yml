@@ -1,0 +1,48 @@
+name: Build and test arm-tv+aslp
+
+on:
+  # push:
+
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      CMAKE_BUILD_TYPE: Release
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: cachix/install-nix-action@v25
+    - uses: cachix/cachix-action@v14
+      with:
+        name: pac-nix
+        useDaemon: false
+
+    - run: ./build.sh
+      shell: "nix develop github:katrinafyi/pac-nix#alive2-aslp --command bash -eo pipefail {0}"
+
+    - name: tests/lit/lit.py tests/arm-tv
+      run: |
+        nix shell github:katrinafyi/pac-nix#aslp --command aslp-server >aslp-server.out &
+        ASLP_PID=$!
+
+        tests/lit/lit.py tests/arm-tv -s --no-progress-bar | tee lit.txt
+
+        kill $ASLP_PID
+      # shell: "nix develop github:katrinafyi/pac-nix#alive2-aslp --command bash -eo pipefail {0}"
+
+    # - run: tar caf logs.tar.zst logs
+    #   if: always()
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: lit-log.txt
+        path: lit.txt
+
+

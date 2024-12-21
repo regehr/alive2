@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.8)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 include(ProcessorCount)
 
 project(Alive2)
@@ -207,6 +210,7 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
   add_library(backend_tv STATIC ${BACKEND_TV_SRCS})
   set(ALIVE_LIBS_LLVM llvm_util backend_tv ${ALIVE_LIBS})
   set(ALIVE_EXEC_LIBS_LLVM llvm_util backend_tv ${ALIVE_EXEC_LIBS})
+  target_link_libraries(backend_tv PUBLIC bridge)
 
   set(LLVM_LINK_COMPONENTS ${LLVM_LINK_COMPONENTS} TargetParser)
 
@@ -228,6 +232,8 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
     "tools/alive-exec.cpp"
   )
   target_compile_options(alive-exec PRIVATE -fexceptions)
+
+  add_subdirectory(backend_tv/aslp)
 
 else()
   set(LLVM_UTIL_SRCS "")
