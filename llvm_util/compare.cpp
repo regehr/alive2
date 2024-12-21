@@ -128,7 +128,7 @@ bool Verifier::compareFunctions(llvm::Function &F1, llvm::Function &F2) {
 
   case Results::TYPE_CHECKER_FAILED:
     out << "Transformation doesn't verify!\n"
-           "ERROR: program doesn't type check!\n\n";
+            "ERROR: program doesn't type check!\n\n";
     ++num_errors;
     return true;
 

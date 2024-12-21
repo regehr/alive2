@@ -12210,7 +12210,6 @@ case AArch64::FCMGE64:
 
       // BitCast src to a vector of numElts x (2*eltSize) for narrowing
       assert(numElts * (2 * eltSize) == 128 && "BitCasting to wrong type");
-
       Value *src_vector = createBitCast(src, getVecTy(2 * eltSize, numElts));
       Value *narrowed_vector =
           createTrunc(src_vector, getVecTy(eltSize, numElts));
