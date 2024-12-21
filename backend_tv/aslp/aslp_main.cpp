@@ -1,6 +1,6 @@
 #include <iostream>
 
-#include "aslp_bridge.hpp"
+#include "aslp_bridge.h"
 
 int main() {
   std::cout << "Hello World" << std::endl;

@@ -105,7 +105,7 @@ The Aslp-specific files are placed in this folder. In a roughly bottom-up order,
   If appropriate, this calls the aslp\_bridge.
   This code also has the task of using LLVM's assembler to encode an MCInst into opcode bytes.
 - The *arm2llvm* class is used from within the aslt\_visitor to manage the basic blocks and create LLVM instructions.
-  This is done by implementing an abstract interface, declared in interface.hpp.
+  This is done by implementing an abstract interface, declared in interface.h.
 
 ## state
 Currently (2024-02-19), the Aslp-based lifter has fairly good outcomes with the arm-tv test suite (on i5-13600H).

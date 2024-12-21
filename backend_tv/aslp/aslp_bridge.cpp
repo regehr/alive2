@@ -14,10 +14,10 @@
 #include "SemanticsParser.h"
 #include "SemanticsLexer.h"
 
-#include <aslp/aarch64_map.hpp>
-#include "interface.hpp"
-#include "aslt_visitor.hpp"
-#include "aslp_bridge.hpp"
+#include <aslp/aarch64_map.h>
+#include "interface.h"
+#include "aslt_visitor.h"
+#include "aslp_bridge.h"
 #include <aslp-cpp/aslp-cpp.hpp>
 
 #include "llvm/IR/DerivedTypes.h"

@@ -1,5 +1,5 @@
-#include "aslt_visitor.hpp"
-#include "aslp/interface.hpp"
+#include "aslt_visitor.h"
+#include "aslp/interface.h"
 #include "tree/TerminalNode.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/InstrTypes.h"

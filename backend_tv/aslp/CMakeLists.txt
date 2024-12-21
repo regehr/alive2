@@ -62,16 +62,16 @@ ENDIF()
 
 find_package(Python)
 add_custom_command(
-  OUTPUT aarch64_map.hpp
+  OUTPUT aarch64_map.h
   COMMAND
     ${Python_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/parse_tablegen.py
     ${AARCH64_INSTR_INC}
-    aarch64_map.hpp
+    aarch64_map.h
   DEPENDS ${AARCH64_INSTR_INC}
   VERBATIM
 )
-add_custom_target(aarch64_map DEPENDS aarch64_map.hpp)
+add_custom_target(aarch64_map DEPENDS aarch64_map.h)
 add_dependencies(bridge aarch64_map)
 target_include_directories(bridge PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/..")
 

@@ -14,7 +14,7 @@
 #include "SemanticsBaseVisitor.h"
 
 #include "SemanticsParser.h"
-#include "interface.hpp"
+#include "interface.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace aslp {

@@ -8,8 +8,8 @@
 #include "llvm/MC/MCInstrAnalysis.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 
-#include "interface.hpp"
-#include "aslt_visitor.hpp"
+#include "interface.h"
+#include "aslt_visitor.h"
 
 #include <aslp-cpp/aslp-cpp.hpp>
 

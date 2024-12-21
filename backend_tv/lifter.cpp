@@ -72,8 +72,8 @@
 #include <vector>
 
 #define AARCH64_MAP_IMPL
-#include "aslp/aarch64_map.hpp"
-#include "aslp/aslp_bridge.hpp"
+#include "aslp/aarch64_map.h"
+#include "aslp/aslp_bridge.h"
 
 using namespace std;
 using namespace llvm;
