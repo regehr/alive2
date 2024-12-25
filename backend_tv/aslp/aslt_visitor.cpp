@@ -95,8 +95,8 @@ llvm::Value* safe_sdiv(aslt_visitor& vis, llvm::Value* numerator, llvm::Value* d
 
   auto int_min = llvm::ConstantInt::get(numty, llvm::APInt::getSignedMinValue(elemwd));
   auto minus_one = llvm::ConstantInt::get(numty, --llvm::APInt::getZero(elemwd));
-  auto zero = llvm::ConstantInt::get(numty, llvm::APInt::getZero(elemwd));
   auto one = llvm::ConstantInt::get(numty, ++llvm::APInt::getZero(elemwd));
+  // auto zero = llvm::ConstantInt::get(numty, llvm::APInt::getZero(elemwd));
 
   auto overflowing = iface.createAnd(
     iface.createICmp(llvm::ICmpInst::ICMP_EQ, numerator, int_min),
