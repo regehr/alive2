@@ -49,8 +49,7 @@ public:
   virtual expr_t lookupExprVar(const llvm::MCExpr&) = 0;
   virtual void updateOutputReg(expr_t V, bool SExt = false) = 0;
 
-  [[deprecated("we should change this to getUnsignedIntConst(), matching lifter.cpp")]]
-  virtual expr_t getIntConst(uint64_t val, u_int64_t bits) = 0;
+  virtual expr_t getUnsignedIntConst(uint64_t val, u_int64_t bits) = 0;
   virtual type_t getIntTy(unsigned bits) = 0; 
   virtual type_t getFPType(unsigned bits) = 0; 
   virtual type_t getVecTy(unsigned eltSize, unsigned numElts, bool isFP = false) = 0;

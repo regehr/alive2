@@ -467,12 +467,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
            (reg >= AArch64::S0 && reg <= AArch64::S31);
   }
 
-  [[deprecated("use getUnsignedIntConst() instead")]]
-  Constant *getIntConst(uint64_t val, u_int64_t bits) override {
-    return ConstantInt::get(Ctx, llvm::APInt(bits, val));
-  }
-
-  Constant *getUnsignedIntConst(uint64_t val, uint64_t bits) {
+  Constant *getUnsignedIntConst(uint64_t val, uint64_t bits) override {
     return ConstantInt::get(Ctx, llvm::APInt(bits, val));
   }
 
