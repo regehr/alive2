@@ -33,4 +33,13 @@ cmake -B build -DBUILD_TV=1 \
   "$@"
   # -DLLVM_DIR=~/progs/llvm-regehr/build/lib/cmake/llvm/ \
   # -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp \
+  # -DCMAKE_VERBOSE_MAKEFILE=TRUE \
 cmake --build build -j12
+
+# HACK: when building with LLVM from Nix, the alivecc/alive++ will be non-functional,
+# due to an incorrect clang path.
+# simply remove it to prevent test failure.
+if ! build/alivecc --version; then
+  echo 'build.sh: removing incorrectly-built alivecc/alive++...' >&2
+  rm -f build/alivecc build/alive++
+fi

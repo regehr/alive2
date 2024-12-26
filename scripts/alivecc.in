@@ -138,4 +138,4 @@ if ($print_cmd) {
     print "\n\n";
 }
 
-exec @ARGV;
+exec @ARGV or die "alivecc wrapper failed to invoke compiler";
