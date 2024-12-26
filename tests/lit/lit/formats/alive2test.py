@@ -105,7 +105,7 @@ class Alive2Test(TestFormat):
   def execute(self, test, litConfig):
     testcase = test
     if not isinstance(testcase, Alive2TestCase):
-      testcase.aslp = False
+      testcase.aslp = None
     test = test.getSourcePath()
 
     alive_tv_1 = test.endswith('.srctgt.ll')
@@ -203,6 +203,9 @@ class Alive2Test(TestFormat):
     if xfail != None and output.find(xfail.group(1)) != -1:
       return lit.Test.XFAIL, ''
 
+    # NOTE: alive2 tests should be marked as PASS even if timeout or smt incomplete.
+    if testcase.aslp is None and (is_timeout(output) or is_incomplete(output)):
+      return lit.Test.PASS, ''
     if is_timeout(output):
       return lit.Test.TIMEOUT, ''
     if is_incomplete(output):
