@@ -15,16 +15,11 @@ antlr4_generate(Grammar ${CMAKE_CURRENT_SOURCE_DIR}/Semantics.g4 BOTH TRUE TRUE 
 message(STATUS "antlr generated include: ${ANTLR4_INCLUDE_DIR_Grammar}")
 
 if (NOT LLVM_FOUND)
-  find_package(LLVM REQUIRED CONFIG)
+  # find_package(LLVM REQUIRED CONFIG)
+  message(FATAL_ERROR "LLVM not found. the aslp CMakeList should be imported by the root CMakeList with LLVM already located")
 else()
-  message(STATUS "... LLVM already found")
+  message(STATUS "... LLVM already found: ${LLVM_DIR}")
 endif()
-message(STATUS "Found LLVM: " ${LLVM_DIR} ", tools: " ${LLVM_TOOLS_BINARY_DIR} ", binary: " ${LLVM_BINARY_DIR})
-get_target_property(LLVM_CONFIG llvm-config LOCATION)
-
-message(STATUS "llvm-config: ${LLVM_CONFIG}")
-# list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
-# include(AddLLVM)
 
 find_file(AARCH64_INSTR_INC "Target/AArch64/AArch64GenInstrInfo.inc" REQUIRED PATHS ${LLVM_BINARY_DIR}/lib ${LLVM_INCLUDE_DIRS})
 message(STATUS "AArch64GenInstrInfo.inc: ${AARCH64_INSTR_INC}")
@@ -46,19 +41,13 @@ add_library(grammar STATIC "${ANTLR4_SRC_FILES_Grammar}")
 target_compile_options(grammar PUBLIC -Wno-error=overloaded-virtual -Wno-overloaded-virtual) # warnings in antlr-generated code
 target_include_directories(grammar PUBLIC ${PROJECT_BINARY_DIR} ${ANTLR4_INCLUDE_DIR} ${ANTLR4_INCLUDE_DIR_Grammar})
 
-add_library(bridge STATIC "aslp_bridge.cpp" "aslt_visitor.cpp")
+add_llvm_library(bridge "aslp_bridge.cpp" "aslt_visitor.cpp")
 add_dependencies(bridge antlr4_shared)
 target_link_libraries(bridge PUBLIC aslp-cpp::aslp-cpp)
 target_link_libraries(bridge PUBLIC antlr4_shared grammar)
 target_include_directories(bridge PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
-target_include_directories(bridge PRIVATE "${LLVM_SOURCE_DIR}/lib")
 
 target_compile_definitions(bridge PRIVATE ASLT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/aslt")
-target_compile_options(bridge PRIVATE -Wdeprecated-declarations -Wno-error=deprecated -Wno-error=unused-variable -Wno-error=unused-function -Wno-error=unused-but-set-variable)
-IF(CMAKE_BUILD_TYPE MATCHES DEBUG)
-  target_compile_options(bridge PRIVATE -g -O0 -fsanitize=address)
-  target_link_options(bridge PRIVATE -g -O0 -fsanitize=address)    
-ENDIF()
 
 find_package(Python)
 add_custom_command(
@@ -73,20 +62,11 @@ add_custom_command(
 )
 add_custom_target(aarch64_map DEPENDS aarch64_map.h)
 add_dependencies(bridge aarch64_map)
-target_include_directories(bridge PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/..")
+target_include_directories(bridge PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/..")  # for aarch64_map.h
 
-execute_process(COMMAND "${LLVM_CONFIG}" --libs support core irreader bitwriter
-                COMMAND_ERROR_IS_FATAL ANY
-                OUTPUT_VARIABLE llvm_libs OUTPUT_STRIP_TRAILING_WHITESPACE)
-message(STATUS "llvm_libs: ${llvm_libs}")
-separate_arguments(llvm_libs UNIX_COMMAND "${llvm_libs}")
-# target_link_libraries(bridge PRIVATE "${lib_files}")
-target_link_options(bridge PUBLIC "${llvm_libs}")
-target_link_directories(bridge PUBLIC ${LLVM_LIBRARY_DIR})
-target_include_directories(bridge PUBLIC ${LLVM_INCLUDE_DIRS})
-
-add_executable(bridge-bin aslp_main.cpp)
+add_llvm_executable(bridge-bin "tools/aslp_main.cpp")
 target_link_libraries(bridge-bin PRIVATE bridge)
+target_include_directories(bridge-bin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 install(TARGETS bridge-bin DESTINATION bin)
 

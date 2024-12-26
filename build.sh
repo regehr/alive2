@@ -33,4 +33,5 @@ cmake -B build -DBUILD_TV=1 \
   "$@"
   # -DLLVM_DIR=~/progs/llvm-regehr/build/lib/cmake/llvm/ \
   # -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp \
+  # -DCMAKE_VERBOSE_MAKEFILE=TRUE \
 cmake --build build -j12
