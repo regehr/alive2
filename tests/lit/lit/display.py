@@ -136,9 +136,13 @@ class Display(object):
         # Show the test result line.
         test_name = test.getFullName()
 
-        # insert a blank line between pairs of classic & aslp test cases, for easier reading
-        if self.prev_name and self.prev_name.rsplit(' (', 1)[0] != test_name.rsplit(' (', 1)[0]:
-            print()
+        # insert a blank line between pairs of classic & aslp test cases, for easier reading.
+        # we want a blank line when base names differ, unless both tests are non-arm-tv tests.
+        if self.prev_name:
+            test_base, test_aslp = test_name.rstrip(')').rsplit(' (', 1)
+            prev_base, prev_aslp = self.prev_name.rstrip(')').rsplit(' (', 1)
+            if test_base != prev_base and not (test_aslp == prev_aslp == 'alive2'):
+                print()
         self.prev_name = test_name
 
         print(
