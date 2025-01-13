@@ -52,7 +52,7 @@ static void print_single_varval(ostream &os, State &st, const Model &m,
 
   if (auto *in = dynamic_cast<const Input*>(var)) {
     auto var = in->getUndefVar(type, child);
-    if (var.isValid() && m.eval(var, false).isAllOnes()) {
+    if (var.isValid() && m.eval(var).isAllOnes()) {
       os << "undef";
       return;
     }
@@ -61,11 +61,18 @@ static void print_single_varval(ostream &os, State &st, const Model &m,
   // TODO: detect undef bits (total or partial) with an SMT query
 
   expr partial = m.eval(val.value);
+  vector<pair<expr,expr>> repls;
+  for (auto &var : partial.vars()) {
+    repls.emplace_back(var, expr::some(var));
+  }
 
-  type.printVal(os, st, m.eval(val.value, true));
+  expr full = partial.subst_simplify(repls);
+  if (!full.isConst())
+    full = m.eval(full, true);
+  type.printVal(os, st, full);
 
   if (dynamic_cast<const PtrType*>(&type)) {
-    Pointer ptr(st.returnMemory(), m.eval(val.value, true));
+    Pointer ptr(st.returnMemory(), std::move(full));
     auto addr = m.eval(ptr.getAddress());
     if (addr.isConst() && !ptr.isNull().isTrue()) {
       os << " / Address=";
@@ -75,14 +82,10 @@ static void print_single_varval(ostream &os, State &st, const Model &m,
 
   // undef variables may not have a model since each read uses a copy
   // TODO: add intervals of possible values for ints at least?
-  if (!partial.isConst()) {
-    // some functions / vars may not have an interpretation because it's not
-    // needed, not because it's undef
-    for (auto &var : partial.vars()) {
-      if (isUndef(var)) {
-        os << "\t[based on undef value]";
-        break;
-      }
+  for (auto &var : partial.vars()) {
+    if (var.fn_name().starts_with("undef!")) {
+      os << "\t[based on undef]";
+      break;
     }
   }
 }
@@ -295,7 +298,7 @@ static bool error(Errors &errs, State &src_state, State &tgt_state,
         if (m.eval(val.return_domain).isFalse()) {
           s << *var << " = function did not return!\n";
           break;
-        } else if (m.eval(val.domain).isFalse()) {
+        } else if (m.eval(val.domain()).isFalse()) {
           s << "Function " << call->getFnName() << " triggered UB\n";
           break;
         } else if (var->isVoid()) {
@@ -304,8 +307,7 @@ static bool error(Errors &errs, State &src_state, State &tgt_state,
         }
       }
 
-      if (!dynamic_cast<const Return*>(var) && // domain always false after exec
-          m.eval(val.domain).isFalse()) {
+      if (m.eval(val.domain()).isFalse()) {
         s << *var << " = UB triggered!\n";
         break;
       }
@@ -497,8 +499,8 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
                  State &tgt_state, const Value *var, const Type &type,
                  const State::ValTy &ap, const State::ValTy &bp,
                  bool check_each_var) {
-  auto &fndom_a  = ap.domain;
-  auto &fndom_b  = bp.domain;
+  auto fndom_a   = ap.domain();
+  auto fndom_b   = bp.domain();
   auto &retdom_a = ap.return_domain;
   auto &retdom_b = bp.return_domain;
   auto &a = ap.val;
@@ -1369,7 +1371,9 @@ pair<unique_ptr<State>, unique_ptr<State>> TransformVerify::exec() const {
   auto tgt_state = make_unique<State>(t.tgt, false);
   sym_exec(*src_state);
   tgt_state->syncSEdataWithSrc(*src_state);
+  src_state->cleanup();
   sym_exec(*tgt_state);
+  tgt_state->cleanup();
   src_state->mkAxioms(*tgt_state);
 
   return { std::move(src_state), std::move(tgt_state) };
@@ -1623,9 +1627,13 @@ static void remove_unreachable_bbs(Function &f) {
 
   auto all_bbs = f.getBBs(); // copy intended
   vector<string> unreachable;
+  vector<const Value*> removed_instrs;
   for (auto bb : all_bbs) {
     if (!reachable.count(bb)) {
       unreachable.emplace_back(bb->getName());
+      for (auto &i : bb->instrs()) {
+        removed_instrs.emplace_back(&i);
+      }
       f.removeBB(*bb);
     }
   }
@@ -1634,6 +1642,9 @@ static void remove_unreachable_bbs(Function &f) {
     if (auto phi = dynamic_cast<const Phi*>(&i)) {
       for (auto &bb : unreachable) {
         const_cast<Phi*>(phi)->removeValue(bb);
+      }
+      for (auto &i : removed_instrs) {
+        const_cast<Phi*>(phi)->removeValue(i);
       }
     }
   }

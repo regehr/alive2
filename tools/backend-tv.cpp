@@ -107,7 +107,7 @@ llvm::cl::opt<string> opt_asm_input(
 
 llvm::ExitOnError ExitOnErr;
 
-void doit(llvm::Module *M1, llvm::Function *srcFn, Verifier &verifier,
+void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
           llvm::TargetLibraryInfoWrapperPass &TLI) {
   assert(lifter::out);
 
@@ -129,7 +129,7 @@ void doit(llvm::Module *M1, llvm::Function *srcFn, Verifier &verifier,
 
   // nuke the rest of the functions in the module -- no need to
   // generate and then parse assembly that we don't care about
-  for (auto &F : *M1) {
+  for (auto &F : *srcModule) {
     if (&F != srcFn && !F.isDeclaration())
       F.deleteBody();
   }
@@ -161,12 +161,12 @@ void doit(llvm::Module *M1, llvm::Function *srcFn, Verifier &verifier,
 
     MPM.addPass(llvm::InternalizePass(preserve));
     MPM.addPass(llvm::GlobalDCEPass());
-    MPM.run(*M1, MAM);
+    MPM.run(*srcModule, MAM);
   }
 
   lifter::init();
   lifter::checkSupport(srcFn);
-  lifter::nameGlobals(M1);
+  lifter::nameGlobals(srcModule);
 
   if (opt_use_debuginfo)
     lifter::addDebugInfo(srcFn);
@@ -174,7 +174,7 @@ void doit(llvm::Module *M1, llvm::Function *srcFn, Verifier &verifier,
   auto AsmBuffer = (opt_asm_input != "")
                        ? ExitOnErr(llvm::errorOrToExpected(
                              llvm::MemoryBuffer::getFile(opt_asm_input)))
-                       : lifter::generateAsm(*M1);
+                       : lifter::generateAsm(*srcModule);
 
   *out << "\n\n------------ AArch64 Assembly: ------------\n\n";
   for (auto it = AsmBuffer->getBuffer().begin();
@@ -188,32 +188,25 @@ void doit(llvm::Module *M1, llvm::Function *srcFn, Verifier &verifier,
 
   srcFn = lifter::adjustSrc(srcFn);
 
-  std::unique_ptr<llvm::Module> M2 =
-      std::make_unique<llvm::Module>("M2", M1->getContext());
-  // M2->setDataLayout(M1->getDataLayout());
-  // M2->setTargetTriple(M1->getTargetTriple());
+  std::unique_ptr<llvm::Module> tgtModule =
+      std::make_unique<llvm::Module>("tgtModule", srcModule->getContext());
+  // tgtModule->setDataLayout(srcModule->getDataLayout());
+  // tgtModule->setTargetTriple(srcModule->getTargetTriple());
 
-  auto [F1, F2] = lifter::liftFunc(M1, M2.get(), srcFn, std::move(AsmBuffer));
+  auto [F1, F2] = lifter::liftFunc(srcModule, tgtModule.get(), srcFn, std::move(AsmBuffer));
 
   *out << "\n\nabout to optimize lifted code:\n\n";
-  *out << lifter::moduleToString(M2.get()) << std::endl;
+  *out << lifter::moduleToString(tgtModule.get()) << std::endl;
 
-  auto err = optimize_module(M2.get(), opt_optimize_tgt);
+  auto err = optimize_module(tgtModule.get(), opt_optimize_tgt);
   if (!err.empty()) {
     *out << "\n\nERROR running LLVM optimizations\n\n";
     exit(-1);
   }
 
-  // these attributes can be soundly removed, and a good thing too
-  // since they cause spurious TV failures in ASM memory mode
-  for (auto arg = F2->arg_begin(); arg != F2->arg_end(); ++arg) {
-    arg->removeAttr(llvm::Attribute::NoCapture);
-    arg->removeAttr(llvm::Attribute::ReadNone);
-    arg->removeAttr(llvm::Attribute::ReadOnly);
-    arg->removeAttr(llvm::Attribute::WriteOnly);
-  }
-
-  auto lifted = lifter::moduleToString(M2.get());
+  lifter::fixupOptimizedTgt(F2);
+  
+  auto lifted = lifter::moduleToString(tgtModule.get());
   if (save_lifted_ir) {
     std::filesystem::path p{(string)opt_file};
     p.replace_extension(".lifted.ll");
@@ -259,13 +252,13 @@ version )EOF";
   llvm::cl::HideUnrelatedOptions(alive_cmdargs);
   llvm::cl::ParseCommandLineOptions(argc, argv, Usage);
 
-  auto M1 = openInputFile(Context, opt_file);
-  if (!M1.get()) {
+  auto srcModule = openInputFile(Context, opt_file);
+  if (!srcModule.get()) {
     cerr << "Could not read bitcode from '" << opt_file << "'\n";
     return -1;
   }
 
-#define ARGS_MODULE_VAR M1
+#define ARGS_MODULE_VAR srcModule
 #include "llvm_util/cmd_args_def.h"
 
   cerr << "report file: " << report_filename << '\n';
@@ -290,14 +283,14 @@ version )EOF";
   config::disable_poison_input = true;
 
   // FIXME: we should avoid hard-coding these
-  M1.get()->setTargetTriple("aarch64-linux-gnu");
-  M1.get()->setDataLayout(
+  srcModule.get()->setTargetTriple("aarch64-linux-gnu");
+  srcModule.get()->setDataLayout(
       "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32");
 
   lifter::out = out;
 
-  auto &DL = M1.get()->getDataLayout();
-  llvm::Triple targetTriple(M1.get()->getTargetTriple());
+  auto &DL = srcModule.get()->getDataLayout();
+  llvm::Triple targetTriple(srcModule.get()->getTargetTriple());
   llvm::TargetLibraryInfoWrapperPass TLI(targetTriple);
 
   llvm_util::initializer llvm_util_init(*out, DL);
@@ -309,17 +302,17 @@ version )EOF";
   verifier.bidirectional = opt_bidirectional;
 
   if (opt_fn != "") {
-    auto *srcFn = findFunction(*M1, opt_fn);
+    auto *srcFn = findFunction(*srcModule, opt_fn);
     if (srcFn == nullptr) {
       *out << "ERROR: Couldn't find function to verify\n";
       exit(-1);
     }
-    doit(M1.get(), srcFn, verifier, TLI);
+    doit(srcModule.get(), srcFn, verifier, TLI);
   } else {
-    for (auto &srcFn : *M1.get()) {
+    for (auto &srcFn : *srcModule.get()) {
       if (srcFn.isDeclaration())
         continue;
-      doit(M1.get(), &srcFn, verifier, TLI);
+      doit(srcModule.get(), &srcFn, verifier, TLI);
       break;
     }
   }

@@ -5,6 +5,7 @@
 #include "ir/function.h"
 #include "ir/globals.h"
 #include "smt/smt.h"
+#include "smt/solver.h"
 #include "util/config.h"
 #include "util/errors.h"
 #include <algorithm>
@@ -94,7 +95,7 @@ State::CurrentDomain::operator bool() const {
 template<class T>
 static T intersect_set(const T &a, const T &b) {
   T results;
-  ranges::set_intersection(a, b, inserter(results, results.begin()));
+  ranges::set_intersection(a, b, inserter(results, results.begin()), less{});
   return results;
 }
 
@@ -102,38 +103,27 @@ void State::ValueAnalysis::meet_with(const State::ValueAnalysis &other) {
   non_poison_vals = intersect_set(non_poison_vals, other.non_poison_vals);
   non_undef_vals = intersect_set(non_undef_vals, other.non_undef_vals);
   unused_vars = intersect_set(unused_vars, other.unused_vars);
+  ranges_fn_calls.meet_with(other.ranges_fn_calls);
+}
 
-  for (auto &[fn, pair] : other.ranges_fn_calls) {
-    auto &[calls, access] = pair;
-    auto [I, inserted] = ranges_fn_calls.try_emplace(fn, pair);
-    if (inserted) {
-      I->second.first.emplace(0);
-    } else {
-      I->second.first.insert(calls.begin(), calls.end());
-      I->second.second |= access;
-    }
-  }
-
-  for (auto &[fn, pair] : ranges_fn_calls) {
-    auto &[calls, access] = pair;
-    if (!other.ranges_fn_calls.count(fn))
-      calls.emplace(0);
-  }
+void State::ValueAnalysis::clear_smt() {
+  non_poison_vals.clear();
+  non_undef_vals = decltype(non_undef_vals)();
+  unused_vars = decltype(unused_vars)();
 }
 
 void State::ValueAnalysis::FnCallRanges::inc(const string &name,
                                              const SMTMemoryAccess &access) {
-  if (access.canWriteSomething().isFalse())
-    return;
+  bool canwrite = !access.canWriteSomething().isFalse();
 
   auto [I, inserted] = try_emplace(name);
   if (inserted) {
-    I->second.first.emplace(1);
+    I->second.first.emplace(1, canwrite);
     I->second.second = access;
   } else {
-    set<unsigned> new_set;
-    for (unsigned n : I->second.first) {
-      new_set.emplace(n+1);
+    set<pair<unsigned, bool>> new_set;
+    for (auto [n, writes0] : I->second.first) {
+      new_set.emplace(n+1, writes0 | canwrite);
     }
     I->second.first   = std::move(new_set);
     I->second.second |= access;
@@ -177,14 +167,13 @@ State::ValueAnalysis::FnCallRanges::overlaps(const string &callee,
 
   for (auto &[fn, pair] : *this) {
     auto &[calls, access] = pair;
-    assert(!access.canWriteSomething().isFalse());
 
     if (skip(fn, access))
       continue;
 
     auto I = other.find(fn);
     if (I == other.end()) {
-      if (calls.count(0))
+      if (calls.count({0, true}))
         continue;
       return false;
     }
@@ -194,7 +183,10 @@ State::ValueAnalysis::FnCallRanges::overlaps(const string &callee,
     if ((access | I->second.second).canReadSomething().isFalse())
       continue;
 
-    if (intersect_set(calls, I->second.first).empty())
+    auto set = intersect_set(calls, I->second.first);
+    // must only have write accesses
+    assert(ranges::all_of(set, [](auto &p) { return p.second; }));
+    if (set.empty())
       return false;
   }
 
@@ -203,10 +195,31 @@ State::ValueAnalysis::FnCallRanges::overlaps(const string &callee,
     if (skip(fn, access))
       continue;
 
-    if (!calls.count(0) && !count(fn))
+    if (!calls.count({0, true}) && !count(fn))
       return false;
   }
 
+  return true;
+}
+
+bool State::ValueAnalysis::FnCallRanges::isLargerThanInclReads(
+  const FnCallRanges &other) const {
+  for (auto &[fn, pair] : *this) {
+    auto &[calls, access] = pair;
+    auto I = other.find(fn);
+    if (I == other.end())
+      continue;
+
+    auto first_val = calls.begin()->first;
+    auto other_last_val = I->second.first.rbegin()->first;
+    if (first_val < other_last_val)
+      return false;
+  }
+
+  for (auto &[fn, pair] : other) {
+    if (!count(fn))
+      return false;
+  }
   return true;
 }
 
@@ -218,6 +231,41 @@ State::ValueAnalysis::FnCallRanges::project(const string &name) const {
   FnCallRanges ranges;
   ranges.emplace(name, I->second);
   return ranges;
+}
+
+void State::ValueAnalysis::FnCallRanges::keep_only_writes() {
+  for (auto I = begin(); I != end(); ) {
+    auto &[calls, access] = I->second;
+    for (auto II = calls.begin(); II != calls.end(); ) {
+      if (!II->second)
+        II = calls.erase(II);
+      else
+        ++II;
+    }
+    if (calls.empty())
+      I = erase(I);
+    else
+      ++I;
+  }
+}
+
+void State::ValueAnalysis::FnCallRanges::meet_with(const FnCallRanges &other) {
+  for (auto &[fn, pair] : other) {
+    auto &[calls, access] = pair;
+    auto [I, inserted] = try_emplace(fn, pair);
+    if (inserted) {
+      I->second.first.emplace(0, true);
+    } else {
+      I->second.first.insert(calls.begin(), calls.end());
+      I->second.second |= access;
+    }
+  }
+
+  for (auto &[fn, pair] : *this) {
+    auto &[calls, access] = pair;
+    if (!other.count(fn))
+      calls.emplace(0, true);
+  }
 }
 
 State::VarArgsData
@@ -267,9 +315,9 @@ const State::ValTy& State::exec(const Value &v) {
   domain.noreturn = true;
   auto val = v.toSMT(*this);
 
-  auto value_ub = domain.UB();
+  auto value_ub = domain.UB;
   if (config::disallow_ub_exploitation)
-    value_ub &= !guardable_ub();
+    value_ub.add(!guardable_ub());
 
   auto [I, inserted]
     = values.try_emplace(&v, ValTy{std::move(val), domain.noreturn,
@@ -310,200 +358,123 @@ static expr eq_except_padding(const Memory &m, const Type &ty, const expr &e1,
 
 expr State::strip_undef_and_add_ub(const Value &val, const expr &e,
                                    bool ptr_compare) {
+  if (undef_vars.empty() || e.isConst())
+    return e;
+
   if (isUndef(e)) {
     addUB(expr(false));
-    return expr::mkUInt(0, e);
+    return expr::mkNumber("0", e);
   }
 
-  auto is_undef_cond = [](const expr &e, const expr &var) {
-    expr lhs, rhs;
-    // (= #b0 isundef_%var)
-    if (e.isEq(lhs, rhs)) {
-      return (lhs.isZero() && Input::isUndefMask(rhs, var)) ||
-             (rhs.isZero() && Input::isUndefMask(lhs, var));
-    }
-    return false;
-  };
+  auto vars = e.vars();
+  auto undef_vars = intersect_set(vars, this->undef_vars);
+  if (undef_vars.empty())
+    return e;
 
-  // pointer undef vars show up like (concat 0 undef)
-  auto is_undef_or_concat = [&](const expr &e) {
-    if (isUndef(e))
-      return true;
-
-    expr a, b;
-    return e.isConcat(a, b) && a.isZero() && isUndef(b);
-  };
-
-  auto is_if_undef = [&](const expr &e, expr &var, expr &not_undef) {
-    expr undef;
-    // (ite (= #b0 isundef_%var) %var undef)
-    return e.isIf(not_undef, var, undef) &&
-           is_undef_or_concat(undef) &&
-           is_undef_cond(not_undef, var);
-  };
-
-  // e2: stripped expression
-  auto is_if_undef_or_add = [&](const expr &e, expr &var, expr &not_undef,
-                                expr &e2) {
-    // when e = (ite (= #b0 isundef_%var) %var undef):
-    //   var = %var, e2 = %var
-    // when e = (bvadd const (ite (= #b0 isundef_%var) %var undef))
-    //   var = %var, e2 = const + %var
-    if (is_if_undef(e, var, not_undef)) {
-      e2 = var;
-      return true;
-    }
-
-    expr a, b;
-    if (e.isAdd(a, b)) {
-      if (b.isConst() && is_if_undef(a, var, not_undef)) {
-        e2 = b + var;
-        return true;
-      } else if (a.isConst() && is_if_undef(b, var, not_undef)) {
-        e2 = a + var;
-        return true;
+  // check if any var is already known to be non-undef
+  vector<pair<expr,expr>> repls;
+  set<expr> missing_tests;
+  expr conds = true;
+  for (auto &var : vars) {
+    if (var.fn_name().starts_with("isundef_")) {
+      expr test = var == 0;
+      if (domain.UB.contains(test)) {
+        conds &= test;
+        repls.emplace_back(std::move(test), true);
+      } else {
+        missing_tests.emplace(var);
       }
     }
-    return false;
-  };
-
-  expr c, a, b, lhs, rhs;
-
-  // two variants
-  // 1) boolean
-  if (is_if_undef(e, a, b)) {
-    addUB(std::move(b));
-    return a;
   }
 
-  auto has_undef = [&](const expr &e) {
-    auto vars = e.vars();
-    return any_of(vars.begin(), vars.end(),
-                  [&](auto &v) { return isUndef(v); });
-  };
+  // some sort of undef concatenated with something else
+  if (repls.empty() && missing_tests.empty()) {
+    addUB(expr(false));
+    return expr::mkNumber("0", e);
+  }
 
-  auto mark_notundef = [&](const expr &var) {
+  if (missing_tests.empty())
+    return e.subst_simplify(repls);
+
+  expr e2;
+  {
+    auto repls2 = repls;
+    for (auto &u : undef_vars) {
+      repls2.emplace_back(u, expr::mkFreshVar("undef", u));
+    }
+    e2 = e.subst(repls2);
+  }
+
+  set<expr> qvars;
+  for (auto &var : vars) {
     auto name = var.fn_name();
-    for (auto &[v, _val] : values) {
-      if (v->getName() == name) {
-        analysis.non_undef_vals.emplace(v, var);
-        return;
+    if (name.starts_with("isundef_") ||
+        name.starts_with("undef!") ||
+        var.isQVar())
+      continue;
+    qvars.emplace(var);
+  }
+
+  Solver s;
+  s.add(conds);
+  s.add(expr::mkForAll(qvars, !eq_except_padding(getMemory(), val.getType(), e,
+                                                 e2, ptr_compare)));
+  bool all_decided = true;
+
+  // check each undef var in turn by making all other vars non-undef
+  // if the expressions yields a different value, then the selected var can't
+  // be undef
+  for (auto &var : missing_tests) {
+    SolverPush push(s);
+    for (auto &miss_var : missing_tests) {
+      expr test = miss_var == 0;
+      if (miss_var.eq(var)) {
+        test = !test;
       }
+      s.add(test);
     }
-  };
-
-  if (e.isIf(c, a, b) && a.isConst() && b.isConst()) {
-    expr val, val2, newe, newe2, not_undef, not_undef2;
-    // (ite (= val (ite (= #b0 isundef_%var) %var undef)) #b1 #b0)
-    // (ite (= val (bvadd c (ite (= #b0 isundef_%var) %var undef)) #b1 #b0)
-    if (c.isEq(lhs, rhs)) {
-      if (is_if_undef_or_add(lhs, val, not_undef, newe) && !has_undef(rhs)) {
-        addUB(std::move(not_undef));
-        mark_notundef(val);
-        // %var == rhs
-        // (bvadd c %var) == rhs
-        return expr::mkIf(newe == rhs, a, b);
+    auto res = s.check("non-undef inference", true);
+    expr test = var == 0;
+    if (res.isSat()) { // var can't be undef
+      addUB(test);
+      auto var_name = var.fn_name().substr(sizeof("isundef_")-1);
+      // mark the var as non-undef for future uses
+      for (auto &[v, val] : values) {
+        if (v->getName() == var_name) {
+          analysis.non_undef_vals
+                  .emplace(v, val.val.value.subst(test, true).simplify());
+          break;
+        }
       }
-      if (is_if_undef_or_add(rhs, val, not_undef, newe) && !has_undef(lhs)) {
-        addUB(std::move(not_undef));
-        mark_notundef(val);
-        return expr::mkIf(lhs == newe, a, b);
-      }
-      if (is_if_undef_or_add(lhs, val, not_undef, newe) &&
-          is_if_undef_or_add(rhs, val2, not_undef2, newe2)) {
-        addUB(std::move(not_undef));
-        addUB(std::move(not_undef2));
-        mark_notundef(val);
-        mark_notundef(val2);
-        return expr::mkIf(newe == newe2, a, b);
-      }
-    }
-
-    if (c.isSLE(lhs, rhs)) {
-      // (ite (bvsle val (ite (= #b0 isundef_%var) %var undef)) #b1 #b0)
-      // (ite (bvsle val (bvadd c (ite (= #b0 isundef_%var) %var undef))
-      //       #b1 #b0)
-      if (is_if_undef_or_add(rhs, val, not_undef, newe) && !has_undef(lhs)) {
-        expr cond = lhs == expr::IntSMin(lhs.bits());
-        addUB(not_undef || cond);
-        if (cond.isFalse())
-          mark_notundef(val);
-        // lhs <=s %var
-        // lhs <=s (bvadd c %var)
-        return expr::mkIf(lhs.sle(newe), a, b);
-      }
-
-      // (ite (bvsle (ite (= #b0 isundef_%var) %var undef) val) #b1 #b0)
-      // (ite (bvsle (bvadd c (ite (= #b0 isundef_%var) %var undef)) val)
-      //       #b1 #b0)
-      if (is_if_undef_or_add(lhs, val, not_undef, newe) && !has_undef(rhs)) {
-        expr cond = rhs == expr::IntSMax(rhs.bits());
-        addUB(not_undef || cond);
-        if (cond.isFalse())
-          mark_notundef(val);
-        return expr::mkIf(newe.sle(rhs), a, b);
-      }
-
-      // undef <= undef
-      if (is_if_undef_or_add(lhs, val, not_undef, newe) &&
-          is_if_undef_or_add(rhs, val2, not_undef2, newe2)) {
-        addUB((not_undef && not_undef2) ||
-              (not_undef && newe == expr::IntSMin(lhs.bits())) ||
-              (not_undef2 && newe2 == expr::IntSMax(rhs.bits())));
-        return expr::mkIf(newe.sle(newe2), a, b);
-      }
-    }
-
-    if (c.isULE(lhs, rhs)) {
-      // (ite (bvule val (ite (= #b0 isundef_%var) %var undef)) #b1 #b0)
-      // (ite (bvule val (bvadd c (ite (= #b0 isundef_%var) %var undef)))
-      //       #b1 #b0)
-      if (is_if_undef_or_add(rhs, val, not_undef, newe) && !has_undef(lhs)) {
-        expr cond = lhs == 0;
-        addUB(not_undef || cond);
-        if (cond.isFalse())
-          mark_notundef(val);
-        // lhs <=u %var
-        // lhs <=u (bvadd c %var)
-        return expr::mkIf(lhs.ule(newe), a, b);
-      }
-
-      // (ite (bvule (ite (= #b0 isundef_%var) %var undef) val) #b1 #b0)
-      // (ite (bvule (bvadd c (ite (= #b0 isundef_%var) %var undef)) %val)
-      //       #b1 #b0)
-      if (is_if_undef_or_add(lhs, val, not_undef, newe) && !has_undef(rhs)) {
-        expr cond = rhs == expr::mkInt(-1, rhs);
-        addUB(not_undef || cond);
-        if (cond.isFalse())
-          mark_notundef(val);
-        return expr::mkIf(newe.ule(rhs), a, b);
-      }
-
-      // undef <= undef
-      if (is_if_undef_or_add(lhs, val, not_undef, newe) &&
-          is_if_undef_or_add(rhs, val2, not_undef2, newe2)) {
-        addUB((not_undef && not_undef2) ||
-              (not_undef && newe == 0) ||
-              (not_undef2 && newe2 == expr::mkInt(-1, rhs)));
-        return expr::mkIf(newe.ule(newe2), a, b);
-      }
+      repls.emplace_back(std::move(test), true);
+    } else {
+      // can't conclude anything
+      all_decided = false;
+      break;
     }
   }
 
-  // 2) (or (and |isundef_%var| undef) (and %var (not |isundef_%var|)))
-  // TODO
+  if (all_decided) {
+    e2 = e.subst_simplify(repls);
+    auto vars = e2.vars();
+    // if there are still undef variables (not originating from inputs),
+    // we need to account for the extra conditions that make it non-undef
+    auto I = ranges::find_if(vars, [&](auto &var) { return isUndef(var); });
+    if (I == vars.end())
+      return e2;
+  }
 
   // check if original expression is equal to an expression where undefs are
   // fixed to a const value
-  vector<pair<expr,expr>> repls;
+  auto repls2 = repls;
   for (auto &undef : undef_vars) {
     expr newv = expr::mkFreshVar("#undef'", undef);
     addQuantVar(newv);
-    repls.emplace_back(undef, std::move(newv));
+    repls2.emplace_back(undef, std::move(newv));
   }
-  addUB(eq_except_padding(getMemory(), val.getType(), e, e.subst(repls),
+  addUB(eq_except_padding(getMemory(), val.getType(), e, e.subst(repls2),
                           ptr_compare));
-  return e;
+  return e.subst_simplify(repls);
 }
 
 void State::check_enough_tmp_slots() {
@@ -686,6 +657,10 @@ const OrExpr* State::jumpCondFrom(const BasicBlock &bb) const {
 }
 
 bool State::isUndef(const expr &e) const {
+  expr v;
+  unsigned h, l;
+  if (e.isExtract(v, h, l))
+    return isUndef(v);
   return undef_vars.count(e) != 0;
 }
 
@@ -720,13 +695,64 @@ void State::cleanupPredecessorData() {
   predecessor_data.clear();
 }
 
+void State::copyUBFrom(const BasicBlock &bb) {
+  if (config::disallow_ub_exploitation)
+    return;
+
+  // Time-travel UB: anything that happens before a possibly non-returning call
+  // can be moved up to the entry of the BB.
+  const Value *before_call = nullptr;
+  for (auto &i : bb.instrs()) {
+    if (auto *call = dynamic_cast<const FnCall*>(&i)) {
+      if (!call->hasAttribute(FnAttrs::WillReturn))
+        break;
+    }
+    before_call = &i;
+  }
+  if (!before_call)
+    return;
+
+  auto src_val_I = src_state->values.find(before_call);
+  assert(src_val_I != src_state->values.end());
+  domain.UB.add(src_val_I->second.domain);
+}
+
+void State::copyUBFromBB(
+  const unordered_map<const BasicBlock*, BasicBlockInfo> &tgt_data) {
+  auto I = src_bb_paths.find(domain.path);
+  if (I == src_bb_paths.end())
+    return;
+
+  for (auto *src_bb : I->second) {
+    bool all_paths_ok = true;
+    for (auto &[_, src_data] : src_state->predecessor_data.at(src_bb)) {
+      auto I = ranges::find_if(tgt_data, [&](const auto &p) {
+        return is_eq(p.second.path <=> src_data.path);
+      });
+      if (I == tgt_data.end() ||
+          !I->second.analysis.ranges_fn_calls.isLargerThanInclReads(
+            src_data.analysis.ranges_fn_calls)) {
+        all_paths_ok = false;
+        break;
+      }
+    }
+    if (all_paths_ok)
+      copyUBFrom(*src_bb);
+  }
+}
+
 bool State::startBB(const BasicBlock &bb) {
   assert(undef_vars.empty());
   ENSURE(seen_bbs.emplace(&bb).second);
   current_bb = &bb;
 
-  if (&f.getFirstBB() == &bb)
+  if (&f.getFirstBB() == &bb) {
+    if (src_state) {
+      copyUBFromBB({});
+      copyUBFrom(src_state->f.getFirstBB());
+    }
     return true;
+  }
 
   auto I = predecessor_data.find(&bb);
   if (I == predecessor_data.end())
@@ -736,9 +762,11 @@ bool State::startBB(const BasicBlock &bb) {
     throw_oom_exception();
 
   DisjointExpr<Memory> in_memory;
-  DisjointExpr<expr> UB;
+  DisjointExpr<AndExpr> UB;
   DisjointExpr<VarArgsData> var_args_in;
   OrExpr path;
+
+  domain.UB = AndExpr();
 
   bool isFirst = true;
   for (auto &[src, data] : I->second) {
@@ -753,25 +781,29 @@ bool State::startBB(const BasicBlock &bb) {
     data.undef_vars.clear();
 
     if (isFirst)
-      analysis = std::move(data.analysis);
-    else {
+      analysis = data.analysis;
+    else
       analysis.meet_with(data.analysis);
-      data.analysis = {};
-    }
+
+    if (isSource())
+      data.analysis.clear_smt();
     isFirst = false;
   }
   assert(!isFirst);
 
-  domain.path    = std::move(path)();
-  domain.UB      = *std::move(UB)();
-  memory         = *std::move(in_memory)();
-  var_args_data  = *std::move(var_args_in)();
+  domain.UB.add(std::move(UB).factor());
+  domain.path   = std::move(path)();
+  memory        = *std::move(in_memory)();
+  var_args_data = *std::move(var_args_in)();
+
+  if (src_state)
+    copyUBFromBB(I->second);
 
   return domain;
 }
 
 void State::addJump(expr &&cond, const BasicBlock &dst0, bool always_jump) {
-  always_jump |= cond.isTrue();
+  always_jump = always_jump || cond.isTrue();
 
   cond &= domain.path;
   if (cond.isFalse() || !domain)
@@ -792,13 +824,13 @@ void State::addJump(expr &&cond, const BasicBlock &dst0, bool always_jump) {
     data.analysis = analysis;
     data.var_args = var_args_data;
   }
-  data.UB.add(domain.UB(), cond);
+  data.UB.add(domain.UB, cond);
   data.path.add(std::move(cond));
   data.undef_vars.insert(undef_vars.begin(), undef_vars.end());
   data.undef_vars.insert(domain.undef_vars.begin(), domain.undef_vars.end());
 
   if (always_jump)
-    addUB(expr(false));
+    domain.path = false;
 }
 
 void State::addJump(const BasicBlock &dst) {
@@ -821,7 +853,7 @@ void State::addReturn(StateValue &&val) {
   return_undef_vars.insert(undef_vars.begin(), undef_vars.end());
   return_undef_vars.insert(domain.undef_vars.begin(), domain.undef_vars.end());
   undef_vars.clear();
-  addUB(expr(false));
+  domain.path = false;
 }
 
 void State::addAxiom(AndExpr &&ands) {
@@ -1030,10 +1062,9 @@ State::addFnCall(const string &name, vector<StateValue> &&inputs,
 
   assert(!noret || !willret);
 
-  bool all_valid = std::all_of(inputs.begin(), inputs.end(),
-                                [](auto &v) { return v.isValid(); }) &&
-                   std::all_of(ptr_inputs.begin(), ptr_inputs.end(),
-                                [](auto &v) { return v.val.isValid(); });
+  bool all_valid
+    = ranges::all_of(inputs, [](auto &v) { return v.isValid(); }) &&
+      ranges::all_of(ptr_inputs, [](auto &v) { return v.val.isValid(); });
 
   if (!all_valid) {
     addUB(expr());
@@ -1099,13 +1130,15 @@ State::addFnCall(const string &name, vector<StateValue> &&inputs,
       = inaccessiblemem_bids.try_emplace(name, inaccessiblemem_bids.size())
                             .first->second;
 
-  State::ValueAnalysis::FnCallRanges call_ranges;
+  ValueAnalysis::FnCallRanges call_ranges;
   if (!memaccess.canRead(MemoryAccess::Inaccessible).isFalse() ||
       !memaccess.canRead(MemoryAccess::Errno).isFalse() ||
       !memaccess.canRead(MemoryAccess::Other).isFalse())
     call_ranges = memaccess.canOnlyRead(MemoryAccess::Inaccessible).isTrue()
                     ? analysis.ranges_fn_calls.project(name)
                     : analysis.ranges_fn_calls;
+
+  call_ranges.keep_only_writes();
 
   if (ret_arg_ty && (*ret_arg_ty == out_type).isFalse()) {
     ret_arg = out_type.fromInt(ret_arg_ty->toInt(*this, std::move(ret_arg)));
@@ -1343,6 +1376,18 @@ void State::finishInitializer() {
   }
 }
 
+bool State::isImplied(const expr &e, const expr &e_domain) {
+  if (domain.UB.contains(e))
+    return true;
+
+  if (check_expr((e_domain && domain()).notImplies(e), "UB inference", true)
+        .isUnsat()) {
+    domain.UB.add(e_domain.implies(e));
+    return true;
+  }
+  return false;
+}
+
 expr State::sinkDomain(bool include_ub) const {
   auto I = predecessor_data.find(&f.getSinkBB());
   if (I == predecessor_data.end())
@@ -1350,7 +1395,7 @@ expr State::sinkDomain(bool include_ub) const {
 
   OrExpr ret;
   for (auto &[src, data] : I->second) {
-    ret.add(data.path() && (include_ub ? *data.UB() : true));
+    ret.add(data.path() && (include_ub ? data.UB.factor()() : true));
   }
   return ret();
 }
@@ -1363,8 +1408,7 @@ const StateValue& State::returnValCached() {
 
 Memory& State::returnMemory() {
   if (auto *m = get_if<DisjointExpr<Memory>>(&return_memory)) {
-    auto val = std::move(*m)();
-    return_memory = val ? *std::move(val) : memory.dup();
+    return_memory = *std::move(*m)();
   }
   return get<Memory>(return_memory);
 }
@@ -1376,7 +1420,7 @@ expr State::getJumpCond(const BasicBlock &src, const BasicBlock &dst) const {
 
   auto J = I->second.find(&src);
   return J == I->second.end() ? expr(false)
-                              : J->second.path() && *J->second.UB();
+                              : J->second.path() && J->second.UB.factor()();
 }
 
 void State::addGlobalVarBid(const string &glbvar, unsigned bid) {
@@ -1419,6 +1463,15 @@ void State::syncSEdataWithSrc(State &src) {
   fn_call_data = std::move(src.fn_call_data);
   inaccessiblemem_bids = std::move(src.inaccessiblemem_bids);
   memory.syncWithSrc(src.returnMemory());
+
+  src_state = &src;
+  for (auto &[bb, srcs] : src.predecessor_data) {
+    OrExpr path;
+    for (auto &[src, data] : srcs) {
+      path.add(data.path);
+    }
+    src_bb_paths[std::move(path)()].emplace_back(bb);
+  }
 }
 
 void State::mkAxioms(State &tgt) {
@@ -1437,6 +1490,15 @@ void State::mkAxioms(State &tgt) {
       }
     }
   }
+}
+
+void State::cleanup() {
+  src_bb_paths.clear();
+  undef_vars.clear();
+  fn_call_data.clear();
+  domain = {};
+  analysis = {};
+  var_args_data = {};
 }
 
 }

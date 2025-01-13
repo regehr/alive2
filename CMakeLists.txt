@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.20)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -22,7 +22,7 @@ if (MSVC)
   set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "/O2 /Oi /Zi ${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
   set(CMAKE_EXE_LINKER_FLAGS         "/LTCG:INCREMENTAL ${CMAKE_EXE_LINKER_FLAGS}")
 else()
-  set(CMAKE_CXX_FLAGS                "-Wall -Werror -Wno-error=mismatched-new-delete -Wno-mismatched-new-delete -fPIC -fstrict-enums ${CMAKE_CXX_FLAGS}")
+  set(CMAKE_CXX_FLAGS                "-Wall -Wno-error=mismatched-new-delete -Wno-mismatched-new-delete -fPIC -fstrict-enums ${CMAKE_CXX_FLAGS}")
   set(CMAKE_CXX_FLAGS_DEBUG          "-g -O0 -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-sanitize=vptr ${CMAKE_CXX_FLAGS_DEBUG}")
   set(CMAKE_CXX_FLAGS_RELEASE        "-O3 ${CMAKE_CXX_FLAGS_RELEASE}")
   set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELEASE} -g ${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
@@ -210,7 +210,6 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
   add_library(backend_tv STATIC ${BACKEND_TV_SRCS})
   set(ALIVE_LIBS_LLVM llvm_util backend_tv ${ALIVE_LIBS})
   set(ALIVE_EXEC_LIBS_LLVM llvm_util backend_tv ${ALIVE_EXEC_LIBS})
-  target_link_libraries(backend_tv PUBLIC bridge)
 
   set(LLVM_LINK_COMPONENTS ${LLVM_LINK_COMPONENTS} TargetParser)
 
@@ -232,8 +231,6 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
     "tools/alive-exec.cpp"
   )
   target_compile_options(alive-exec PRIVATE -fexceptions)
-
-  add_subdirectory(backend_tv/aslp)
 
 else()
   set(LLVM_UTIL_SRCS "")
@@ -279,6 +276,10 @@ install(TARGETS alive alive-jobserver)
 
 if (BUILD_LLVM_UTILS OR BUILD_TV)
   llvm_map_components_to_libnames(llvm_libs support core irreader bitwriter analysis passes transformutils ipo asmparser asmprinter target mc mcparser mcdisassembler aarch64asmparser aarch64codegen aarch64desc aarch64disassembler aarch64info aarch64utils)
+
+  add_subdirectory(backend_tv/aslp)
+  target_link_libraries(backend_tv PUBLIC bridge)
+
   #target_link_libraries(alive2 PRIVATE ${llvm_libs})
   target_link_libraries(alive-tv PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
   target_link_libraries(backend-tv PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})

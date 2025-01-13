@@ -20,6 +20,8 @@ typedef struct _Z3_sort* Z3_sort;
 
 namespace smt {
 
+class AndExpr;
+
 class expr {
   uintptr_t ptr = 0;
 
@@ -113,6 +115,7 @@ public:
 
   bool isConst() const;
   bool isVar() const;
+  bool isQVar() const;
   bool isBV() const;
   bool isBool() const;
   bool isFloat() const;
@@ -288,6 +291,7 @@ public:
   void operator&=(const expr &rhs);
   void operator|=(const expr &rhs);
 
+  static expr mk_and(const std::vector<expr> &vals);
   static expr mk_and(const std::set<expr> &vals);
   static expr mk_or(const std::set<expr> &vals);
 
@@ -363,10 +367,14 @@ public:
 
   // replace v1 -> v2
   expr subst(const std::vector<std::pair<expr, expr>> &repls) const;
+  expr subst_simplify(const std::vector<std::pair<expr, expr>> &repls) const;
   expr subst(const expr &from, const expr &to) const;
 
   // replace the 1st quantified variable
   expr subst_var(const expr &repl) const;
+
+  // turn all expressions in 'constraints' into true
+  expr propagate(const AndExpr &constraints) const;
 
   std::set<expr> vars() const;
   static std::set<expr> vars(const std::vector<const expr*> &exprs);
@@ -378,8 +386,10 @@ public:
   void printUnsigned(std::ostream &os) const;
   void printSigned(std::ostream &os) const;
   void printHexadecimal(std::ostream &os) const;
-  std::string numeral_string() const;
-  std::string fn_name() const; // empty if not a function
+  // WARNING: these are temporary strings; don't store them
+  std::string_view numeral_string() const;
+  std::string_view fn_name() const; // empty if not a function
+
   unsigned getFnNumArgs() const;
   expr getFnArg(unsigned i) const;
   friend std::ostream &operator<<(std::ostream &os, const expr &e);

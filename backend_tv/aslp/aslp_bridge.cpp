@@ -52,7 +52,8 @@ aslp_connection make_conn() {
     extra_params.insert({"flags", "+dis:vectors"});
   }
   auto conn = aslp_connection{config.server_addr, static_cast<int>(config.server_port), extra_params};
-  conn.wait_active();
+  if (config.enable)
+    conn.wait_active();
   return conn;
 }
 

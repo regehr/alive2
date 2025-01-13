@@ -359,9 +359,11 @@ public:
       // @llvm.assert, as it is @llvm.assume
       if (fn_decl->getName() == "llvm.assert") {
         auto &ctx = i.getContext();
-        assert(fn->getFunctionType() ==
-               llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
-                                       { llvm::Type::getInt1Ty(ctx) }, false));
+        auto expected_ty
+          = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
+                                    { llvm::Type::getInt1Ty(ctx) }, false);
+        if (!fn || fn->getFunctionType() != expected_ty)
+          return error(i);
         return make_unique<Assume>(*args.at(0), Assume::AndNonPoison);
       }
 
@@ -1395,9 +1397,11 @@ public:
         Value *last_value = nullptr;
 
         for (auto &Op : Node->operands()) {
-          auto *callee =
-            get_operand(llvm::mdconst::dyn_extract_or_null<llvm::Function>(Op));
+          auto fn = llvm::mdconst::dyn_extract_or_null<llvm::Function>(Op);
+          if (!fn)
+            continue;
 
+          auto *callee = get_operand(fn);
           if (!callee) {
             *out << "ERROR: Unsupported !callee metadata\n";
             return false;
@@ -2011,7 +2015,7 @@ public:
       const char *chrs = name.data();
       char *end_ptr;
       auto numeric_id = strtoul(chrs, &end_ptr, 10);
-      if (end_ptr != chrs + name.size())
+      if (end_ptr != name.end())
         return M->getGlobalVariable(name, true);
       else {
         auto itr = M->global_begin(), end = M->global_end();
@@ -2031,27 +2035,11 @@ public:
     BB = &Fn.getBB("#init", true);
     insert_constexpr_before = nullptr;
 
-    // Ensure all src globals exist in target as well
-    for (auto *gv : gvsInSrc) {
-      if (Fn.getGlobalVar(gv->getName())) {
-        // do nothing
-      } else {
-        // import from src
-        // FIXME: this is wrong for IPO
-        Fn.addConstant(make_unique<GlobalVariable>(*gv));
-      }
-    }
-
     map<string, unique_ptr<Store>> stores;
-    // Converting initializer may add new global variables to Fn
-    // (Fn.numConstants() increases in that case)
-    for (unsigned i = 0; i != Fn.numConstants(); ++i) {
-      auto GV = dynamic_cast<GlobalVariable *>(&Fn.getConstant(i));
-      if (!GV)
-        continue;
+    auto gen_initializer = [&](GlobalVariable *GV) {
       auto gv = getGlobalVariable(string_view(GV->getName()).substr(1));
       if (!gv || !gv->isConstant() || !gv->hasDefinitiveInitializer())
-        continue;
+        return true;
 
       auto storedval = get_operand(gv->getInitializer());
       if (!storedval) {
@@ -2063,11 +2051,37 @@ public:
           *out << "[too large]\n";
         else
           *out << str << '\n';
-        return {};
+        return false;
       }
 
       stores.emplace(GV->getName(),
                      make_unique<Store>(*GV, *storedval, GV->getAlignment()));
+      return true;
+    };
+
+    // Ensure all src globals exist in target as well
+    for (auto *gv : gvsInSrc) {
+      auto name = string_view(gv->getName()).substr(1);
+      if (Fn.getGlobalVar(gv->getName())) {
+        // ok
+      } else if (auto *tgt_gv = getGlobalVariable(name)) {
+        if (!get_operand(tgt_gv))
+          return {};
+      } else {
+        // import from src
+        // FIXME: this is wrong for IPO
+        auto new_var = make_unique<GlobalVariable>(*gv);
+        gen_initializer(new_var.get());
+        Fn.addConstant(std::move(new_var));
+      }
+    }
+
+    // Converting initializer may add new global variables to Fn
+    // (Fn.numConstants() increases in that case)
+    for (unsigned i = 0; i != Fn.numConstants(); ++i) {
+      auto GV = dynamic_cast<GlobalVariable *>(&Fn.getConstant(i));
+      if (GV && !gen_initializer(GV))
+        return {};
     }
 
     for (auto &itm : stores)

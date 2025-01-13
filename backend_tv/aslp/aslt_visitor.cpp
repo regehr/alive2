@@ -95,8 +95,8 @@ llvm::Value* safe_sdiv(aslt_visitor& vis, llvm::Value* numerator, llvm::Value* d
 
   auto int_min = llvm::ConstantInt::get(numty, llvm::APInt::getSignedMinValue(elemwd));
   auto minus_one = llvm::ConstantInt::get(numty, --llvm::APInt::getZero(elemwd));
-  auto zero = llvm::ConstantInt::get(numty, llvm::APInt::getZero(elemwd));
   auto one = llvm::ConstantInt::get(numty, ++llvm::APInt::getZero(elemwd));
+  // auto zero = llvm::ConstantInt::get(numty, llvm::APInt::getZero(elemwd));
 
   auto overflowing = iface.createAnd(
     iface.createICmp(llvm::ICmpInst::ICMP_EQ, numerator, int_min),
@@ -108,7 +108,7 @@ llvm::Value* safe_sdiv(aslt_visitor& vis, llvm::Value* numerator, llvm::Value* d
   // auto divbyzero = iface.createICmp(llvm::ICmpInst::ICMP_EQ, denominator, zero);
   auto oldbb = iface.get_bb();
 
-  auto result = iface.createAlloca(numty, iface.getIntConst(1, 64), iface.nextName() + "_sdiv_result");
+  auto result = iface.createAlloca(numty, iface.getUnsignedIntConst(1, 64), iface.nextName() + "_sdiv_result");
 
   auto safe_stmt = vis.new_stmt("sdiv_is_safe");
   auto overflow_stmt = vis.new_stmt("sdiv_is_overflow");
@@ -138,12 +138,12 @@ llvm::Value* safe_sdiv(aslt_visitor& vis, llvm::Value* numerator, llvm::Value* d
 
 std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instruction* before) {
   lexpr_t base = nullptr;
-  expr_t offset = iface.getIntConst(0, x->getType()->getIntegerBitWidth());
+  expr_t offset = iface.getUnsignedIntConst(0, x->getType()->getIntegerBitWidth());
 
   // experimenting: this code does not convert via GEP and assumes dereferenceable.
   // x = new llvm::IntToPtrInst(x, llvm::PointerType::get(context, 0), "", iface.get_bb());
   // llvm::cast<llvm::IntToPtrInst>(x)->setMetadata("dereferenceable", 
-  //     llvm::MDNode::get(context, {(llvm::ConstantAsMetadata::get(iface.getIntConst(99, 64)))}));
+  //     llvm::MDNode::get(context, {(llvm::ConstantAsMetadata::get(iface.getUnsignedIntConst(99, 64)))}));
   // x->dump();
   // return {x, offset};
 
@@ -160,7 +160,7 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instructi
   } else if (auto load = llvm::dyn_cast<llvm::LoadInst>(x); load) {
     auto wd = load->getType()->getIntegerBitWidth();
     base = ref_expr(load);
-    offset = iface.getIntConst(0, wd);
+    offset = iface.getUnsignedIntConst(0, wd);
   }
 
   require(base && offset, "unable to coerce to pointer", x);
@@ -305,7 +305,7 @@ std::any aslt_visitor::visitAssert(SemanticsParser::AssertContext *ctx) {
 
 std::any aslt_visitor::visitThrow(aslt::SemanticsParser::ThrowContext *ctx) {
   auto s = new_stmt("throw");
-  iface.assertTrue(iface.getIntConst(0, 1));
+  iface.assertTrue(iface.getUnsignedIntConst(0, 1));
   return s;
 }
 
@@ -403,7 +403,7 @@ std::any aslt_visitor::visitLoopStmt(SemanticsParser::LoopStmtContext *ctx) {
 
   /* Increment/Decrement counter */
   auto v2 = iface.createLoad(ty, v);
-  auto rhs2 = inc ? iface.createAdd(v2, iface.getIntConst(1, width)) : iface.createSub(v2, iface.getIntConst(1, width));
+  auto rhs2 = inc ? iface.createAdd(v2, iface.getUnsignedIntConst(1, width)) : iface.createSub(v2, iface.getUnsignedIntConst(1, width));
   iface.createStore(rhs2, v);
 
   /* Test stop, branching to exit or back to body entry */
@@ -510,10 +510,10 @@ std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
   else if (name == "SP_EL0")
     var = iface.get_reg(reg_t::X, 31);
   else if (name == "TRUE" || name == "FALSE")
-    return static_cast<expr_t>(iface.getIntConst(name == "TRUE", 1));
+    return static_cast<expr_t>(iface.getUnsignedIntConst(name == "TRUE", 1));
   else if (name == "FPSR")
     // XXX following classic lifter's ignoring of FPSR
-    return static_cast<expr_t>(iface.getIntConst(0, 64));
+    return static_cast<expr_t>(iface.getUnsignedIntConst(0, 64));
   else if (name == "FPCR")
     // XXX do not support FPCR-dependent behaviour
     return static_cast<expr_t>(llvm::UndefValue::get(iface.getIntTy(32)));
@@ -627,7 +627,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto finalty = iface.getIntTy(upperwd + lowerwd);
 
       upper = iface.createZExt(upper, finalty);
-      upper = iface.createRawShl(upper, iface.getIntConst(lowerwd, upperwd + lowerwd));
+      upper = iface.createRawShl(upper, iface.getUnsignedIntConst(lowerwd, upperwd + lowerwd));
 
       lower = iface.createZExt(lower, finalty);
 
@@ -898,7 +898,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto a = args[0], fpcr = args[1], fprounding = args[2], exact = args[3];
       (void)fpcr;
 
-      iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, exact, iface.getIntConst(0, 1)));
+      iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, exact, iface.getUnsignedIntConst(0, 1)));
 
       a = coerce(a, iface.getFPType(a->getType()->getIntegerBitWidth()));
 
@@ -1029,7 +1029,7 @@ std::any aslt_visitor::visitExprLitInt(SemanticsParser::ExprLitIntContext *ctx) 
   log() << "visitExprLitInt >" << ctx->getText() << "<\n";
   // XXX: it is an error for LitInt to appear outside of types.
   auto node = integer(ctx->integer());
-  return static_cast<expr_t>(iface.getIntConst(node, 100));
+  return static_cast<expr_t>(iface.getUnsignedIntConst(node, 100));
 }
 
 // std::any aslt_visitor::visitExprLitHex(SemanticsParser::ExprLitHexContext *ctx) {

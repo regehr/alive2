@@ -1,64 +1,14 @@
-// include first to avoid ambiguity for comparison operator from
-// util/spaceship.h
-#include "llvm/MC/MCAsmInfo.h"
-
 #include "backend_tv/lifter.h"
-#include "util/sort.h"
 
-#include "llvm/ADT/BitVector.h"
-#include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/StringExtras.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/AsmParser/Parser.h"
-#include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/IRReader/IRReader.h"
-#include "llvm/InitializePasses.h"
-#include "llvm/MC/MCContext.h"
-#include "llvm/MC/MCExpr.h"
-#include "llvm/MC/MCInstBuilder.h"
-#include "llvm/MC/MCInstPrinter.h"
-#include "llvm/MC/MCInstrAnalysis.h"
-#include "llvm/MC/MCInstrInfo.h"
-#include "llvm/MC/MCParser/MCAsmParser.h"
-#include "llvm/MC/MCParser/MCTargetAsmParser.h"
-#include "llvm/MC/MCRegisterInfo.h"
-#include "llvm/MC/MCStreamer.h"
-#include "llvm/MC/MCSubtargetInfo.h"
-#include "llvm/MC/MCSymbol.h"
-#include "llvm/MC/MCTargetOptions.h"
-#include "llvm/MC/MCTargetOptionsCommandFlags.h"
-#include "llvm/MC/TargetRegistry.h"
-#include "llvm/Pass.h"
-#include "llvm/Passes/PassBuilder.h"
-#include "llvm/Support/MathExtras.h"
-#include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/PrettyStackTrace.h"
-#include "llvm/Support/Signals.h"
-#include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/TargetSelect.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/Target/TargetMachine.h"
-#include "llvm/Target/TargetOptions.h"
-#include "llvm/TargetParser/Triple.h"
-#include "llvm/Transforms/Utils/Cloning.h"
 
-#include <algorithm>
-#include <fstream>
 #include <iostream>
-#include <ranges>
-#include <set>
-#include <sstream>
-#include <unordered_map>
-#include <utility>
-#include <vector>
 
 using namespace std;
 using namespace llvm;
@@ -136,6 +86,12 @@ void checkSupportHelper(Instruction &i, const DataLayout &DL,
     }
   }
   if (auto *ci = dyn_cast<CallInst>(&i)) {
+
+    // non-null as a callsite attribute is problematic for us and we
+    // don't think it happens much, just get rid of it
+    ci->removeRetAttr(Attribute::NonNull);
+    ci->removeRetAttr(Attribute::NoAlias);
+
     if (auto callee = ci->getCalledFunction()) {
       checkCallingConv(callee);
 
@@ -151,9 +107,17 @@ void checkSupportHelper(Instruction &i, const DataLayout &DL,
           avoidArgMD(ci, "round.tonearestaway");
         }
       } else {
-        for (auto arg = callee->arg_begin(); arg != callee->arg_end(); ++arg)
+        for (auto arg = callee->arg_begin(); arg != callee->arg_end(); ++arg) {
+
           if (auto *vTy = dyn_cast<VectorType>(arg->getType()))
             checkVectorTy(vTy);
+
+          if (arg->hasByValAttr()) {
+            *out << "\nERROR: we don't support the byval parameter attribute "
+                    "yet\n\n";
+            exit(-1);
+          }
+        }
       }
 
       if (callee->isVarArg()) {
@@ -473,6 +437,48 @@ Function *adjustSrc(Function *srcFn) {
 
   srcFn->eraseFromParent();
   return NF;
+}
+
+void fixupOptimizedTgt(llvm::Function *tgt) {
+  /*
+   * these attributes can be soundly removed, and a good thing too
+   * since they cause spurious TV failures in ASM memory mode
+   */
+  for (auto arg = tgt->arg_begin(); arg != tgt->arg_end(); ++arg) {
+    arg->removeAttr(llvm::Attribute::NoCapture);
+    arg->removeAttr(llvm::Attribute::ReadNone);
+    arg->removeAttr(llvm::Attribute::ReadOnly);
+    arg->removeAttr(llvm::Attribute::WriteOnly);
+  }
+
+  /*
+   * when we originally generated the target function, we allocated
+   * its stack memory using a custom allocation function; this is to
+   * keep LLVM from making unwarranted assumptions about that memory
+   * and optimizing it in undesirable ways. however, Alive doesn't
+   * want to see the custom allocator. so, here, before passing target
+   * to Alive, we replace it with a regular old alloc
+   */
+  Instruction *myAllocCall{nullptr};
+  for (auto &bb : *tgt) {
+    for (auto &i : bb) {
+      if (auto *ci = dyn_cast<CallInst>(&i)) {
+        if (auto callee = ci->getCalledFunction()) {
+          if (callee == myAlloc) {
+            IRBuilder<> B(&i);
+            auto *i8Ty = Type::getInt8Ty(ci->getContext());
+            auto *alloca = B.CreateAlloca(i8Ty, 0, stackSize, "stack");
+            alloca->setAlignment(Align(16));
+            i.replaceAllUsesWith(alloca);
+            assert(myAllocCall == nullptr);
+            myAllocCall = &i;
+          }
+        }
+      }
+    }
+  }
+  if (myAllocCall)
+    myAllocCall->eraseFromParent();
 }
 
 } // namespace lifter

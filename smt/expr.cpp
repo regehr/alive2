@@ -28,7 +28,7 @@ using namespace util;
 
 // helpers to check if all input arguments are non-null
 #define C(...)                                                                 \
-  if (!isValid() || !expr::allValid( __VA_ARGS__)) [[unlikely]]                \
+  if (!isValid() || !expr::allValid(__VA_ARGS__)) [[unlikely]]                 \
     return {}
 
 #define C2(...)                                                                \
@@ -385,6 +385,11 @@ bool expr::isVar() const {
   if (auto app = isApp())
     return !isConst() && Z3_get_app_num_args(ctx(), app) == 0;
   return false;
+}
+
+bool expr::isQVar() const {
+  C();
+  return Z3_get_ast_kind(ctx(), ast()) == Z3_VAR_AST;
 }
 
 bool expr::isBV() const {
@@ -975,13 +980,11 @@ static expr smul_fix_helper(const expr &a, const expr &b, const expr &c) {
 }
 
 expr expr::smul_fix(const expr &a, const expr &b, const expr &c) {
-  C2(a);
   expr r = smul_fix_helper(a, b, c);
   return r.trunc(a.bits());
 }
 
 expr expr::smul_fix_no_soverflow(const expr &a, const expr &b, const expr &c) {
-  C2(a);
   expr r = smul_fix_helper(a, b, c);
   auto width = a.bits();
   expr result = r.trunc(width);
@@ -989,7 +992,6 @@ expr expr::smul_fix_no_soverflow(const expr &a, const expr &b, const expr &c) {
 }
 
 expr expr::smul_fix_sat(const expr &a, const expr &b, const expr &c) {
-  C2(a);
   expr r = smul_fix_helper(a, b, c);
   auto width = a.bits();
   return mkIf(smul_fix_no_soverflow(a, b, c),
@@ -1006,13 +1008,11 @@ static expr umul_fix_helper(const expr &a, const expr &b, const expr &c) {
 }
 
 expr expr::umul_fix(const expr &a, const expr &b, const expr &c) {
-  C2(a);
   expr r = umul_fix_helper(a, b, c);
   return r.trunc(a.bits());
 }
 
 expr expr::umul_fix_no_uoverflow(const expr &a, const expr &b, const expr &c) {
-  C2(a);
   auto width = a.bits();
   return umul_fix_helper(a, b, c).extract(width * 2 - 1, width) == 0;
 }
@@ -1464,7 +1464,7 @@ expr expr::cmp_eq(const expr &rhs, bool simplify) const {
       return false;
     return rhs == *this;
   }
-  // constants on rhs from now.
+  // constants on rhs from now on.
 
   if (rhs.isTrue())
     return *this;
@@ -1649,6 +1649,14 @@ void expr::operator|=(const expr &rhs) {
   *this = *this || rhs;
 }
 
+expr expr::mk_and(const vector<expr> &vals) {
+  expr ret(true);
+  for (auto &e : vals) {
+    ret &= e;
+  }
+  return ret;
+}
+
 expr expr::mk_and(const set<expr> &vals) {
   expr ret(true);
   for (auto &e : vals) {
@@ -1744,8 +1752,7 @@ expr expr::sgt(const expr &rhs) const {
 }
 
 expr expr::ule(uint64_t rhs) const {
-  C();
-  return ule(mkUInt(rhs, sort()));
+  return ule(mkUInt(rhs, *this));
 }
 
 expr expr::ule_extend(uint64_t rhs) const {
@@ -1756,38 +1763,31 @@ expr expr::ule_extend(uint64_t rhs) const {
 }
 
 expr expr::ult(uint64_t rhs) const {
-  C();
-  return ult(mkUInt(rhs, sort()));
+  return ult(mkUInt(rhs, *this));
 }
 
 expr expr::uge(uint64_t rhs) const {
-  C();
-  return uge(mkUInt(rhs, sort()));
+  return uge(mkUInt(rhs, *this));
 }
 
 expr expr::ugt(uint64_t rhs) const {
-  C();
-  return ugt(mkUInt(rhs, sort()));
+  return ugt(mkUInt(rhs, *this));
 }
 
 expr expr::sle(int64_t rhs) const {
-  C();
-  return sle(mkInt(rhs, sort()));
+  return sle(mkInt(rhs, *this));
 }
 
 expr expr::sge(int64_t rhs) const {
-  C();
-  return sge(mkInt(rhs, sort()));
+  return sge(mkInt(rhs, *this));
 }
 
 expr expr::operator==(uint64_t rhs) const {
-  C();
-  return *this == mkUInt(rhs, sort());
+  return *this == mkUInt(rhs, *this);
 }
 
 expr expr::operator!=(uint64_t rhs) const {
-  C();
-  return *this != mkUInt(rhs, sort());
+  return *this != mkUInt(rhs, *this);
 }
 
 expr expr::sext(unsigned amount) const {
@@ -1890,10 +1890,8 @@ expr expr::extract(unsigned high, unsigned low, unsigned depth) const {
     expr a, b;
     if (isAShr(a, b)) {
       uint64_t shift;
-      if (b.isUInt(shift) && high + shift < a.bits()) {
-        assert(shift < a.bits());
+      if (b.isUInt(shift) && shift < a.bits() && high + shift < a.bits())
         return a.extract(high + shift, low + shift);
-      }
     }
   }
   {
@@ -2235,6 +2233,12 @@ expr expr::subst(const vector<pair<expr, expr>> &repls) const {
   return Z3_substitute(ctx(), ast(), repls.size(), from.get(), to.get());
 }
 
+expr expr::subst_simplify(const vector<pair<expr, expr>> &repls) const {
+  if (repls.empty())
+    return *this;
+  return subst(repls).simplify();
+}
+
 expr expr::subst(const expr &from, const expr &to) const {
   C(from, to);
   auto f = from();
@@ -2246,6 +2250,20 @@ expr expr::subst_var(const expr &repl) const {
   C(repl);
   auto r = repl();
   return Z3_substitute_vars(ctx(), ast(), 1, &r);
+}
+
+expr expr::propagate(const AndExpr &constraints) const {
+  C();
+  auto from = make_unique<Z3_ast[]>(constraints.exprs.size());
+  auto to   = make_unique<Z3_ast[]>(constraints.exprs.size());
+  expr true_expr(true);
+  unsigned i = 0;
+  for (auto &e : constraints.exprs) {
+    C2(e);
+    from[i] = e();
+    to[i++] = true_expr();
+  }
+  return Z3_substitute(ctx(), ast(), i, from.get(), to.get());
 }
 
 set<expr> expr::vars() const {
@@ -2385,12 +2403,12 @@ void expr::printHexadecimal(ostream &os) const {
   os << (rem == 0 ? *this : zext(4 - rem));
 }
 
-string expr::numeral_string() const {
+string_view expr::numeral_string() const {
   C();
   return Z3_get_numeral_decimal_string(ctx(), ast(), 12);
 }
 
-string expr::fn_name() const {
+string_view expr::fn_name() const {
   if (isApp())
     return Z3_get_symbol_string(ctx(), Z3_get_decl_name(ctx(), decl()));
   return {};
@@ -2420,10 +2438,12 @@ strong_ordering expr::operator<=>(const expr &rhs) const {
 }
 
 unsigned expr::id() const {
+  C();
   return Z3_get_ast_id(ctx(), ast());
 }
 
 unsigned expr::hash() const {
+  C();
   return Z3_get_ast_hash(ctx(), ast());
 }
 

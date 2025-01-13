@@ -101,6 +101,7 @@ Please contact us or submit a PR if something is missing or inaccurate.
 94. Reassociate: invalid propagation of overflow attributes at low bit-width (https://llvm.org/PR91417)
 95. InstCombine: removes a select, making the code more poisonous (https://llvm.org/PR91691)
 96. DSE removes store before free() incorrectly (https://llvm.org/PR97956)
+97. GlobalOpt breaks !callees metadata (https://llvm.org/PR121265)
 
 
 ### Bugs found in Z3
@@ -167,3 +168,4 @@ Please contact us or submit a PR if something is missing or inaccurate.
 36. miscompile of non-canonical IR by AArch64 global isel backend (https://github.com/llvm/llvm-project/issues/90532)
 37. miscompile related to coalescing stores in AArch64 SDAG backend (https://github.com/llvm/llvm-project/issues/90936)
 38. arithmetic miscompile from AArch64 backend (https://github.com/llvm/llvm-project/issues/96366)
+39. vector miscompile from AArch64 backend (https://github.com/llvm/llvm-project/issues/121372)

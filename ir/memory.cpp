@@ -535,7 +535,7 @@ static bool isFnReturnValue(const expr &e) {
 }
 
 int Memory::isInitialMemBlock(const expr &e, bool match_any_init) {
-  string name;
+  string_view name;
   expr load, blk, idx;
   unsigned hi, lo;
   if (e.isExtract(load, hi, lo) && load.isLoad(blk, idx))
@@ -938,7 +938,7 @@ bool Memory::mayalias(bool local, unsigned bid0, const expr &offset0,
     if ( write && always_nowrite(bid0)) return false;
   }
 
-  if (isUndef(offset0))
+  if (state->isUndef(offset0))
     return false;
 
   expr bid = expr::mkUInt(bid0, Pointer::bitsShortBid());
@@ -991,6 +991,16 @@ bool Memory::mayalias(bool local, unsigned bid0, const expr &offset0,
   return true;
 }
 
+static bool isDerivedFromLoad(const expr &e) {
+  expr val, val2, _;
+  unsigned h, l;
+  if (e.isExtract(val, h, l))
+    return isDerivedFromLoad(val);
+  if (e.isIf(_, val, val2))
+    return isDerivedFromLoad(val) && isDerivedFromLoad(val2);
+  return e.isLoad(_, _);
+}
+
 Memory::AliasSet Memory::computeAliasing(const Pointer &ptr, const expr &bytes,
                                          uint64_t align, bool write) const {
   AliasSet aliasing(*this);
@@ -1017,7 +1027,8 @@ Memory::AliasSet Memory::computeAliasing(const Pointer &ptr, const expr &bytes,
     auto shortbid = p.getShortBid();
     expr offset   = p.getOffset();
     uint64_t bid;
-    if (shortbid.isUInt(bid) && (!isAsmMode() || p.isInbounds(true).isTrue())) {
+    if (shortbid.isUInt(bid) &&
+        (!isAsmMode() || state->isImplied(p.isInbounds(true), true))) {
       if (!is_local.isFalse() && bid < sz_local)
         check_alias(this_alias, true, bid, offset);
       if (!is_local.isTrue() && bid < sz_nonlocal)
@@ -1026,10 +1037,11 @@ Memory::AliasSet Memory::computeAliasing(const Pointer &ptr, const expr &bytes,
     }
 
     {
-    bool is_init_memory = isInitialMemoryOrLoad(shortbid, false);
-    bool is_from_fn     = !is_init_memory &&
-                          (isInitialMemoryOrLoad(shortbid, true) ||
-                           isFnReturnValue(shortbid));
+    bool is_init_memory     = isInitialMemoryOrLoad(shortbid, false);
+    bool is_from_fn_or_load = !is_init_memory &&
+                              (isInitialMemoryOrLoad(shortbid, true) ||
+                               isFnReturnValue(shortbid) ||
+                               isDerivedFromLoad(shortbid));
 
     for (auto local : { true, false }) {
       if ((local && is_local.isFalse()) || (!local && is_local.isTrue()))
@@ -1038,8 +1050,10 @@ Memory::AliasSet Memory::computeAliasing(const Pointer &ptr, const expr &bytes,
         // initial memory doesn't have local ptrs stored
         if (local && is_init_memory)
           continue;
-        // functions can only return escaped ptrs
-        if (local && is_from_fn && !escaped_local_blks.mayAlias(true, i))
+        // functions and memory loads can only return escaped ptrs
+        if (local &&
+            is_from_fn_or_load &&
+            !escaped_local_blks.mayAlias(true, i))
           continue;
         check_alias(this_alias, local, i, offset);
       }
@@ -1176,6 +1190,9 @@ vector<Byte> Memory::load(const Pointer &ptr, unsigned bytes, set<expr> &undef,
 
 Memory::DataType Memory::data_type(const vector<pair<unsigned, expr>> &data,
                                    bool full_store) const {
+  if (isAsmMode())
+    return DATA_ANY;
+
   unsigned ty = DATA_NONE;
   unsigned num_int_zeros = 0;
   for (auto &[idx, val] : data) {
@@ -2561,7 +2578,7 @@ expr Memory::ptr2int(const expr &ptr) {
 }
 
 expr Memory::int2ptr(const expr &val) {
-  assert(!memory_unused() && observesAddresses());
+  assert(!memory_unused() && has_int2ptr && observesAddresses());
   nextNonlocalBid();
   return
     Pointer::mkPhysical(*this, val.zextOrTrunc(bits_ptr_address)).release();
@@ -2827,6 +2844,16 @@ void Memory::escape_helper(const expr &ptr, AliasSet &set1, AliasSet *set2) {
       set1.isFullUpToAlias(true) == (int)next_local_bid-1)
     return;
 
+  // If we have a physical pointer, only observed addresses can escape
+  if (has_int2ptr) {
+    Pointer p(*this, ptr);
+    if (p.isLogical().isFalse()) {
+      if (set2)
+        set1.unionWith(*set2);
+      return;
+    }
+  }
+
   uint64_t bid;
   for (const auto &bid_expr : extract_possible_local_bids(*this, ptr)) {
     if (bid_expr.isUInt(bid)) {
@@ -2840,9 +2867,7 @@ void Memory::escape_helper(const expr &ptr, AliasSet &set1, AliasSet *set2) {
     } else if (isFnReturnValue(bid_expr)) {
       // Function calls have already escaped whatever they needed to.
     } else {
-      expr val, arr, idx;
-      unsigned h, l;
-      if (bid_expr.isExtract(val, h, l) && val.isLoad(arr, idx)) {
+      if (isDerivedFromLoad(bid_expr)) {
         // if this a load, it can't escape anything that hasn't escaped before
         continue;
       }

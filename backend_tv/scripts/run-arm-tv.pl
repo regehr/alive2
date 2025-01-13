@@ -1,87 +1,57 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 
+use warnings;
 use strict;
-use File::Basename;
+use File::Temp;
 use Sys::CPU;
 use BSD::Resource;
+use File::Basename;
 
-# TODO
-#
-# - the internalize flag is super useful for debugging, but
-#   it should be removed once things are working well
-#
-# - SPEC modules tend to be big, would be very nice to automatically
-#   run llvm-reduce on some categories of problems
+my $CPU_LIMIT = 1 * 60;
+my $VMEM_LIMIT = 10 * 1000 * 1000 * 1000;
 
-my $TIMEOUT = $ENV{"TIMEOUT"} || 60;
-
-my $GIG = 1000 * 1000 * 1000;
-my $MAXKB = 2 * $GIG;
-my $ret = setrlimit(RLIMIT_RSS, $MAXKB, $MAXKB);
-die unless $ret;
-# RLIMIT_VMEM prevents asan from functioning
-
-my $NPROCS = ($ENV{"NPROCS"} || ( Sys::CPU::cpu_count() - 1)) + 0;
+my $NPROCS = Sys::CPU::cpu_count();
 print "using $NPROCS cores\n";
 
-my $LLVMDIS = $ENV{"LLVMDIS"} || $ENV{"HOME"}."/progs/llvm-regehr/llvm/build/bin/llvm-dis";
-my $ARMTV = $ENV{"BACKENDTV"} || $ENV{"HOME"}."/progs/alive2-regehr/build/backend-tv";
-my $TIMEOUTBIN = $ENV{"TIMEOUTBIN"} || "/usr/bin/timeout";
+my $LOGDIR = "logs";
+mkdir($LOGDIR);
 
-my @funcs = ();
-my $skipped = 0;
+my $ARMTV = "/home/regehr/alive2-regehr/build/backend-tv";
 
-sub scan_file($) {
-    (my $file) = @_;
-#     print ".";
-    my $num = 0;
+my $ISEL = "";
+# my $ISEL = "-global-isel -global-isel-abort=0";
 
-    my $llfile = $file;
-    $llfile =~ s/[.]bc$/.ll/;
-    my $INF;
+my $XTRA = "";
 
-    # simply read .ll file if it exists next to the .bc file
-    if ($file =~ /[.]ll$/) {
-        open $INF, "<$file" or die "failed to read .ll file";
-    } elsif (-e $llfile) {
-        return; # this is a bc file with a correponsing ll file. assume ll file was found by glob.
-    } else {
-        open $INF, "$LLVMDIS $file -o - |" or die "failed to llvm-dis";
-    }
+sub runit ($) {
+    (my $cmd) = @_;
+    system "$cmd";
+    return $? >> 8;
+}
+
+my $count = 0;
+
+sub check($) {
+    (my $fn) = @_;
+    (my $fh, my $tmpfn) = File::Temp::tempfile();
+    runit("${ARMTV} $ISEL $XTRA --smt-to=10000000 $fn > $tmpfn 2>&1");
+    open my $INF, "<$tmpfn" or die;
+    my $data = "";
     while (my $line = <$INF>) {
-        chomp($line);
-        next unless $line =~ /^define /;
-        if (!($line =~ /@([a-zA-Z0-9\_\.]+)\(/)) {
-            ++$skipped;
-            next;
-        }
-        my $func = $1;
-        my @l = ($file, $func, $num++);
-        push @funcs, \@l;
+        $data .= $line;
     }
     close $INF;
+    unlink($tmpfn);
+    return $data;
 }
 
-sub shuffle ($) {
-    my $array = shift;
-    my $i;
-    for ($i = @$array; --$i; ) {
-        my $j = int rand ($i+1);
-        next if $i == $j;
-        @$array[$i,$j] = @$array[$j,$i];
-    }
-}
-
-# https://stackoverflow.com/a/19932810
-sub difftime2string ($) {
-  my ($x) = @_;
-  ($x < 0) and return "-" . difftime2string(-$x);
-  ($x < 1) and return sprintf("%.2fms",$x*1000);
-  ($x < 100) and return sprintf("%.2fsec",$x);
-  ($x < 6000) and return sprintf("%.2fmin",$x/60);
-  ($x < 108000) and return sprintf("%.2fhrs",$x/3600);
-  ($x < 400*24*3600) and return sprintf("%.2fdays",$x/(24*3600));
-  return sprintf("%.2f years",$x/(365.25*24*3600));
+sub test($) {
+    (my $fn) = @_;
+    my $basefn = File::Basename::basename($fn, "");
+    my $res = check($fn);
+    open my $OUTF, ">${LOGDIR}/${basefn}.log" or die;
+    print $OUTF "$res\n";
+    close $OUTF;
 }
 
 my $num_running = 0;
@@ -93,22 +63,44 @@ sub wait_for_one() {
     $num_running--;
 }
 
-sub go($$) {
-    my ($cmd, $outfile) = @_;
-    # print "$cmd\n";
+sub shuffle {
+    my $array = shift;
+    my $i;
+    for ($i = @$array; --$i; ) {
+        my $j = int rand ($i+1);
+        next if $i == $j;
+        @$array[$i,$j] = @$array[$j,$i];
+    }
+}
+
+my $PATH = $ARGV[0];
+die "please specify location of test cases" unless defined $PATH && -d $PATH;
+
+my @files = ();
+push @files, glob "${PATH}/*.bc";
+push @files, glob "${PATH}/*.ll";
+shuffle(\@files);
+
+my $n = 0;
+my $total = scalar(@files);
+my $old_pct = -1;
+
+foreach my $fn (@files) {
+    $n++;
+    my $pct = ($n * 100.0) / $total;
+    my $pct_str = sprintf("%.1f", $pct);
+    if ($pct_str != $old_pct) {
+        print "${pct_str}\%\n";
+        $old_pct = $pct_str;
+    }
     wait_for_one() unless $num_running < $NPROCS;
     die unless $num_running < $NPROCS;
     my $pid = fork();
     die unless $pid >= 0;
     if ($pid == 0) {
-        my $start = time();
-        system($cmd);
-        my $runtime = time() - $start;
-
-        open(my $fh, '>>', $outfile) or die;
-        print $fh "\nruntime: $runtime\n";
-        close $fh;
-
+        die "setrlimit CPU" unless setrlimit(RLIMIT_CPU, $CPU_LIMIT, $CPU_LIMIT);
+        die "setrlimit VMEM" unless setrlimit(RLIMIT_VMEM, $VMEM_LIMIT, $VMEM_LIMIT);
+        test($fn);
         exit(0);
     }
     # make sure we're in the parent
@@ -116,65 +108,5 @@ sub go($$) {
     $num_running++;
 }
 
-###########################################
-
-my $dir = $ARGV[0];
-die "please specify directory of LLVM bitcode" unless (-d $dir);
-my @files1 = glob "$dir/*.bc";
-my @files2 = glob "$dir/*.ll";
-my @files = (@files1, @files2);
-print "found ", scalar @files, " .bc/.ll files\n";
-
-my $LIMIT = $ENV{"LIMIT"};
-if ($LIMIT) {
-    splice @files, $LIMIT + 0;
-}
-
-while (my ($i, $file) = each @files) {
-    print "\r$i" if ($i & ((1 << 8) - 1)) == 0;
-    scan_file($file);
-}
-print "\n";
-
-shuffle(\@funcs);
-
-mkdir("logs") or die "oops-- can't create logs directory";
-mkdir("logs-aslp") or die "oops-- can't create logs-aslp directory";
-
-my $starttime = time(); # seconds
-my $count = 0;
-my $total = scalar(@funcs);
-my $opctstr = "";
-print "\n";
-foreach my $ref (@funcs) {
-    (my $file, my $func, my $num) = @{$ref};
-    my ($out, $path, $suffix) = File::Basename::fileparse($file, ".bc");
-    my $outfile = "logs/${out}_${num}.log";
-    my $outfile_aslp = "logs-aslp/${out}_${num}.log";
-    my $cmd = "ASLP=false $TIMEOUTBIN -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile 2>&1";
-    go($cmd, $outfile);
-    $cmd = "ASLP=true $TIMEOUTBIN -v $TIMEOUT $ARMTV --smt-to=100000000 -internalize -fn $func $file > $outfile_aslp 2>&1";
-    go($cmd, $outfile_aslp);
-    $count++;
-    my $pctstr = sprintf("%.2f", $count * 100.0 / $total);
-    if ($pctstr ne $opctstr) {
-        my $elapsed = time() - $starttime; # seconds
-        if ($elapsed <= 0) { $elapsed = 1; }
-        my $proportion = ($count / $total);
-        my $remaining = ($elapsed / $proportion) * (1.0 - $proportion); # seconds
-        my $remainingstr = difftime2string($remaining);
-        my $elapsedstr = difftime2string($elapsed);
-        my $projectedstr = difftime2string($elapsed + $remaining);
-        print("\r$pctstr % ($elapsedstr elapsed / $projectedstr projected, $remainingstr remaining)                ");
-        $opctstr = $pctstr;
-    }
-}
-print "\n";
-
 wait_for_one() while ($num_running > 0);
 print "normal termination.\n";
-
-print "skipped $skipped\n";
-print "processed $count\n";
-
-###########################################
