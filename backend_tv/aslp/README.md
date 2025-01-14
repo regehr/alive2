@@ -30,8 +30,10 @@ These instructions will install all of the required dependencies and build the b
    ```
 4. Start aslp-server and leave running:
    ```bash
-   ./build/aslp/bin/aslp-server  # or otherwise, if already installed
+   ./aslp-server.sh
    ```
+   This will run aslp-server behind a Varnish cache server, caching the ASLp semantics in memory.
+   See the script for more details.
 5. Use backend-tv, for example:
    ```bash
    ./build/backend-tv ./tests/arm-tv/cmp/sgt.aarch64.ll
@@ -43,14 +45,14 @@ This might be useful to use local versions of particular dependencies.
 cmake -B build -DBUILD_TV=1 \
   -DCMAKE_PREFIX_PATH=./antlr-dev/.';'~/progs/llvm-regehr/llvm/build/ \
   -DANTLR4_JAR_LOCATION=./antlr-4.13.0-complete.jar \
-  -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp 
+  -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp
 ```
 
 <!--
 You will also need the *aslp-server* which provides the Aslp semantics over HTTP.
 The suggested way to get this is using the Nix package manager. Once Nix is installed, use
 ```bash
-nix --extra-experimental-features nix-command --extra-experimental-features flakes shell github:katrinafyi/pac-nix#aslp --command aslp-server 
+nix --extra-experimental-features nix-command --extra-experimental-features flakes shell github:katrinafyi/pac-nix#aslp --command aslp-server
 ```
 This should build and launch aslp-server from the [pac-nix](https://github.com/katrinafyi/pac-nix) packages.
 Otherwise, you can compile with Dune from the [aslp](https://github.com/UQ-PAC/aslp) repository then run `dune exec aslp-server`.
@@ -157,7 +159,7 @@ The classic lifter, operating in LLVM, takes advantage of LLVM's vector function
 This makes the semantics cleaner and easier to reason about.
 Aslp, however, treats vector registers no different from ordinary scalar registers and performs vector operations by
 bitwise operations on the full 128-bit width.
-This is obviously much worse for Alive to reason with and, as in the calls/vec test, affects how poison values spread across vector elements. 
+This is obviously much worse for Alive to reason with and, as in the calls/vec test, affects how poison values spread across vector elements.
 It is conceivable that an LLVM optimisation pass could detect and replace these operations with their vector counterparts,
 but it does not do so right now.
 
