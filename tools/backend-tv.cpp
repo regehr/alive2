@@ -205,7 +205,7 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
   }
 
   lifter::fixupOptimizedTgt(F2);
-  
+
   auto lifted = lifter::moduleToString(tgtModule.get());
   if (save_lifted_ir) {
     std::filesystem::path p{(string)opt_file};

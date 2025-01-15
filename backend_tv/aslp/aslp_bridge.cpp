@@ -198,6 +198,7 @@ std::variant<err_t, result_t> bridge::run(const llvm::MCInst& inst, const opcode
     aarch64_map().at("AUTIBSP"),
     aarch64_map().at("HINT"),
     aarch64_map().at("BRK"),
+    // aarch64_map().at("FNEGSr"),
   };
 
   bool banned = !config().enable
