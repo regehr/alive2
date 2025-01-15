@@ -1,6 +1,7 @@
 #include "aslt_visitor.h"
 #include "aslp/interface.h"
 #include "tree/TerminalNode.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
@@ -20,6 +21,16 @@
 using namespace aslt;
 
 namespace {
+  std::string dump(llvm::Value* val) {
+    if (!val) {
+      return "(null)";
+    }
+    std::string s;
+    llvm::raw_string_ostream os{s};
+    val->print(os, true);
+    return s;
+  }
+
   void require(bool cond, const std::string_view& str, llvm::Value* val = nullptr) {
    if (cond)
      return;
@@ -27,10 +38,7 @@ namespace {
    std::string msg{"Aslp assertion failure! "};
    msg += str;
    if (val) {
-     std::string s;
-     llvm::raw_string_ostream os{s};
-     val->print(os, true);
-     std::cerr << '\n' << s << '\n' << std::endl;
+     std::cerr << '\n' << dump(val) << '\n' << std::endl;
    }
    std::cerr << std::flush;
    std::cout << std::flush;
@@ -137,13 +145,10 @@ llvm::Value* safe_sdiv(aslt_visitor& vis, llvm::Value* numerator, llvm::Value* d
   return static_cast<expr_t>(iface.createLoad(numty, result));
 }
 
-
 // coerce the given x into a pointer as best we can by examining its structure, recursively.
 // (similar to coerce(), which works on normal scalars and vectors).
-std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instruction* before) {
-
-  lexpr_t base = nullptr;
-  expr_t offset = iface.getUnsignedIntConst(0, x->getType()->getIntegerBitWidth());
+expr_t aslt_visitor::ptr_expr(llvm::Value* x) {
+  log() << "coercing to pointer: " << dump(x) << std::endl;
 
   // experimenting: this code does not convert via GEP and assumes dereferenceable.
   // x = new llvm::IntToPtrInst(x, llvm::PointerType::get(context, 0), "", iface.get_bb());
@@ -155,26 +160,55 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instructi
   auto Add = llvm::BinaryOperator::BinaryOps::Add;
   if (auto add = llvm::dyn_cast<llvm::BinaryOperator>(x); add && add->getOpcode() == Add) {
     // undo the add instruction into a GEP operation
-    auto _base = add->getOperand(0);
-    offset = add->getOperand(1);
-
-    // add->eraseFromParent();
-    base = ref_expr(_base);
-    base = llvm::cast<llvm::AllocaInst>(coerce(base, llvm::PointerType::get(context, 0)));
+    auto base = ptr_expr(add->getOperand(0));
+    auto offset = add->getOperand(1);
+    return iface.createGEP(iface.getIntTy(8), base, {offset}, "");
 
   } else if (auto load = llvm::dyn_cast<llvm::LoadInst>(x); load) {
-    auto wd = load->getType()->getIntegerBitWidth();
-    base = ref_expr(load);
-    offset = iface.getUnsignedIntConst(0, wd);
+
+    // NOTE: if we loaded from a variable and it has a unique dominating store, then replace it.
+    // this happens often, e.g. in aslp-generated CSE constants.
+    if (auto alloc = llvm::dyn_cast<llvm::AllocaInst>(load->getPointerOperand()); alloc) {
+      // std::cerr << "USES of ALLOC ";
+      // alloc->dump();
+      // std::cerr << "=";
+
+      llvm::DominatorTree dt{iface.ll_function()};
+
+      expr_t uniqueStoredValue{nullptr};
+      for (const auto& x : alloc->uses()) {
+        auto user = x.getUser();
+        log() << "user: " << dump(user);
+        if (llvm::isa<llvm::LoadInst>(user)) continue;
+        if (auto store = llvm::dyn_cast<llvm::StoreInst>(user); store) {
+          if (uniqueStoredValue != nullptr) {
+            uniqueStoredValue = nullptr;
+            log() << "break";
+            break;
+          }
+          if (dt.dominates(store, load)) {
+            uniqueStoredValue = store->getValueOperand();
+            log() << "set";
+            continue;
+          }
+          log() << "not dominated";
+        }
+        uniqueStoredValue = nullptr;
+        break;
+      }
+
+      log() << '\n';
+      log() << "unique stored value: " << dump(uniqueStoredValue) << std::endl;
+      if (uniqueStoredValue) {
+        return ptr_expr(uniqueStoredValue);
+      }
+    }
+
+    log() << "fallback coerce of " << dump(load) << '\n';
+    return coerce(load, llvm::PointerType::get(context, 0));
   }
 
-  require(base && offset, "unable to coerce to pointer", x);
-  auto load = iface.createLoad(base->getAllocatedType(), base);
-  auto ptr = coerce(load, llvm::PointerType::get(context, 0));
-  // llvm::outs() << "ASDF:" << '\n';
-  // base->dump();
-  // ptr->dump();
-  return {ptr, offset};
+  die("unable to coerce to pointer", x);
 }
 
 std::pair<llvm::Value*, llvm::Value*> aslt_visitor::unify_sizes(llvm::Value* x, llvm::Value* y, unify_mode mode) {
@@ -266,7 +300,9 @@ std::any aslt_visitor::visitConstDecl(SemanticsParser::ConstDeclContext *ctx) {
   v->setAlignment(llvm::Align(1));
   iface.createStore(rhs, v);
 
-  add_local(name, v);
+  require_(!constants.contains(name));
+  require_(!locals.contains(name));
+  constants.insert({name, rhs});
   return s;
 }
 
@@ -284,6 +320,7 @@ std::any aslt_visitor::visitVarDecl(SemanticsParser::VarDeclContext *ctx) {
   v->setAlignment(llvm::Align(1));
   iface.createStore(rhs, v);
 
+  require_(!constants.contains(name));
   add_local(name, v);
   return s;
 }
@@ -340,7 +377,8 @@ std::any aslt_visitor::visitCall_stmt(SemanticsParser::Call_stmtContext *ctx) {
       (void)acctype;
 
       auto size = llvm::cast<llvm::ConstantInt>(bytes)->getSExtValue();
-      auto [ptr, offset] = ptr_expr(addr);
+      auto ptr = ptr_expr(addr);
+      auto offset = iface.getUnsignedIntConst(0, 64);
       // iface.createStore(val, ptr);
       iface.storeToMemoryValOffset(ptr, offset, size, val);
       return s;
@@ -510,7 +548,9 @@ std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
   auto name = ident(ctx->ident());
 
   expr_t var;
-  if (locals.contains(name))
+  if (constants.contains(name))
+    var = constants.at(name);
+  else if (locals.contains(name))
     var = locals.at(name);
   else if (name == "_R")
     var = xreg_sentinel; // return X0 as a sentinel for all X registers
@@ -531,8 +571,10 @@ std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
   else
     die("unsupported or undefined variable: " + name);
 
-  auto ptr = llvm::cast<llvm::AllocaInst>(var);
-  return static_cast<expr_t>(iface.createLoad(ptr->getAllocatedType(), ptr));
+  if (auto ptr = llvm::dyn_cast<llvm::AllocaInst>(var); ptr) {
+    var = iface.createLoad(ptr->getAllocatedType(), ptr);
+  }
+  return var;
 }
 
 std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) {
@@ -718,7 +760,8 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       // bits(size*8) Mem[bits(64) address, integer size, AccType acctype]
 
       auto size = llvm::cast<llvm::ConstantInt>(y);
-      auto [ptr, offset] = ptr_expr(x);
+      auto ptr = ptr_expr(x);
+      auto offset = iface.getUnsignedIntConst(0, 64);
       auto load = iface.makeLoadWithOffset(ptr, offset, size->getSExtValue());
       return static_cast<expr_t>(load);
 

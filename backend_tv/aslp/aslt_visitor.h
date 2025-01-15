@@ -44,6 +44,7 @@ private:
   uint64_t depth = 0;
 
   std::map<std::string, lexpr_t> locals{};
+  std::map<std::string, expr_t> constants{};
   std::map<lexpr_t, lexpr_t> ptrs{};
   std::map<unsigned, unsigned> stmt_counts{};
 
@@ -156,7 +157,7 @@ public:
     return iface.createBitCast(e, intty);
   }
 
-  virtual std::pair<expr_t, expr_t> ptr_expr(expr_t x, llvm::Instruction* before = nullptr);
+  virtual expr_t ptr_expr(expr_t x);
   virtual std::pair<expr_t, expr_t> unify_sizes(expr_t x, expr_t y, unify_mode mode = unify_mode::EXACT);
 
   virtual lexpr_t ref_expr(expr_t expr) {
@@ -209,12 +210,8 @@ public:
     return {head.first, tail.second};
   }
 
-  virtual lexpr_t get_local(std::string s) const& {
-    return locals.at(s);
-  }
-
   virtual void add_local(std::string s, lexpr_t v) {
-    // assert(!locals.contains(s) && "local variable already exists in aslt!");
+    assert(!locals.contains(s) && "local variable already exists in aslt!");
     // XXX aslp will emit duplicated local variable names when a variable is declared within
     // a for loop.  https://github.com/UQ-PAC/aslp/issues/43
     locals.insert_or_assign(s, v);
