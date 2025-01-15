@@ -35,7 +35,7 @@ bool getenv_bool(const std::string& name, bool def = false) {
   if (!env) return def;
 
   std::string str{env};
-  std::ranges::transform(str, str.begin(), 
+  std::ranges::transform(str, str.begin(),
       [](char c){ return std::tolower(c); });
 
   if (str == "1" || str == "on" || str == "yes" || str == "true")
@@ -59,7 +59,7 @@ aslp_connection make_conn() {
 
 namespace aslp {
 
-bridge::bridge(lifter_interface_llvm& iface, const llvm::MCCodeEmitter& mce, const llvm::MCSubtargetInfo& sti, const llvm::MCInstrAnalysis& ia) 
+bridge::bridge(lifter_interface_llvm& iface, const llvm::MCCodeEmitter& mce, const llvm::MCSubtargetInfo& sti, const llvm::MCInstrAnalysis& ia)
   : iface{iface}, context{iface.ll_function().getContext()}, mce{mce}, sti{sti}, ia{ia}, conn{make_conn()} {
   (void)this->mce;
   (void)this->sti;
@@ -104,7 +104,7 @@ const config_t& bridge::config() {
       inited = true;
 
     } catch (const std::invalid_argument& e) {
-      std::cerr 
+      std::cerr
         << "\nERROR while parsing aslp environment variable: "
         << var << '\n' << std::endl;
       throw e;
@@ -131,7 +131,10 @@ std::variant<err_t, stmt_t> bridge::parse(std::string_view aslt) {
   auto ctx = parser.stmt_lines();
   assert(ctx && "parsing failed! syntax error?");
 
-  return std::any_cast<stmt_t>(visitor.visitStmt_lines(ctx));
+  auto result = std::any_cast<stmt_t>(visitor.visitStmt_lines(ctx));
+  result.first->begin()->setMetadata("aslp.entry",
+    llvm::MDTuple::get(context, {llvm::MDString::get(context, ctx->getText())}));
+  return result;
 }
 
 #ifndef ASLT_DIR
@@ -165,14 +168,14 @@ std::variant<err_t, result_t> bridge::run_special(const llvm::MCInst& inst, cons
 
         // create an alloc to emulate the behaviour of got. the got location, which is
         // referenced by :got:varname, stores a pointer to the actual variable location.
-        // here, a new alloca fakes this indirection. 
+        // here, a new alloca fakes this indirection.
         auto alloc = iface.createAlloca(global->getType(), nullptr, iface.nextName());
         iface.createStore(global, alloc);
         global = alloc;
       }
 
       iface.updateOutputReg(global);
-  } 
+  }
 
   if (bb)
     return std::make_tuple(name, stmt_t{bb, bb});

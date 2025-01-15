@@ -15,6 +15,7 @@
 
 #include "SemanticsParser.h"
 #include "interface.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace aslp {
@@ -24,7 +25,7 @@ using expr_t = lifter_interface_llvm::expr_t;
 using lexpr_t = lifter_interface_llvm::lexpr_t;
 using stmt_t = lifter_interface_llvm::stmt_t;
 
-class aslt_visitor : public aslt::SemanticsBaseVisitor { 
+class aslt_visitor : public aslt::SemanticsBaseVisitor {
 public:
   using super = aslt::SemanticsBaseVisitor;
   lifter_interface_llvm &iface;
@@ -50,7 +51,7 @@ private:
   // }
 
 public:
-  aslt_visitor(lifter_interface_llvm &iface, bool debug) : 
+  aslt_visitor(lifter_interface_llvm &iface, bool debug) :
     iface{iface},
     debug{debug},
     func{iface.ll_function()},
@@ -82,7 +83,12 @@ public:
     depth++;
     auto x = ctx->accept(this);
     depth--;
-    return std::any_cast<expr_t>(x);
+    auto result = std::any_cast<expr_t>(x);
+    if (auto inst = llvm::dyn_cast<llvm::Instruction>(result); inst) {
+      inst->setMetadata("aslp.expr",
+        llvm::MDTuple::get(context, {llvm::MDString::get(context, ctx->getText())}));
+    }
+    return result;
   }
 
   virtual lexpr_t lexpr(aslt::SemanticsParser::LexprContext* ctx) {
@@ -167,7 +173,10 @@ public:
     auto x = visitStmt(ctx);
     depth--;
     // std::cout << "stmt cast" << '\n';
-    return std::any_cast<stmt_t>(x);
+    auto result = std::any_cast<stmt_t>(x);
+    result.first->begin()->setMetadata("aslp.stmt",
+      llvm::MDTuple::get(context, {llvm::MDString::get(context, ctx->getText())}));
+    return result;
   }
 
   virtual stmt_t new_stmt(const std::string_view& name) {

@@ -116,7 +116,7 @@ llvm::Value* safe_sdiv(aslt_visitor& vis, llvm::Value* numerator, llvm::Value* d
 
   llvm::BranchInst::Create(overflow_stmt.first, safe_stmt.first, any_overflowing, oldbb);
 
-  // if overflowing, replace numerator with int_min and denominator with 1 to force a int_min result. 
+  // if overflowing, replace numerator with int_min and denominator with 1 to force a int_min result.
   iface.set_bb(overflow_stmt.second);
   auto numerator2 = iface.createSelect(overflowing, int_min, numerator);
   auto denominator2 = iface.createSelect(overflowing, one, denominator);
@@ -142,7 +142,7 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instructi
 
   // experimenting: this code does not convert via GEP and assumes dereferenceable.
   // x = new llvm::IntToPtrInst(x, llvm::PointerType::get(context, 0), "", iface.get_bb());
-  // llvm::cast<llvm::IntToPtrInst>(x)->setMetadata("dereferenceable", 
+  // llvm::cast<llvm::IntToPtrInst>(x)->setMetadata("dereferenceable",
   //     llvm::MDNode::get(context, {(llvm::ConstantAsMetadata::get(iface.getUnsignedIntConst(99, 64)))}));
   // x->dump();
   // return {x, offset};
@@ -343,7 +343,7 @@ std::any aslt_visitor::visitConditionalStmt(SemanticsParser::ConditionalStmtCont
   log() << "visitConditional_stmt" << '\n';
 
   auto entry = new_stmt("conditional");
-  
+
   auto cond = expr(ctx->expr());
   require(cond->getType()->getIntegerBitWidth() == 1, "condition must have type i1", cond);
 
@@ -517,7 +517,7 @@ std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
   else if (name == "FPCR")
     // XXX do not support FPCR-dependent behaviour
     return static_cast<expr_t>(llvm::UndefValue::get(iface.getIntTy(32)));
-  else 
+  else
     die("unsupported or undefined variable: " + name);
 
   auto ptr = llvm::cast<llvm::AllocaInst>(var);
@@ -526,8 +526,8 @@ std::any aslt_visitor::visitExprVar(SemanticsParser::ExprVarContext *ctx) {
 
 std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) {
   auto name = ident(ctx->ident());
-  log() 
-    << "visitExprTApply " 
+  log()
+    << "visitExprTApply "
     << std::format("{} [{} targs] ({} args)", name, ctx->targs().size(), ctx->expr().size())
     << std::endl;
 
@@ -546,7 +546,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 
     } else if (name == "not_bits.0" || name == "not_bool.0") {
       return static_cast<expr_t>(iface.createNot(x));
-    } 
+    }
   } else if (args.size() == 2) {
     auto x = args[0], y = args[1];
     if (name == "SignExtend.0" && targs.size() == 2) {
@@ -555,6 +555,25 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       return static_cast<expr_t>(iface.createSExt(x, finalty));
 
     } else if (name == "ZeroExtend.0" && targs.size() == 2) {
+      expr_t zero =
+          llvm::Constant::getNullValue(iface.getVecTy(x->getType()->getPrimitiveSizeInBits(), 1));
+      expr_t vector = x->getType()->isVectorTy() ? x :
+            iface.createInsertElement(zero, x, iface.getUnsignedIntConst(0, 2));
+      auto vty = llvm::cast<llvm::VectorType>(vector->getType());
+
+      auto elemty = vty->getElementType();
+      auto elemwd = elemty->getScalarSizeInBits();
+      auto elemcnt = vty->getElementCount().getFixedValue();
+      if (targs[1] % elemwd == 0) {
+        auto finalelemcnt = targs[1] / elemwd;
+        expr_t result = llvm::Constant::getNullValue(llvm::VectorType::get(elemty, finalelemcnt, false));
+        for (unsigned i = 0; i < elemcnt; i++) {
+          auto ii = iface.getUnsignedIntConst(i, 100);
+          auto val = iface.createExtractElement(vector, ii);
+          result = iface.createInsertElement(result, val, ii);
+        }
+        return result;
+      }
       type_t finalty = llvm::Type::getIntNTy(context, targs[1]);
       require_(finalty != x->getType());
       return static_cast<expr_t>(iface.createZExt(x, finalty));
@@ -692,85 +711,85 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
       auto cast = iface.createAdd(x_vector, y_vector);
-      return coerce(cast, x->getType());
+      return cast;
 
     } else if (name == "sub_vec.0") {
       // bits(W * N) sub_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
       auto cast = iface.createSub(x_vector, y_vector);
-      return coerce(cast, x->getType());
+      return cast;
 
     } else if (name == "mul_vec.0") {
       // bits(W * N) mul_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
       auto cast = iface.createMul(x_vector, y_vector);
-      return coerce(cast, x->getType());
+      return cast;
 
     } else if (name == "sdiv_vec.0") {
       // bits(W * N) sdiv_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
       auto cast = safe_sdiv(*this, x_vector, y_vector);
-      return coerce(cast, x->getType());
+      return cast;
 
     } else if (name == "scast_vec.0") {
       // bits(NW * N) scast_vec (N, NW, W) (bits(W * N) x, integer N, integer NW)
       auto x_vector = coerce(x, iface.getVecTy(targs[2], targs[0]));
       auto cast = iface.createSExt(x_vector, iface.getVecTy(targs[1], targs[0]));
-      return coerce(cast, iface.getIntTy(targs[1] * targs[0]));
+      return cast;
 
     } else if (name == "zcast_vec.0") {
       // bits(NW * N) zcast_vec (N, NW, W) (bits(W * N) x, integer N, integer NW)
       auto x_vector = coerce(x, iface.getVecTy(targs[2], targs[0]));
       auto cast = iface.createZExt(x_vector, iface.getVecTy(targs[1], targs[0]));
-      return coerce(cast, iface.getIntTy(targs[1] * targs[0]));
+      return cast;
 
     } else if (name == "trunc_vec.0") {
       // bits(NW * N) trunc_vec (N, NW, W) (bits(W * N) x, integer N, integer NW)
       auto x_vector = coerce(args[0], iface.getVecTy(targs[2], targs[0]));
       auto trunced = iface.createTrunc(x_vector, iface.getVecTy(targs[1], targs[0]));
-      return coerce(trunced, iface.getIntTy(targs[1] * targs[0]));
+      return trunced;
 
     } else if (name == "asr_vec.0") {
       // bits(W * N) asr_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
-      return coerce(safe_shift(iface, x_vector, llvm::Instruction::BinaryOps::AShr, y_vector), iface.getIntTy(targs[1] * targs[0]));
+      return safe_shift(iface, x_vector, llvm::Instruction::BinaryOps::AShr, y_vector);
 
     } else if (name == "lsr_vec.0") {
       // bits(W * N) lsr_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
-      return coerce(safe_shift(iface, x_vector, llvm::Instruction::BinaryOps::LShr, y_vector), iface.getIntTy(targs[1] * targs[0]));
+      return safe_shift(iface, x_vector, llvm::Instruction::BinaryOps::LShr, y_vector);
 
     } else if (name == "lsl_vec.0") {
       // bits(W * N) lsr_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
-      return coerce(safe_shift(iface, x_vector, llvm::Instruction::BinaryOps::Shl, y_vector), iface.getIntTy(targs[1] * targs[0]));
+      return safe_shift(iface, x_vector, llvm::Instruction::BinaryOps::Shl, y_vector);
 
     } else if (name == "sle_vec.0") {
       // bits(N) sle_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
       auto cmp = iface.createICmp(llvm::ICmpInst::Predicate::ICMP_SLE, x_vector, y_vector);
-      return coerce(cmp, iface.getIntTy(targs[0]));
+      return cmp;
 
     } else if (name == "slt_vec.0") {
       // bits(N) slt_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
       auto cmp = iface.createICmp(llvm::ICmpInst::Predicate::ICMP_SLT, x_vector, y_vector);
-      return coerce(cmp, iface.getIntTy(targs[0]));
+      return cmp;
 
     } else if (name == "eq_vec.0") {
       // bits(N) eq_vec (N, W) (bits(W * N) x, bits(W * N) y, integer N)
       auto x_vector = coerce(x, iface.getVecTy(targs[1], targs[0]));
       auto y_vector = coerce(y, iface.getVecTy(targs[1], targs[0]));
       auto cmp = iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, x_vector, y_vector);
-      return coerce(cmp, iface.getIntTy(targs[0]));
+      return cmp;
 
     } else if (name == "shuffle_vec.0") {
       // bits(W * N) shuffle_vec (M, N, W) (bits(W * M) x, bits(W * M) y, bits(32 * N) sel)
@@ -783,7 +802,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
         mask.at(i) = sel.extractBitsAsZExtValue(32, i * 32);
       }
       auto res = iface.createShuffleVector(y_vector, x_vector, {mask}) ;
-      return coerce(res, iface.getIntTy(count * targs[2]));
+      return res;
 
     } else if (name == "FPAdd.0" || name == "FPSub.0" || name == "FPMul.0" || name == "FPDiv.0") {
       // bits(N) FPAdd(bits(N) op1, bits(N) op2, FPCRType fpcr)
@@ -830,12 +849,17 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
   } else if (args.size() == 4) {
     if (name == "Elem.set.0") {
       // bits(N) Elem[bits(N) vector, integer e, integer size, bits(size) value]
-      auto bv_size = args[0]->getType()->getIntegerBitWidth();
-      auto elem_size = llvm::cast<llvm::ConstantInt>(args[2])->getSExtValue();
-      auto elems = bv_size / elem_size;
-      auto vector = coerce(args[0], iface.getVecTy(elem_size, elems));
+      expr_t vector;
+      if (args[0]->getType()->isVectorTy()) {
+        vector = args[0];
+      } else {
+        auto bv_size = args[0]->getType()->getIntegerBitWidth();
+        auto elem_size = llvm::cast<llvm::ConstantInt>(args[2])->getSExtValue();
+        auto elems = bv_size / elem_size;
+        vector = coerce(args[0], iface.getVecTy(elem_size, elems));
+      }
       auto insert = iface.createInsertElement(vector, args[3], args[1]);
-      return coerce(insert, iface.getIntTy(bv_size));
+      return insert;
 
     } else if (name == "ite_vec.0") {
       // bits(W * N) ite_vec ( N , W ) (bits(N) c, bits(W * N) x, bits(W * N) y, integer N)
@@ -843,11 +867,11 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto x_vec = coerce(args[1], iface.getVecTy(targs[1], targs[0]));
       auto y_vec = coerce(args[2], iface.getVecTy(targs[1], targs[0]));
       auto res = iface.createSelect(cond, x_vec, y_vec);
-      return coerce(res, iface.getIntTy(targs[1] * targs[0]));
+      return res;
 
     } else if (name == "FPCompare.0") {
       // bits(4) FPCompare(bits(N) op1, bits(N) op2, boolean signal_nans, FPCRType fpcr)
-      
+
       // return value:
       // PSTATE . V = result [ 0 +: 1 ] ;
       // PSTATE . C = result [ 1 +: 1 ] ;
@@ -967,17 +991,17 @@ std::any aslt_visitor::visitExprSlices(SemanticsParser::ExprSlicesContext *ctx) 
   auto vec_size = base->getType()->getIntegerBitWidth();
 
 
-  if (lo->isZeroValue()) {
-    // Just trunc
-    auto trunced = iface.createTrunc(base, wdty);
-    return static_cast<expr_t>(trunced);
-  } else if (sl.lo % sl.wd == 0 && vec_size % sl.wd == 0) {
+  if (sl.lo % sl.wd == 0 && vec_size % sl.wd == 0) {
     // Vector access
     auto elem_size = sl.wd;
     auto elems = vec_size / elem_size;
     auto vector = coerce(base, iface.getVecTy(elem_size, elems));
     auto pos = llvm::ConstantInt::get(base->getType(), sl.lo / sl.wd);
     return iface.createExtractElement(vector, pos);
+  } else if (lo->isZeroValue()) {
+    // Just trunc
+    auto trunced = iface.createTrunc(base, wdty);
+    return static_cast<expr_t>(trunced);
   } else {
     // raw shift ok, since slice must be within bounds.
     auto shifted = !lo->isZeroValue() ? iface.createRawLShr(base, lo) : base;
@@ -990,7 +1014,7 @@ std::any aslt_visitor::visitExprField(SemanticsParser::ExprFieldContext *ctx) {
   log() << "visitExprField" << '\n';
 
   const static std::map<uint8_t, pstate_t> pstate_map{
-    {'N', pstate_t::N}, {'Z', pstate_t::Z}, {'C', pstate_t::C}, {'V', pstate_t::V}, 
+    {'N', pstate_t::N}, {'Z', pstate_t::Z}, {'C', pstate_t::C}, {'V', pstate_t::V},
   };
 
   auto base = expr_var(ctx->expr());
