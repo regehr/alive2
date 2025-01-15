@@ -8,3 +8,4 @@ tests/temp/*
 
 logs/
 commands_*.txt
+.cache

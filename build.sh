@@ -14,8 +14,10 @@ fi
 if ! [[ -d antlr-dev ]]; then
   nix build 'nixpkgs/655a58a72a6601292512670343087c2d75d859c1#antlr.runtime.cpp^dev' -o antlr
 fi
-if ! [[ -d llvm-dev ]]; then
-  nix build 'github:katrinafyi/pac-nix/97d071335a0044b5153bca7aed2513b588fffcaf#llvm-custom-git.libllvm^dev' -o llvm
+if [[ -n "$LLVM_ROOT" ]]; then
+  ln -s "$LLVM_ROOT" ./llvm-dev
+elif ! [[ -d llvm-dev ]]; then
+  nix build 'github:katrinafyi/pac-nix/llvm-update-2025-01#llvm-custom-git.libllvm^dev' -o llvm
 fi
 
 if [[ -d aslp ]]; then :
@@ -47,10 +49,10 @@ cmake --build build
 else
   # -DCMAKE_BUILD_TYPE=Release \
 cmake -B build -DBUILD_TV=1 \
-  -DCMAKE_PREFIX_PATH="$(realpath build/antlr-dev)" \
+  -DCMAKE_PREFIX_PATH="$(realpath build/antlr-dev);$(realpath build/llvm-dev)" \
   -DANTLR4_JAR_LOCATION="$(realpath build/antlr-jar)" \
-  -DLLVM_DIR=~/progs/llvm-regehr/build/lib/cmake/llvm/ \
   "$@"
+  # -DLLVM_DIR=~/progs/llvm-regehr/build/lib/cmake/llvm/ \
   # -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp \
   # -DCMAKE_VERBOSE_MAKEFILE=TRUE \
 cmake --build build -j12
