@@ -611,7 +611,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       expr_t zero =
           llvm::Constant::getNullValue(iface.getVecTy(x->getType()->getPrimitiveSizeInBits(), 1));
       expr_t vector = x->getType()->isVectorTy() ? x :
-            iface.createInsertElement(zero, x, iface.getUnsignedIntConst(0, 2));
+            iface.createInsertElement(zero, coerce_to_int(x), iface.getUnsignedIntConst(0, 2));
       auto vty = llvm::cast<llvm::VectorType>(vector->getType());
 
       auto elemty = vty->getElementType();
