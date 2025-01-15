@@ -942,12 +942,16 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       auto a = args[0], fpcr = args[1], fprounding = args[2], exact = args[3];
       (void)fpcr;
 
-      iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, exact, iface.getUnsignedIntConst(0, 1)));
-
       a = coerce(a, iface.getFPType(a->getType()->getIntegerBitWidth()));
 
       auto roundingconst = llvm::dyn_cast<llvm::ConstantInt>(fprounding);
-      require(roundingconst, "FPRoundInt: dynamic fprounding parameter unsupported", fprounding);
+      if (!roundingconst) {
+        // XXX: assume non-constant rounding modes are FPCR-dependent in the expected way
+        return iface.createRound(a);
+      }
+      // require(roundingconst, "FPRoundInt: dynamic fprounding parameter unsupported", fprounding);
+
+      iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, exact, iface.getUnsignedIntConst(0, 1)));
 
       uint64_t rounding = roundingconst->getZExtValue();
       if (rounding == 1) {
@@ -992,8 +996,8 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       return static_cast<expr_t>(
           iface.createSelect(
             unsign,
-            iface.createConvertFPToUI(val, iface.getIntTy(wdout)),
-            iface.createConvertFPToSI(val, iface.getIntTy(wdout))));
+            iface.createFPToUI_sat(val, iface.getIntTy(wdout)),
+            iface.createFPToSI_sat(val, iface.getIntTy(wdout))));
     }
   }
 

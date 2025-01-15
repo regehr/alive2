@@ -2444,7 +2444,7 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
-  CallInst *createRound(Value *v) {
+  CallInst *createRound(Value *v) override {
     auto *decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::rint, v->getType());
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
@@ -2637,13 +2637,13 @@ class arm2llvm : public aslp::lifter_interface_llvm {
     return CastInst::Create(Instruction::ZExt, v, t, nextName(), LLVMBB);
   }
 
-  CallInst *createFPToUI_sat(Value *v, Type *t) {
+  CallInst *createFPToUI_sat(Value *v, Type *t) override {
     auto decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::fptoui_sat, {t, v->getType()});
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);
   }
 
-  CallInst *createFPToSI_sat(Value *v, Type *t) {
+  CallInst *createFPToSI_sat(Value *v, Type *t) override {
     auto decl = Intrinsic::getOrInsertDeclaration(
         LiftedModule, Intrinsic::fptosi_sat, {t, v->getType()});
     return CallInst::Create(decl, {v}, nextName(), LLVMBB);

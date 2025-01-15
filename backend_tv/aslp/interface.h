@@ -28,7 +28,7 @@ public:
 
   virtual ~lifter_interface() = default;
 
-  // perform possibly non-atomic memory load/store  
+  // perform possibly non-atomic memory load/store
   // virtual llvm::Value* mem_load(llvm::Value* addr, llvm::Value* size) = 0;
   // virtual void mem_store(llvm::Value* addr, llvm::Value* size, llvm::Value* rhs) = 0;
 
@@ -50,15 +50,15 @@ public:
   virtual void updateOutputReg(expr_t V, bool SExt = false) = 0;
 
   virtual expr_t getUnsignedIntConst(uint64_t val, u_int64_t bits) = 0;
-  virtual type_t getIntTy(unsigned bits) = 0; 
-  virtual type_t getFPType(unsigned bits) = 0; 
+  virtual type_t getIntTy(unsigned bits) = 0;
+  virtual type_t getFPType(unsigned bits) = 0;
   virtual type_t getVecTy(unsigned eltSize, unsigned numElts, bool isFP = false) = 0;
 
   virtual expr_t getUndefVec(unsigned numElts, unsigned eltSize) = 0;
 
   virtual void assertTrue(expr_t cond) = 0;
 
-  virtual expr_t makeLoadWithOffset(expr_t base, expr_t offset, int size) = 0; 
+  virtual expr_t makeLoadWithOffset(expr_t base, expr_t offset, int size) = 0;
   virtual void storeToMemoryValOffset(expr_t base, expr_t offset, u_int64_t size, expr_t val) = 0;
 
   virtual lexpr_t createAlloca(type_t ty, expr_t sz, const std::string &NameStr) = 0;
@@ -147,7 +147,7 @@ public:
 
   virtual expr_t createVectorReduceAdd(expr_t v) = 0;
 
-  virtual expr_t createFusedMultiplyAdd(expr_t a, expr_t b, expr_t c) = 0; 
+  virtual expr_t createFusedMultiplyAdd(expr_t a, expr_t b, expr_t c) = 0;
 
   virtual expr_t createSelect(expr_t cond, expr_t a, expr_t b) = 0;
 
@@ -209,9 +209,12 @@ public:
 
   virtual expr_t createSQRT(expr_t v) = 0;
 
-  virtual expr_t createConstrainedRound(expr_t v) = 0; 
-  virtual expr_t createConstrainedFloor(expr_t v) = 0; 
-  virtual expr_t createConstrainedCeil(expr_t v) = 0; 
+  virtual expr_t createRound(expr_t v) = 0;
+  virtual expr_t createConstrainedRound(expr_t v) = 0;
+  virtual expr_t createConstrainedFloor(expr_t v) = 0;
+  virtual expr_t createConstrainedCeil(expr_t v) = 0;
+  virtual expr_t createFPToSI_sat(expr_t v, type_t t) = 0;
+  virtual expr_t createFPToUI_sat(expr_t v, type_t t) = 0;
 
   virtual expr_t createCast(expr_t v, type_t t, llvm::Instruction::CastOps op) = 0;
 
