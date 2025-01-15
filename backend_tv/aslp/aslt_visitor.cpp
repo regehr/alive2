@@ -1,6 +1,7 @@
 #include "aslt_visitor.h"
 #include "aslp/interface.h"
 #include "tree/TerminalNode.h"
+#include "llvm/Analysis/PostDominators.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/InstrTypes.h"
@@ -157,6 +158,10 @@ expr_t aslt_visitor::ptr_expr(llvm::Value* x) {
   // x->dump();
   // return {x, offset};
 
+  if (x->getType()->isPointerTy()) {
+    return x;
+  }
+
   auto Add = llvm::BinaryOperator::BinaryOps::Add;
   if (auto add = llvm::dyn_cast<llvm::BinaryOperator>(x); add && add->getOpcode() == Add) {
     // undo the add instruction into a GEP operation
@@ -174,29 +179,45 @@ expr_t aslt_visitor::ptr_expr(llvm::Value* x) {
       // std::cerr << "=";
 
       llvm::DominatorTree dt{iface.ll_function()};
+      llvm::PostDominatorTree postdt{iface.ll_function()};
 
-      expr_t uniqueStoredValue{nullptr};
+      llvm::StoreInst* uniqueStore{nullptr};
       for (const auto& x : alloc->uses()) {
         auto user = x.getUser();
         log() << "user: " << dump(user);
+
         if (llvm::isa<llvm::LoadInst>(user)) continue;
+
         if (auto store = llvm::dyn_cast<llvm::StoreInst>(user); store) {
-          if (uniqueStoredValue != nullptr) {
-            uniqueStoredValue = nullptr;
-            log() << "break";
-            break;
-          }
+
+          // NOTE: if this is a potential dominating store, record it
+          // if it post-dominates the existing recorded store.
           if (dt.dominates(store, load)) {
-            uniqueStoredValue = store->getValueOperand();
+            if (uniqueStore != nullptr) {
+              if (postdt.dominates(store, uniqueStore)) {
+                uniqueStore = store;
+                continue;
+              } else if (postdt.dominates(uniqueStore, store)) {
+                continue;
+              }
+              log() << "break";
+              break;
+            }
+            uniqueStore = store;
             log() << "set";
+            continue;
+          }
+          // NOTE: if this store occurs after the load, disregard it.
+          if (dt.dominates(load, store)) {
             continue;
           }
           log() << "not dominated";
         }
-        uniqueStoredValue = nullptr;
+        uniqueStore = nullptr;
         break;
       }
 
+      auto uniqueStoredValue = uniqueStore ? uniqueStore->getValueOperand() : nullptr;
       log() << '\n';
       log() << "unique stored value: " << dump(uniqueStoredValue) << std::endl;
       if (uniqueStoredValue) {
@@ -204,7 +225,7 @@ expr_t aslt_visitor::ptr_expr(llvm::Value* x) {
       }
     }
 
-    log() << "fallback coerce of " << dump(load) << '\n';
+    log() << "FALLBACK POINTER coerce of " << dump(load) << '\n';
     return coerce(load, llvm::PointerType::get(context, 0));
   }
 
