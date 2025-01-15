@@ -200,7 +200,8 @@ expr_t aslt_visitor::ptr_expr(llvm::Value* x) {
               } else if (postdt.dominates(uniqueStore, store)) {
                 continue;
               }
-              log() << "break";
+              uniqueStore = nullptr;
+              log() << "break, too many stores";
               break;
             }
             uniqueStore = store;
@@ -225,11 +226,11 @@ expr_t aslt_visitor::ptr_expr(llvm::Value* x) {
       }
     }
 
-    log() << "FALLBACK POINTER coerce of " << dump(load) << '\n';
-    return coerce(load, llvm::PointerType::get(context, 0));
   }
 
-  die("unable to coerce to pointer", x);
+  // die("unable to coerce to pointer", x);
+  log() << "FALLBACK POINTER coerce of " << dump(x) << '\n';
+  return new llvm::IntToPtrInst(x, llvm::PointerType::get(context, 0), iface.nextName(), iface.get_bb());
 }
 
 std::pair<llvm::Value*, llvm::Value*> aslt_visitor::unify_sizes(llvm::Value* x, llvm::Value* y, unify_mode mode) {
