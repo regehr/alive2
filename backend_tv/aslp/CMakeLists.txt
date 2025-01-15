@@ -27,7 +27,7 @@ message(STATUS "AArch64GenInstrInfo.inc: ${AARCH64_INSTR_INC}")
 
 include(FetchContent)
 FetchContent_Declare(aslp-cpp
-  URL https://github.com/UQ-PAC/aslp/archive/34cfa404635becab3dcb15d60e1bf0d4635f3e93.zip
+  URL https://github.com/UQ-PAC/aslp/archive/partial_eval.zip
   # GIT_REPOSITORY https://github.com/UQ-PAC/aslp.git
   # GIT_TAG        clientserver
   SOURCE_SUBDIR  aslp-cpp
