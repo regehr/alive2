@@ -13,6 +13,7 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/Support/Casting.h>
 
+#include <ostream>
 #include <ranges>
 
 using namespace aslt;
@@ -172,13 +173,19 @@ std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instructi
   return {ptr, offset};
 }
 
-std::pair<llvm::Value*, llvm::Value*> aslt_visitor::unify_sizes(llvm::Value* x, llvm::Value* y, bool sign) {
+std::pair<llvm::Value*, llvm::Value*> aslt_visitor::unify_sizes(llvm::Value* x, llvm::Value* y, unify_mode mode) {
+  x = coerce_to_int(x), y = coerce_to_int(y);
+
   auto ty1 = x->getType(), ty2 = y->getType();
   auto wd1 = ty1->getIntegerBitWidth(), wd2 = ty2->getIntegerBitWidth();
 
   auto sext = &lifter_interface_llvm::createSExt;
   auto zext = &lifter_interface_llvm::createZExt;
-  const decltype(sext) extend = sign ? sext : zext;
+  const decltype(sext) extend = mode == unify_mode::SEXT ? sext : zext;
+
+  if (mode == unify_mode::EXACT) {
+    require(wd1 == wd2, "operands must have same size", x);
+  }
 
   if (wd1 < wd2) {
     x = (iface.*extend)(x, ty2);
@@ -584,48 +591,59 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       return static_cast<expr_t>(iface.createTrunc(x, finalty));
 
     } else if (name == "eq_bits.0") {
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(iface.createICmp(llvm::CmpInst::Predicate::ICMP_EQ, x, y));
 
     } else if (name == "ne_bits.0") {
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(iface.createICmp(llvm::CmpInst::Predicate::ICMP_NE, x, y));
 
     } else if (name == "add_bits.0") {
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(iface.createAdd(x, y));
 
     } else if (name == "sub_bits.0") {
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(iface.createSub(x, y));
 
     } else if (name == "eor_bits.0") {
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(iface.createBinop(x, y, llvm::BinaryOperator::BinaryOps::Xor));
 
     } else if (name == "and_bits.0" || name == "and_bool.0") {
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(iface.createAnd(x, y));
 
     } else if (name == "or_bits.0" || name == "or_bool.0") {
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(iface.createOr(x, y));
 
     } else if (name == "mul_bits.0") {
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(iface.createMul(x, y));
 
     } else if (name == "sdiv_bits.0") {
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(safe_sdiv(*this, x, y));
 
     } else if (name == "slt_bits.0") {
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_SLT, x, y));
 
     } else if (name == "sle_bits.0") {
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_SLE, x, y));
 
     } else if (name == "lsl_bits.0") {
-      std::tie(x, y) = unify_sizes(x, y);
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::ZEXT);
       return static_cast<expr_t>(safe_shift(iface, x, llvm::Instruction::BinaryOps::Shl, y));
 
     } else if (name == "lsr_bits.0") {
-      std::tie(x, y) = unify_sizes(x, y);
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::ZEXT);
       return static_cast<expr_t>(safe_shift(iface, x, llvm::Instruction::BinaryOps::LShr, y));
 
     } else if (name == "asr_bits.0") {
-      std::tie(x, y) = unify_sizes(x, y);
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::ZEXT);
       return static_cast<expr_t>(safe_shift(iface, x, llvm::Instruction::BinaryOps::AShr, y));
 
     } else if (name == "append_bits.0") {
@@ -654,7 +672,8 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 
     } else if (name == "replicate_bits.0") {
       auto count = llvm::cast<llvm::ConstantInt>(y)->getSExtValue();
-      auto basewd = x->getType()->getIntegerBitWidth() ;
+      x = coerce_to_int(x);
+      auto basewd = x->getType()->getIntegerBitWidth();
       auto valueToStore = iface.getUndefVec(count, basewd);
       for (unsigned i = 0; i < count; ++i) {
         valueToStore = iface.createInsertElement(valueToStore, x, i);
@@ -858,7 +877,8 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
         auto elems = bv_size / elem_size;
         vector = coerce(args[0], iface.getVecTy(elem_size, elems));
       }
-      auto insert = iface.createInsertElement(vector, args[3], args[1]);
+      auto val = coerce(args[3], vector->getType()->getScalarType());
+      auto insert = iface.createInsertElement(vector, val, args[1]);
       return insert;
 
     } else if (name == "ite_vec.0") {

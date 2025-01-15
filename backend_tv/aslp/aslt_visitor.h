@@ -30,6 +30,8 @@ public:
   using super = aslt::SemanticsBaseVisitor;
   lifter_interface_llvm &iface;
 
+  enum class unify_mode { SEXT, ZEXT, EXACT };
+
 private:
   bool debug;
   llvm::Function &func;  // needed to create basic blocks in here
@@ -128,6 +130,8 @@ public:
     if (e->getType() == ty) return e;
     if (auto load = llvm::dyn_cast<llvm::LoadInst>(e)) {
       return iface.createLoad(ty, load->getPointerOperand());
+    } else if (auto bcast = llvm::dyn_cast<llvm::BitCastInst>(e)) {
+      return coerce(bcast->getOperand(0), ty);
     }
     // } else if (auto trunc = llvm::dyn_cast<llvm::TruncInst>(e)) {
     //   return coerce(trunc->getOperand(0), ty);  // XXX: are truncs always guaranteed to obtain the lowest bytes?? seems susipcious
@@ -144,8 +148,16 @@ public:
     return iface.createBitCast(e, ty);
   }
 
+  virtual expr_t coerce_to_int(expr_t e) {
+    if (e->getType()->isIntegerTy()) {
+      return e;
+    }
+    auto intty = iface.getIntTy(e->getType()->getPrimitiveSizeInBits());
+    return iface.createBitCast(e, intty);
+  }
+
   virtual std::pair<expr_t, expr_t> ptr_expr(expr_t x, llvm::Instruction* before = nullptr);
-  virtual std::pair<expr_t, expr_t> unify_sizes(expr_t x, expr_t y, bool sign = true);
+  virtual std::pair<expr_t, expr_t> unify_sizes(expr_t x, expr_t y, unify_mode mode = unify_mode::EXACT);
 
   virtual lexpr_t ref_expr(expr_t expr) {
     // XXX: HACK! since ExprVar are realised as LoadInst, this is incorrect in an array.
