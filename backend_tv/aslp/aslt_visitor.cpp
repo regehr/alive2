@@ -1097,15 +1097,14 @@ std::any aslt_visitor::visitExprSlices(SemanticsParser::ExprSlicesContext *ctx) 
   // then, truncating to the "width" value
   auto lo = llvm::ConstantInt::get(base->getType(), sl.lo);
   auto wdty = llvm::Type::getIntNTy(context, sl.wd);
-  auto vec_size = base->getType()->getIntegerBitWidth();
-
+  auto vec_size = base->getType()->getPrimitiveSizeInBits();
 
   if (sl.lo % sl.wd == 0 && vec_size % sl.wd == 0) {
     // Vector access
     auto elem_size = sl.wd;
     auto elems = vec_size / elem_size;
     auto vector = coerce(base, iface.getVecTy(elem_size, elems));
-    auto pos = llvm::ConstantInt::get(base->getType(), sl.lo / sl.wd);
+    auto pos = iface.getUnsignedIntConst(sl.lo / sl.wd, 100);
     return iface.createExtractElement(vector, pos);
   } else if (lo->isZeroValue()) {
     // Just trunc
