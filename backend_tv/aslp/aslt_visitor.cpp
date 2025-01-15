@@ -15,6 +15,7 @@
 
 #include <ostream>
 #include <ranges>
+#include <sstream>
 
 using namespace aslt;
 
@@ -839,6 +840,20 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
         op = llvm::BinaryOperator::BinaryOps::FDiv;
       return static_cast<expr_t>(iface.createBinop(x, y, op));
 
+    } else if (name == "FPCompareEQ.0" || name == "FPCompareGE.0" || name == "FPCompareGT.0") {
+      // boolean FPCompareEQ(bits(N) op1, bits(N) op2, FPCRType fpcr)
+      x = coerce(x, iface.getFPType(x->getType()->getIntegerBitWidth()));
+      y = coerce(y, iface.getFPType(y->getType()->getIntegerBitWidth()));
+
+      auto op = llvm::FCmpInst::Predicate::BAD_FCMP_PREDICATE;
+      if (name == "FPCompareEQ.0")
+        op = llvm::FCmpInst::Predicate::FCMP_OEQ;
+      else if (name == "FPCompareGT.0")
+        op = llvm::FCmpInst::Predicate::FCMP_OGT;
+      else if (name == "FPCompareGE.0")
+        op = llvm::FCmpInst::Predicate::FCMP_OGE;
+      return static_cast<expr_t>(iface.createFCmp(op, x, y));
+
     } else if (name == "FPConvert.0") {
       // Convert floating point OP with N-bit precision to M-bit precision,
       // with rounding controlled by ROUNDING.
@@ -1001,7 +1016,9 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
     }
   }
 
-  die("unsupported TAPPLY: " + name);
+  std::ostringstream ss;
+  ss << "unsupported TAPPLY: " << name << " with " << args.size() << " args, " << targs.size() << " targs";
+  die(ss.view());
 }
 
 std::any aslt_visitor::visitExprSlices(SemanticsParser::ExprSlicesContext *ctx) {
