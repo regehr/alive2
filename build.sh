@@ -47,10 +47,10 @@ cmake --build build
 else
   # -DCMAKE_BUILD_TYPE=Release \
 cmake -B build -DBUILD_TV=1 \
-  -DCMAKE_PREFIX_PATH="$(realpath build/antlr-dev);$(realpath build/llvm-dev)" \
+  -DCMAKE_PREFIX_PATH="$(realpath build/antlr-dev)" \
   -DANTLR4_JAR_LOCATION="$(realpath build/antlr-jar)" \
+  -DLLVM_DIR=~/progs/llvm-regehr/build/lib/cmake/llvm/ \
   "$@"
-  # -DLLVM_DIR=~/progs/llvm-regehr/build/lib/cmake/llvm/ \
   # -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp \
   # -DCMAKE_VERBOSE_MAKEFILE=TRUE \
 cmake --build build -j12
