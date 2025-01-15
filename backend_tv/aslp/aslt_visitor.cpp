@@ -138,7 +138,10 @@ llvm::Value* safe_sdiv(aslt_visitor& vis, llvm::Value* numerator, llvm::Value* d
 }
 
 
+// coerce the given x into a pointer as best we can by examining its structure, recursively.
+// (similar to coerce(), which works on normal scalars and vectors).
 std::pair<expr_t, expr_t> aslt_visitor::ptr_expr(llvm::Value* x, llvm::Instruction* before) {
+
   lexpr_t base = nullptr;
   expr_t offset = iface.getUnsignedIntConst(0, x->getType()->getIntegerBitWidth());
 

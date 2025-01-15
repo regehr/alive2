@@ -1,3 +1,5 @@
+#include "aslp/interface.h"
+
 #include "llvm/IR/Module.h"
 #include "llvm/MC/TargetRegistry.h"
 
@@ -59,5 +61,7 @@ std::unique_ptr<llvm::MemoryBuffer> generateAsm(llvm::Module &);
 std::pair<llvm::Function *, llvm::Function *>
 liftFunc(llvm::Module *, llvm::Module *, llvm::Function *,
          std::unique_ptr<llvm::MemoryBuffer>);
+
+aslp::lifter_interface_llvm getLifterInterface();
 
 } // namespace lifter
