@@ -1092,12 +1092,26 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
     } if (name == "FPToFixed.0" && targs.size() == 2) {
       // bits(M) FPToFixed(bits(N) op, integer fbits, boolean unsigned, FPCRType fpcr, FPRounding rounding)
       auto wdout = targs[0], wdin = targs[1];
-      auto val = args[0], fbits = args[1], unsign = args[2], fpcr = args[3], rounding = args[4];
-      (void)fpcr, (void)rounding;
+      auto val = args[0], fbits = args[1], unsign = args[2], fpcr = args[3], fprounding = args[4];
+      (void)fpcr, (void)fprounding;
       // XXX same problems as FixedToFP.
       iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, fbits, llvm::ConstantInt::get(fbits->getType(), 0)));
 
       val = coerce(val, iface.getFPType(wdin));
+
+      auto roundingconst = llvm::dyn_cast<llvm::ConstantInt>(fprounding);
+      if (!roundingconst) {
+        val = iface.createRound(val);
+      }
+      uint64_t rounding = roundingconst ? roundingconst->getZExtValue() : -1;
+      if (rounding == 1) {
+        val = iface.createConstrainedCeil(val); // ceiling to posinf
+      } else if (rounding == 2) {
+        val = iface.createConstrainedFloor(val); // flooring to neginf
+      } else if (rounding == 4) {
+        val = iface.createConstrainedRound(val); // tie-away
+      }
+
       return static_cast<expr_t>(
           iface.createSelect(
             unsign,
