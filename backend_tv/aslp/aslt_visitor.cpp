@@ -648,6 +648,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       return static_cast<expr_t>(safe_shift(iface, x, llvm::Instruction::BinaryOps::AShr, y));
 
     } else if (name == "append_bits.0") {
+      x = coerce_to_int(x); y = coerce_to_int(y);
       auto upper = x, lower = y;
 
       auto upperwd = upper->getType()->getIntegerBitWidth();
@@ -659,7 +660,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
         auto valueToStore = iface.getUndefVec(2, upperwd);
         valueToStore = iface.createInsertElement(valueToStore, x, 1);
         valueToStore = iface.createInsertElement(valueToStore, y, 0);
-        return coerce(valueToStore, iface.getIntTy(upperwd * 2));
+        return valueToStore;
       }
 
       auto finalty = iface.getIntTy(upperwd + lowerwd);
@@ -853,6 +854,27 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       else if (name == "FPCompareGE.0")
         op = llvm::FCmpInst::Predicate::FCMP_OGE;
       return static_cast<expr_t>(iface.createFCmp(op, x, y));
+
+    } else if (name == "FPMax.0" || name == "FPMin.0" || name == "FPMaxNum.0" || name == "FPMinNum.0") {
+      // bits(N) FPMax(bits(N) op1, bits(N) op2, FPCRType fpcr)
+      // bits(N) FPMaxNum(bits(N) op1, bits(N) op2, FPCRType fpcr)
+      x = coerce(x, iface.getFPType(x->getType()->getIntegerBitWidth()));
+      y = coerce(y, iface.getFPType(y->getType()->getIntegerBitWidth()));
+
+      auto module = iface.ll_function().getParent();
+      auto op = llvm::Intrinsic::num_intrinsics;
+      if (name == "FPMax.0")
+        op = llvm::Intrinsic::maximum;
+      else if (name == "FPMin.0")
+        op = llvm::Intrinsic::minimum;
+      else if (name == "FPMaxNum.0")
+        op = llvm::Intrinsic::maxnum;
+      else if (name == "FPMinNum.0")
+        op = llvm::Intrinsic::minnum;
+
+      auto decl = llvm::Intrinsic::getOrInsertDeclaration(module, op, x->getType());
+      expr_t res = llvm::CallInst::Create(decl, {x, y}, iface.nextName(), iface.get_bb());
+      return res;
 
     } else if (name == "FPConvert.0") {
       // Convert floating point OP with N-bit precision to M-bit precision,
