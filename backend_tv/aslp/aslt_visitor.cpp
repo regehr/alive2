@@ -268,26 +268,43 @@ expr_t aslt_visitor::ptr_expr(llvm::Value* x) {
   return new llvm::IntToPtrInst(x, llvm::PointerType::get(context, 0), iface.nextName(), iface.get_bb());
 }
 
-std::pair<llvm::Value*, llvm::Value*> aslt_visitor::unify_sizes(llvm::Value* x, llvm::Value* y, unify_mode mode) {
-  x = coerce_to_int(x), y = coerce_to_int(y);
+std::pair<llvm::Value*, llvm::Value*> aslt_visitor::unify_sizes(llvm::Value* x1, llvm::Value* x2, unify_mode mode) {
+  auto ty1 = x1->getType(), ty2 = x2->getType();
+  auto wd1 = ty1->getPrimitiveSizeInBits(), wd2 = ty2->getPrimitiveSizeInBits();
 
-  auto ty1 = x->getType(), ty2 = y->getType();
-  auto wd1 = ty1->getIntegerBitWidth(), wd2 = ty2->getIntegerBitWidth();
+  if (mode == unify_mode::EXACT || mode == unify_mode::EXACT_VECTOR) {
+    require(wd1 == wd2, "operands must have same size", x1);
+  }
+
+  auto vec1 = llvm::dyn_cast<llvm::VectorType>(ty1), vec2 = llvm::dyn_cast<llvm::VectorType>(ty2);
+  if ((vec1 || vec2) && mode == unify_mode::EXACT_VECTOR) {
+    if (vec1 && !vec2) {
+      x2 = coerce(x2, ty1);
+
+    } else if (!vec1 && vec2) {
+      x1 = coerce(x1, ty2);
+
+    } else if (vec1->getScalarSizeInBits() > vec2->getScalarSizeInBits()) {
+      x1 = coerce(x1, ty2); // it is probably easier to split vector elements than fuse them
+
+    } else if (vec1->getScalarSizeInBits() < vec2->getScalarSizeInBits()) {
+      x2 = coerce(x2, ty1);
+    }
+    return std::make_pair(x1, x2);
+  }
+
+  x1 = coerce_to_int(x1), x2 = coerce_to_int(x2);
 
   auto sext = &lifter_interface_llvm::createSExt;
   auto zext = &lifter_interface_llvm::createZExt;
   const decltype(sext) extend = mode == unify_mode::SEXT ? sext : zext;
 
-  if (mode == unify_mode::EXACT) {
-    require(wd1 == wd2, "operands must have same size", x);
-  }
-
   if (wd1 < wd2) {
-    x = (iface.*extend)(x, ty2);
+    x1 = (iface.*extend)(x1, ty2);
   } else if (wd2 < wd1) {
-    y = (iface.*extend)(y, ty1);
+    x2 = (iface.*extend)(x2, ty1);
   }
-  return std::make_pair(x, y);
+  return std::make_pair(x1, x2);
 }
 
 std::any aslt_visitor::visitStmt(SemanticsParser::StmtContext *ctx) {
@@ -711,15 +728,15 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       return static_cast<expr_t>(iface.createSub(x, y));
 
     } else if (name == "eor_bits.0") {
-      // std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT_VECTOR);
       return static_cast<expr_t>(iface.createBinop(x, y, llvm::BinaryOperator::BinaryOps::Xor));
 
     } else if (name == "and_bits.0" || name == "and_bool.0") {
-      // std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT_VECTOR);
       return static_cast<expr_t>(iface.createAnd(x, y));
 
     } else if (name == "or_bits.0" || name == "or_bool.0") {
-      // std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT_VECTOR);
       return static_cast<expr_t>(iface.createOr(x, y));
 
     } else if (name == "mul_bits.0") {

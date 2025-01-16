@@ -30,7 +30,7 @@ public:
   using super = aslt::SemanticsBaseVisitor;
   lifter_interface_llvm &iface;
 
-  enum class unify_mode { SEXT, ZEXT, EXACT };
+  enum class unify_mode { SEXT, ZEXT, EXACT, EXACT_VECTOR };
 
 private:
   bool debug;
