@@ -660,6 +660,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
   } else if (args.size() == 2) {
     auto x = args[0], y = args[1];
     if (name == "SignExtend.0" && targs.size() == 2) {
+      x = coerce_to_int(x);
       type_t finalty = llvm::Type::getIntNTy(context, targs[1]);
       require_(finalty != x->getType()); // it is undef to sext to the same size
       return static_cast<expr_t>(iface.createSExt(x, finalty));
@@ -710,15 +711,15 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       return static_cast<expr_t>(iface.createSub(x, y));
 
     } else if (name == "eor_bits.0") {
-      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
+      // std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(iface.createBinop(x, y, llvm::BinaryOperator::BinaryOps::Xor));
 
     } else if (name == "and_bits.0" || name == "and_bool.0") {
-      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
+      // std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(iface.createAnd(x, y));
 
     } else if (name == "or_bits.0" || name == "or_bool.0") {
-      std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
+      // std::tie(x, y) = unify_sizes(x, y, unify_mode::EXACT);
       return static_cast<expr_t>(iface.createOr(x, y));
 
     } else if (name == "mul_bits.0") {
@@ -1140,10 +1141,6 @@ std::any aslt_visitor::visitExprSlices(SemanticsParser::ExprSlicesContext *ctx) 
   log() << "visitExprSlices" << '\n';
   auto base = expr(ctx->expr());
   auto sl = slice(ctx->slice_expr());
-  // a slice is done by right shifting by the "low" value,
-  // then, truncating to the "width" value
-  auto lo = llvm::ConstantInt::get(base->getType(), sl.lo);
-  auto wdty = llvm::Type::getIntNTy(context, sl.wd);
   auto vec_size = base->getType()->getPrimitiveSizeInBits();
 
   if (sl.lo % sl.wd == 0 && vec_size % sl.wd == 0) {
@@ -1153,15 +1150,26 @@ std::any aslt_visitor::visitExprSlices(SemanticsParser::ExprSlicesContext *ctx) 
     auto vector = coerce(base, iface.getVecTy(elem_size, elems));
     auto pos = iface.getUnsignedIntConst(sl.lo / sl.wd, 100);
     return iface.createExtractElement(vector, pos);
-  } else if (lo->isZeroValue()) {
-    // Just trunc
-    auto trunced = iface.createTrunc(base, wdty);
-    return static_cast<expr_t>(trunced);
+
   } else {
-    // raw shift ok, since slice must be within bounds.
-    auto shifted = !lo->isZeroValue() ? iface.createRawLShr(base, lo) : base;
-    auto trunced = iface.createTrunc(shifted, wdty);
-    return static_cast<expr_t>(trunced);
+    // fallback to slice of scalar
+    base = coerce_to_int(base);
+
+    // a slice is done by right shifting by the "low" value,
+    // then, truncating to the "width" value
+    auto lo = llvm::ConstantInt::get(base->getType(), sl.lo);
+    auto wdty = llvm::Type::getIntNTy(context, sl.wd);
+    if (lo->isZeroValue()) {
+      // Just trunc
+      auto trunced = iface.createTrunc(base, wdty);
+      return static_cast<expr_t>(trunced);
+    } else {
+      // raw shift ok, since slice must be within bounds.
+      auto shifted = !lo->isZeroValue() ? iface.createRawLShr(base, lo) : base;
+      auto trunced = iface.createTrunc(shifted, wdty);
+      return static_cast<expr_t>(trunced);
+    }
+
   }
 }
 
