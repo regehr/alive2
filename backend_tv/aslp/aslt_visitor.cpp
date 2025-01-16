@@ -71,6 +71,7 @@ namespace aslp {
 llvm::Value* apply_fprounding(lifter_interface_llvm& iface, llvm::Value* val, llvm::Value* fproundingval, llvm::Value* exactval) {
   auto exactconst = llvm::cast<llvm::ConstantInt>(exactval);
   bool exact = 1 == exactconst->getZExtValue();
+  require(exact, "apply_fprounding only supports exact mode"); // all of the llvm functions may throw on inexact.
 
   auto roundingconst = llvm::dyn_cast<llvm::ConstantInt>(fproundingval);
   if (!roundingconst) {
@@ -78,12 +79,18 @@ llvm::Value* apply_fprounding(lifter_interface_llvm& iface, llvm::Value* val, ll
     val = iface.createRound(val); // actually rint
   } else {
     uint64_t rounding = roundingconst->getZExtValue();
-    if (rounding == 1) {
+    if (rounding == 0) {
+      die("apply_fprounding tie-to-even unsupported", fproundingval); // tie-to-even
+    } else if (rounding == 1) {
       val = iface.createConstrainedCeil(val); // ceiling to posinf
     } else if (rounding == 2) {
       val = iface.createConstrainedFloor(val); // flooring to neginf
+    } else if (rounding == 3) {
+      die("apply_fprounding towards zero unsupported", fproundingval); // towards zero
     } else if (rounding == 4) {
       val = iface.createConstrainedRound(val); // tie-away
+    } else if (rounding == 5) {
+      die("apply_fprounding tie-to-odd unsupported", fproundingval); // towards odd
     } else {
       die("unknown constant rounding mode", fproundingval);
     }
@@ -1107,7 +1114,13 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 
       val = coerce(val, iface.getFPType(wdin));
 
-      val = apply_fprounding(iface, val, fprounding, iface.getUnsignedIntConst(1, 1));
+      auto roundingconst = llvm::dyn_cast<llvm::ConstantInt>(fprounding);
+      if (roundingconst && roundingconst->getZExtValue() == 3) {
+        // rounding towards zero is handled by the FPToUI instructions.
+        ;
+      } else {
+        val = apply_fprounding(iface, val, fprounding, iface.getUnsignedIntConst(1, 1));
+      }
 
       return static_cast<expr_t>(
           iface.createSelect(
