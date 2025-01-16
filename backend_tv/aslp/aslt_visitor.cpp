@@ -66,6 +66,33 @@ namespace {
 namespace aslp {
 
 /**
+ * Applies the FPRounding as defined in ASL.
+ */
+llvm::Value* apply_fprounding(lifter_interface_llvm& iface, llvm::Value* val, llvm::Value* fproundingval, llvm::Value* exactval) {
+  auto exactconst = llvm::cast<llvm::ConstantInt>(exactval);
+  bool exact = 1 == exactconst->getZExtValue();
+
+  auto roundingconst = llvm::dyn_cast<llvm::ConstantInt>(fproundingval);
+  if (!roundingconst) {
+    // XXX:if this is FPCR-dependent, we should use llvm.experimental.constrained.rint instead, but this is unsupported
+    val = iface.createRound(val); // actually rint
+  } else {
+    uint64_t rounding = roundingconst->getZExtValue();
+    if (rounding == 1) {
+      val = iface.createConstrainedCeil(val); // ceiling to posinf
+    } else if (rounding == 2) {
+      val = iface.createConstrainedFloor(val); // flooring to neginf
+    } else if (rounding == 4) {
+      val = iface.createConstrainedRound(val); // tie-away
+    } else {
+      die("unknown constant rounding mode", fproundingval);
+    }
+  }
+
+  return val;
+}
+
+/**
  * Wraps the shift operations to define shifts by >= bitwidth as zero. Supports scalars and vectors.
  */
 llvm::Value* safe_shift(lifter_interface_llvm& iface, llvm::Value* x, llvm::Instruction::BinaryOps op, llvm::Value* shift) {
@@ -1049,26 +1076,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 
       a = coerce(a, iface.getFPType(a->getType()->getIntegerBitWidth()));
 
-      auto roundingconst = llvm::dyn_cast<llvm::ConstantInt>(fprounding);
-      if (!roundingconst) {
-        // XXX: assume non-constant rounding modes are FPCR-dependent in the expected way
-        return iface.createRound(a);
-      }
-      // require(roundingconst, "FPRoundInt: dynamic fprounding parameter unsupported", fprounding);
-
-      iface.assertTrue(iface.createICmp(llvm::ICmpInst::Predicate::ICMP_EQ, exact, iface.getUnsignedIntConst(0, 1)));
-
-      uint64_t rounding = roundingconst->getZExtValue();
-      if (rounding == 1) {
-        return iface.createConstrainedCeil(a); // ceiling to posinf
-      } else if (rounding == 2) {
-        return iface.createConstrainedFloor(a); // flooring to neginf
-      } else if (rounding == 4) {
-        return iface.createConstrainedRound(a); // tie-away
-      } else {
-        require(false, "FPRoundInt: unsupported rounding mode", fprounding);
-      }
-
+      return apply_fprounding(iface, a, fprounding, exact);
     }
 
   } else if (args.size() == 5) {
@@ -1099,18 +1107,7 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
 
       val = coerce(val, iface.getFPType(wdin));
 
-      auto roundingconst = llvm::dyn_cast<llvm::ConstantInt>(fprounding);
-      if (!roundingconst) {
-        val = iface.createRound(val);
-      }
-      uint64_t rounding = roundingconst ? roundingconst->getZExtValue() : -1;
-      if (rounding == 1) {
-        val = iface.createConstrainedCeil(val); // ceiling to posinf
-      } else if (rounding == 2) {
-        val = iface.createConstrainedFloor(val); // flooring to neginf
-      } else if (rounding == 4) {
-        val = iface.createConstrainedRound(val); // tie-away
-      }
+      val = apply_fprounding(iface, val, fprounding, iface.getUnsignedIntConst(1, 1));
 
       return static_cast<expr_t>(
           iface.createSelect(
