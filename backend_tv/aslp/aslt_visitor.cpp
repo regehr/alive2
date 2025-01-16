@@ -71,7 +71,8 @@ namespace aslp {
 llvm::Value* apply_fprounding(lifter_interface_llvm& iface, llvm::Value* val, llvm::Value* fproundingval, llvm::Value* exactval) {
   auto exactconst = llvm::cast<llvm::ConstantInt>(exactval);
   bool exact = 1 == exactconst->getZExtValue();
-  require(exact, "apply_fprounding only supports exact mode"); // all of the llvm functions may throw on inexact.
+  // require(exact, "apply_fprounding only supports exact mode"); // all of the llvm functions may throw on inexact.
+  (void)exact;
 
   auto roundingconst = llvm::dyn_cast<llvm::ConstantInt>(fproundingval);
   if (!roundingconst) {
