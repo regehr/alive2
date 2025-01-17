@@ -772,7 +772,8 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       return static_cast<expr_t>(safe_shift(iface, x, llvm::Instruction::BinaryOps::LShr, y));
 
     } else if (name == "asr_bits.0") {
-      std::tie(x, y) = unify_sizes(x, y, unify_mode::ZEXT);
+      // XXX: should this be a sext in the value argument and zext in the shift argument?
+      std::tie(x, y) = unify_sizes(x, y, unify_mode::SEXT);
       return static_cast<expr_t>(safe_shift(iface, x, llvm::Instruction::BinaryOps::AShr, y));
 
     } else if (name == "append_bits.0") {

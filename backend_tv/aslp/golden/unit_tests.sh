@@ -44,7 +44,7 @@ tests/lit/lit.py tests/arm-tv/ -s -j12 | grep '\(^FAIL\|Total\)\|%)'
 # FAIL: Alive2 :: arm-tv/vectors/mem-ops/stp/STPDpre.aarch64.ll (classic) (13794 of 15074)
 # FAIL: Alive2 :: arm-tv/vectors/tbl/TBLv16i8Two.aarch64.ll (aslp) (14803 of 15074)
 # Total Discovered Tests: 15074
-#   Passed   : 14555 (96.56%)
-#   Timed Out:   484 (3.21%)
+#   Passed   : 14563 (96.61%)
+#   Timed Out:   476 (3.16%)
 #   Failed   :    35 (0.23%)
 
