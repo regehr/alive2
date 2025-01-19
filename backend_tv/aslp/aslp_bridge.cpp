@@ -132,8 +132,6 @@ std::variant<err_t, stmt_t> bridge::parse(std::string_view aslt) {
   assert(ctx && "parsing failed! syntax error?");
 
   auto result = std::any_cast<stmt_t>(visitor.visitStmt_lines(ctx));
-  result.first->begin()->setMetadata("aslp.entry",
-    llvm::MDTuple::get(context, {llvm::MDString::get(context, ctx->getText())}));
   return result;
 }
 

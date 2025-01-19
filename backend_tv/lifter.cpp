@@ -4549,6 +4549,7 @@ public:
     auto entrybb = LLVMBB;
     aslp::bridge bridge{*this, MCE, STI, IA};
 
+    StringRef instStr = InstPrinter->getOpcodeName(I.getOpcode());
     if (auto a64Opcode = getArmOpcode(I)) {
       auto aslpResult = bridge.run(I, a64Opcode.value());
 
@@ -4560,9 +4561,11 @@ public:
         auto [encoding, stmts] = *result;
         this->createBranch(stmts.first);
         LLVMBB = stmts.second;
+        stmts.first->begin()->setMetadata("asm.aslp",
+          llvm::MDTuple::get(Ctx, {llvm::MDString::get(Ctx, instStr)}));
 
         *out << "... lifted via aslp: " << encoding << " - "
-             << InstPrinter->getOpcodeName(I.getOpcode()).str() << std::endl;
+             << instStr.str() << std::endl;
         encodingCounts[encoding]++;
         return;
 
@@ -4594,6 +4597,9 @@ public:
     // always create new bb per instruction, to match aslp
     auto newbb = BasicBlock::Create(Ctx, "lifter_" + nextName(), liftedFn);
     createBranch(newbb);
+    LLVMBB->getTerminator()->setMetadata("asm.classic",
+      llvm::MDTuple::get(Ctx, {llvm::MDString::get(Ctx, instStr)}));
+
     LLVMBB = newbb;
 
     auto i1 = getIntTy(1);

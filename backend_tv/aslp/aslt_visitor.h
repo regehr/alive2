@@ -87,7 +87,7 @@ public:
     auto x = ctx->accept(this);
     depth--;
     auto result = std::any_cast<expr_t>(x);
-    if (auto inst = llvm::dyn_cast<llvm::Instruction>(result); inst) {
+    if (auto inst = llvm::dyn_cast<llvm::Instruction>(result); debug && inst) {
       inst->setMetadata("aslp.expr",
         llvm::MDTuple::get(context, {llvm::MDString::get(context, ctx->getText())}));
     }
@@ -187,8 +187,10 @@ public:
     depth--;
     // std::cout << "stmt cast" << '\n';
     auto result = std::any_cast<stmt_t>(x);
-    result.first->begin()->setMetadata("aslp.stmt",
-      llvm::MDTuple::get(context, {llvm::MDString::get(context, ctx->getText())}));
+    if (debug) {
+      result.first->begin()->setMetadata("aslp.stmt",
+        llvm::MDTuple::get(context, {llvm::MDString::get(context, ctx->getText())}));
+    }
     return result;
   }
 
