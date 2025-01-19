@@ -8,7 +8,7 @@
 tests/lit/lit.py tests/arm-tv/ -s -j12 | grep '\(^FAIL\|Total\)\|%)'
 
 # expected stdout:
-# FAIL: Alive2 :: arm-tv/aslp/fptoui.aarch64.ll (classic) (30 of 15078)
+# FAIL: Alive2 :: arm-tv/aslp/fptoui.aarch64.ll (classic) (28 of 15078)
 # FAIL: Alive2 :: arm-tv/calls/callsite-attr.aarch64.ll (classic) (222 of 15078)
 # FAIL: Alive2 :: arm-tv/calls/t1.aarch64.ll (aslp) (517 of 15078)
 # FAIL: Alive2 :: arm-tv/calls/t1.aarch64.ll (classic) (518 of 15078)
@@ -44,8 +44,7 @@ tests/lit/lit.py tests/arm-tv/ -s -j12 | grep '\(^FAIL\|Total\)\|%)'
 # FAIL: Alive2 :: arm-tv/vectors/mem-ops/stp/STPDpre.aarch64.ll (classic) (13798 of 15078)
 # FAIL: Alive2 :: arm-tv/vectors/tbl/TBLv16i8Two.aarch64.ll (aslp) (14807 of 15078)
 # Total Discovered Tests: 15078
-#   Passed    : 14555 (96.53%)
-#   Unresolved:     2 (0.01%)
-#   Timed Out :   486 (3.22%)
-#   Failed    :    35 (0.23%)
+#   Passed   : 14563 (96.58%)
+#   Timed Out:   480 (3.18%)
+#   Failed   :    35 (0.23%)
 
