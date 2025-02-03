@@ -24,7 +24,7 @@ if [[ -d aslp ]]; then :
 elif command -v aslp-server &>/dev/null; then
   mkdir -p aslp/bin; ln -s $(which aslp-server) ./aslp/bin
 else
-  nix build 'github:katrinafyi/pac-nix#aslp' -o aslp
+  nix build 'github:katrinafyi/pac-nix#aslp-server' -o aslp
 fi
 
 if ! [[ -d varnish ]]; then
