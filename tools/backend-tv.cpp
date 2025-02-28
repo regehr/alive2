@@ -117,34 +117,6 @@ llvm::cl::opt<string> opt_asm_input(
 
 llvm::ExitOnError ExitOnErr;
 
-// TODO -- find a proper place for tryReplaceRoundTrip
-bool tryReplaceRoundTrip(llvm::IntToPtrInst* intToPtr) {
-  if (!intToPtr) return false;
-
-  llvm::Instruction* op_inst = dyn_cast<llvm::Instruction>(intToPtr->getOperand(0));
-  if (!op_inst || op_inst->getOpcode() != llvm::Instruction::Add || op_inst->getNumUses() > 1)
-      return false;
-
-  // FIXME -- check for other situations
-  llvm::PtrToIntInst* ptrToInt = dyn_cast<llvm::PtrToIntInst>(op_inst->getOperand(0));
-  if (!ptrToInt || ptrToInt->getNumUses() > 1)
-      return false;
-
-  llvm::IRBuilder<> B(intToPtr);
-
-  llvm::Value* gep = B.CreateGEP(B.getInt8Ty(), 
-                                 ptrToInt->getOperand(0), 
-                                 {op_inst->getOperand(1)}, 
-                                 "");
-  
-  intToPtr->replaceAllUsesWith(gep);
-  intToPtr->eraseFromParent();
-  op_inst->eraseFromParent();
-  ptrToInt->eraseFromParent();
-
-  return true;
-}
-
 void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
           llvm::TargetLibraryInfoWrapperPass &TLI) {
   assert(lifter::out);
@@ -271,8 +243,8 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
   // apparently iterating in this way is stable
   for (auto it = instructions(*F2).begin(), end = instructions(*F2).end(); it != end;) {
       llvm::Instruction& Inst = *it++;
-      if (auto* intToPtr = dyn_cast<llvm::IntToPtrInst>(&Inst)) {
-          tryReplaceRoundTrip(intToPtr);
+      if (auto *intToPtr = dyn_cast<llvm::IntToPtrInst>(&Inst)) {
+          lifter::tryReplaceRoundTrip(intToPtr);
       }
   }
 
