@@ -986,7 +986,8 @@ public:
       auto passthru = get_operand(i.getOperand(3));
       if (!ty || !ptr || !align || !mask || !passthru)
         return error(i);
-      ret = make_unique<Load>(*ty, value_name(i), *ptr, align->getValue().getZExtValue(),
+      ret = make_unique<Load>(*ty, value_name(i), *ptr,
+                              align->getValue().getZExtValue(),
                               mask, passthru);
       break;
     }
@@ -998,7 +999,8 @@ public:
       auto mask = get_operand(i.getOperand(3));
       if (!val || !ptr || !align || !mask)
         return error(i);
-      ret = make_unique<Store>(*ptr, *val, align->getValue().getZExtValue(), mask);
+      ret = make_unique<Store>(*ptr, *val, align->getValue().getZExtValue(),
+                               mask);
       break;
     }
     case llvm::Intrinsic::fshl:
