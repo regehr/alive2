@@ -490,8 +490,7 @@ void fixupOptimizedTgt(llvm::Function *tgt) {
  * This translation can be verified with physical pointers.
  */
 void tryReplaceRoundTrip(llvm::IntToPtrInst *intToPtr) {
-  if (!intToPtr)
-    return;
+  assert(intToPtr);
 
   // we only understand add instructions in this context
   auto *op_inst = dyn_cast<llvm::Instruction>(intToPtr->getOperand(0));
