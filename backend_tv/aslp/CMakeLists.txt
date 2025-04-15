@@ -39,7 +39,7 @@ FetchContent_GetProperties(aslp-cpp SOURCE_DIR ASLP_DIR)
 message(STATUS "Found aslp-cpp: ${ASLP_DIR} ${aslp-cpp_DIR}")
 
 add_library(grammar STATIC "${ANTLR4_SRC_FILES_Grammar}")
-target_compile_options(grammar PUBLIC -Wno-error=overloaded-virtual -Wno-overloaded-virtual) # warnings in antlr-generated code
+target_compile_options(grammar PUBLIC -fexceptions -Wno-error=overloaded-virtual -Wno-overloaded-virtual) # warnings in antlr-generated code
 target_include_directories(grammar PUBLIC ${PROJECT_BINARY_DIR} ${ANTLR4_INCLUDE_DIR} ${ANTLR4_INCLUDE_DIR_Grammar})
 
 add_llvm_library(bridge "aslp_bridge.cpp" "aslt_visitor.cpp")
