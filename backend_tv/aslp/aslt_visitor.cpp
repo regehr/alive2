@@ -12,6 +12,7 @@
 #include "llvm/IR/MDBuilder.h"
 
 #include <format>
+#include <iostream>
 #include <llvm/IR/Constants.h>
 #include <llvm/Support/Casting.h>
 
@@ -852,7 +853,8 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
     } else if (name == "Elem.read.0") {
       // bits(size) Elem[bits(N) vector, integer e, integer size]
       auto elem_size = llvm::cast<llvm::ConstantInt>(z)->getSExtValue();
-      auto vec_size = x->getType()->getIntegerBitWidth();
+      auto vec_size = x->getType()->getPrimitiveSizeInBits();
+      require(vec_size, "not primitive??");
       auto elems = vec_size / elem_size;
       auto vector = coerce(x, iface.getVecTy(elem_size, elems));
       return iface.createExtractElement(vector, y);
@@ -1039,7 +1041,8 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       if (args[0]->getType()->isVectorTy()) {
         vector = args[0];
       } else {
-        auto bv_size = args[0]->getType()->getIntegerBitWidth();
+        auto bv_size = args[0]->getType()->getPrimitiveSizeInBits();
+        require(bv_size, "not primitive??");
         auto elem_size = llvm::cast<llvm::ConstantInt>(args[2])->getSExtValue();
         auto elems = bv_size / elem_size;
         vector = coerce(args[0], iface.getVecTy(elem_size, elems));
