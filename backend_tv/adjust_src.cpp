@@ -484,4 +484,44 @@ void fixupOptimizedTgt(llvm::Function *tgt) {
     myAllocCall->eraseFromParent();
 }
 
+/**
+ * Given an intToPtr instruction, checks for a round trip 
+ * from a ptrToInt instruction, then replaces with a single GEP instruction.
+ * This translation can be verified with physical pointers.
+ */
+bool tryReplaceRoundTrip(llvm::IntToPtrInst *intToPtr) {
+  assert(intToPtr);
+
+  // we only understand add instructions in this context
+  auto *op_inst = dyn_cast<llvm::Instruction>(intToPtr->getOperand(0));
+  if (!op_inst || op_inst->getOpcode() != llvm::Instruction::Add || op_inst->getNumUses() > 1)
+      return false;
+
+  // keep track of (ptr + int) vs (int + ptr)
+  bool ptrOnLeft = true;
+  auto *ptrToInt = dyn_cast<PtrToIntInst>(op_inst->getOperand(0));
+
+  if (!ptrToInt) {
+      ptrOnLeft = false;
+      ptrToInt = dyn_cast<PtrToIntInst>(op_inst->getOperand(1));
+  }
+
+  if (!ptrToInt || ptrToInt->getNumUses() > 1)
+      return false;
+
+  llvm::IRBuilder<> B(intToPtr);
+
+  llvm::Value *gep = B.CreateGEP(B.getInt8Ty(),
+                                 ptrToInt->getOperand(0),
+                                 {op_inst->getOperand(ptrOnLeft ? 1 : 0)},
+                                 "");
+  
+  intToPtr->replaceAllUsesWith(gep);
+  intToPtr->eraseFromParent();
+  op_inst->eraseFromParent();
+  ptrToInt->eraseFromParent();
+
+  return true;
+}
+
 } // namespace lifter

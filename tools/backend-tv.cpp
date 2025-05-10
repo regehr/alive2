@@ -20,6 +20,7 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/FileSystem.h"
@@ -107,12 +108,32 @@ llvm::cl::opt<bool> save_lifted_ir(
     llvm::cl::desc("Save lifted LLVM IR to file (default=false)"),
     llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
 
+llvm::cl::opt<bool> run_replace_ptrtoint(
+    "run-replace-ptrtoint",
+    llvm::cl::desc("Replace ptr-int round trips with single GEP (default=false)"),
+    llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
+
 llvm::cl::opt<string> opt_asm_input(
     "asm-input",
     llvm::cl::desc("Use the provied file as lifted assembly, instead of "
                    "lifting the LLVM IR. This is only for testing. "
                    "(default=no asm input)"),
     llvm::cl::cat(alive_cmdargs));
+
+int gepCount = 0;
+
+// find and collapse sequences of the form ptrToInt, add, intToPtr
+// into a single GEP instruction. Possible performance benefits.
+void tryReplacePtrtoInt(llvm::Function* fn) {
+  // apparently iterating in this way is stable
+  for (auto it = instructions(*fn).begin(), end = instructions(*fn).end(); it != end;) {
+    llvm::Instruction& Inst = *it++;
+    if (auto *intToPtr = dyn_cast<llvm::IntToPtrInst>(&Inst)) {
+      gepCount += lifter::tryReplaceRoundTrip(intToPtr);
+    }
+  }
+}
+
 
 llvm::ExitOnError ExitOnErr;
 
@@ -151,6 +172,12 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
   for (auto &F : *srcModule) {
     if (&F != srcFn && !F.isDeclaration())
       F.deleteBody();
+  }
+
+  if (run_replace_ptrtoint) {
+    tryReplacePtrtoInt(srcFn);
+    *out << "\nAfter replacing round trips\n";
+    *out << lifter::funcToString(srcFn);
   }
 
   if (opt_internalize) {
@@ -358,7 +385,9 @@ version )EOF";
        << verifier.num_failed
        << " failed-to-prove transformations\n"
           "  "
-       << verifier.num_errors << " Alive2 errors\n";
+       << verifier.num_errors << " Alive2 errors\n"
+          "  "
+       << gepCount << " GEP insertions\n";
 
   if (opt_smt_stats)
     smt::solver_print_stats(*out);

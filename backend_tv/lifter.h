@@ -1,3 +1,4 @@
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/TargetRegistry.h"
 
@@ -53,6 +54,7 @@ llvm::Function *adjustSrc(llvm::Function *);
 void addDebugInfo(llvm::Function *);
 void checkSupport(llvm::Function *);
 void fixupOptimizedTgt(llvm::Function *);
+bool tryReplaceRoundTrip(llvm::IntToPtrInst *);
 
 std::unique_ptr<llvm::MemoryBuffer> generateAsm(llvm::Module &);
 
