@@ -489,13 +489,13 @@ void fixupOptimizedTgt(llvm::Function *tgt) {
  * from a ptrToInt instruction, then replaces with a single GEP instruction.
  * This translation can be verified with physical pointers.
  */
-void tryReplaceRoundTrip(llvm::IntToPtrInst *intToPtr) {
+bool tryReplaceRoundTrip(llvm::IntToPtrInst *intToPtr) {
   assert(intToPtr);
 
   // we only understand add instructions in this context
   auto *op_inst = dyn_cast<llvm::Instruction>(intToPtr->getOperand(0));
   if (!op_inst || op_inst->getOpcode() != llvm::Instruction::Add || op_inst->getNumUses() > 1)
-      return;
+      return false;
 
   // keep track of (ptr + int) vs (int + ptr)
   bool ptrOnLeft = true;
@@ -507,7 +507,7 @@ void tryReplaceRoundTrip(llvm::IntToPtrInst *intToPtr) {
   }
 
   if (!ptrToInt || ptrToInt->getNumUses() > 1)
-      return;
+      return false;
 
   llvm::IRBuilder<> B(intToPtr);
 
@@ -520,6 +520,8 @@ void tryReplaceRoundTrip(llvm::IntToPtrInst *intToPtr) {
   intToPtr->eraseFromParent();
   op_inst->eraseFromParent();
   ptrToInt->eraseFromParent();
+
+  return true;
 }
 
 } // namespace lifter
