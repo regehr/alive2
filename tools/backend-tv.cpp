@@ -108,6 +108,11 @@ llvm::cl::opt<bool> save_lifted_ir(
     llvm::cl::desc("Save lifted LLVM IR to file (default=false)"),
     llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
 
+llvm::cl::opt<bool> run_replace_ptrtoint(
+    "run-replace-ptrtoint",
+    llvm::cl::desc("Replace ptr-int round trips with single GEP (default=false)"),
+    llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
+
 llvm::cl::opt<string> opt_asm_input(
     "asm-input",
     llvm::cl::desc("Use the provied file as lifted assembly, instead of "
