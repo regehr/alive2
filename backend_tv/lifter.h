@@ -54,7 +54,7 @@ llvm::Function *adjustSrc(llvm::Function *);
 void addDebugInfo(llvm::Function *);
 void checkSupport(llvm::Function *);
 void fixupOptimizedTgt(llvm::Function *);
-void tryReplaceRoundTrip(llvm::IntToPtrInst *);
+bool tryReplaceRoundTrip(llvm::IntToPtrInst *);
 
 std::unique_ptr<llvm::MemoryBuffer> generateAsm(llvm::Module &);
 
