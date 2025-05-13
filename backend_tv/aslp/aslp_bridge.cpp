@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <variant>
 
 #include <antlr4-runtime.h>
 #include <llvm/ADT/ArrayRef.h>
