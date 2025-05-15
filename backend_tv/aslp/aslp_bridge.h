@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <variant>
 
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCInst.h"
