@@ -66,17 +66,9 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
-  case RISCV::BNE: {
-    auto a = readFromRegOperand(0);
-    auto b = readFromRegOperand(1);
-    auto [dst_true, dst_false] = getBranchTargetsOperand(2);
-    Value *cond = createICmp(ICmpInst::Predicate::ICMP_NE, a, b);
-    createBranch(cond, dst_true, dst_false);
-    break;
-  }
-
   case RISCV::BLT:
-  case RISCV::BLTU: {
+  case RISCV::BLTU:
+  case RISCV::BNE: {
     auto a = readFromRegOperand(0);
     auto b = readFromRegOperand(1);
     auto [dst_true, dst_false] = getBranchTargetsOperand(2);
@@ -87,6 +79,9 @@ void riscv2llvm::lift(MCInst &I) {
       break;
     case RISCV::BLTU:
       cond = createICmp(ICmpInst::Predicate::ICMP_ULT, a, b);
+      break;
+    case RISCV::BNE:
+      cond = createICmp(ICmpInst::Predicate::ICMP_NE, a, b);
       break;
     default:
       assert(false);
@@ -157,7 +152,6 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::SLLI:
   case RISCV::C_ANDI:
   case RISCV::ANDI:
-  // case RISCV::C_XORI:
   case RISCV::XORI:
   case RISCV::ORI:
   case RISCV::C_ADDI:
@@ -174,7 +168,6 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::ANDI:
       res = createAnd(a, b);
       break;
-    // case RISCV::C_XORI:
     case RISCV::XORI:
       res = createXor(a, b);
       break;
