@@ -120,7 +120,9 @@ void riscv2llvm::lift(MCInst &I) {
   }
 
   case RISCV::C_ADDW:
-  case RISCV::C_SUBW: {
+  case RISCV::ADDW:
+  case RISCV::C_SUBW:
+  case RISCV::SUBW: {
     auto a = readFromRegOperand(1);
     auto b = readFromRegOperand(2);
     auto a32 = createTrunc(a, i32ty);
@@ -128,10 +130,9 @@ void riscv2llvm::lift(MCInst &I) {
     Value *res;
     switch (opcode) {
     case RISCV::C_ADDW:
-    // case RISCV::ADDW:
+    case RISCV::ADDW:
       res = createAdd(a32, b32);
       break;
-    case RISCV::SUBW:
     case RISCV::C_SUBW:
     case RISCV::SUBW:
       res = createSub(a32, b32);
