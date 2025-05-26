@@ -17,7 +17,7 @@ fi
 if [[ -n "$LLVM_ROOT" ]]; then
   ln -s "$LLVM_ROOT" ./llvm-dev
 elif ! [[ -d llvm-dev ]]; then
-  nix build 'github:katrinafyi/pac-nix/llvm-update-2025-01#llvm-custom-git.libllvm^dev' -o llvm
+  nix build 'github:katrinafyi/pac-nix/ac6bd13f242a782e1c69da6cdab2fe1322871bd3#llvm-custom-git.libllvm^dev' -o llvm
 fi
 
 if [[ -d aslp ]]; then :
