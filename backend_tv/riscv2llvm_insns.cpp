@@ -99,8 +99,12 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::ADD:
   case RISCV::C_SUB:
   case RISCV::SUB:
+  case RISCV::C_AND:
+  case RISCV::AND:
   case RISCV::C_OR:
-  case RISCV::OR: {
+  case RISCV::OR:
+  case RISCV::C_XOR:
+  case RISCV::XOR: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromRegOperand(2, i64ty);
     Value *res;
@@ -109,13 +113,21 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::C_ADD:
       res = createAdd(a, b);
       break;
-    case RISCV::SUB:
     case RISCV::C_SUB:
+    case RISCV::SUB:
       res = createSub(a, b);
       break;
     case RISCV::C_OR:
     case RISCV::OR:
       res = createOr(a, b);
+      break;
+    case RISCV::C_AND:
+    case RISCV::AND:
+      res = createAnd(a, b);
+      break;
+    case RISCV::C_XOR:
+    case RISCV::XOR:
+      res = createXor(a, b);
       break;
     case RISCV::MUL:
       res = createMul(a, b);
