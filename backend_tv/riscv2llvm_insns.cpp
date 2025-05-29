@@ -70,9 +70,11 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+  case RISCV::BLT:
+  case RISCV::BLTU:
   case RISCV::BNE: {
-    auto a = readFromRegOperand(0);
-    auto b = readFromRegOperand(1);
+    auto a = readFromRegOperand(0, i64ty);
+    auto b = readFromRegOperand(1, i64ty);
     auto [dst_true, dst_false] = getBranchTargetsOperand(2);
     Value *cond;
     switch (opcode) {
@@ -114,6 +116,9 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::C_OR:
     case RISCV::OR:
       res = createOr(a, b);
+      break;
+    case RISCV::MUL:
+      res = createMul(a, b);
       break;
     default:
       assert(false);
