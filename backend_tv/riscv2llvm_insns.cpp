@@ -138,7 +138,6 @@ void riscv2llvm::lift(MCInst &I) {
       break;
     case RISCV::C_SUBW:
     case RISCV::SUBW:
-    case RISCV::SUBW:
       res = createSub(a32, b32);
       break;
     default:
