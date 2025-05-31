@@ -258,6 +258,33 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+  case RISCV::SW:
+  case RISCV::C_SD:
+  case RISCV::SD: {
+    Type *size{nullptr};
+    switch (opcode) {
+    case RISCV::SW:
+      size = i32ty;
+      break;
+    case RISCV::SD:
+    case RISCV::C_SD:
+    default:
+      size = i64ty;
+      break;
+      assert(false);
+    }
+    auto value = readFromRegOperand(0, size);
+    Value *ptr;
+    if (CurInst->getOperand(2).isImm()) {
+      auto b = readFromImmOperand(2, 12, 64);
+      ptr = createGEP(i8ty, readFromRegOperand(1, ptrTy), {b}, nextName());
+    } else {
+      ptr = getPointerOperand();
+    }
+    createStore(value, ptr);
+    break;
+  }
+
   case RISCV::C_ADDI:
   case RISCV::ADDI: {
     auto a = readFromRegOperand(1, i64ty);
