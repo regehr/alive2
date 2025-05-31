@@ -268,9 +268,9 @@ void riscv2llvm::lift(MCInst &I) {
       break;
     case RISCV::SD:
     case RISCV::C_SD:
-    default:
       size = i64ty;
       break;
+    default:
       assert(false);
     }
     auto value = readFromRegOperand(0, size);
