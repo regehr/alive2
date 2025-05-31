@@ -324,7 +324,7 @@ void riscv2llvm::platformInit() {
  * portable code, not in RISC-V code. there's even some portable code
  * in mc2llvm.cpp that kind of almost handles this already
  */
-Value *riscv2llvm::getPointerOperand() {
+Value *riscv2llvm::getPointerFromMCExpr() {
   auto op1 = CurInst->getOperand(1);
   auto op2 = CurInst->getOperand(2);
   assert(op1.isReg());
@@ -356,4 +356,15 @@ Value *riscv2llvm::getPointerOperand() {
     assert(addrExpr->getKind() == MCExpr::SymbolRef);
     return lookupExprVar(*addrExpr);
   }
+}
+
+Value *riscv2llvm::getPointerOperand() {
+    if (CurInst->getOperand(2).isImm()) {
+      auto imm = readFromImmOperand(2, 12, 64);
+      return createGEP(getIntTy(8), 
+                      readFromRegOperand(1, PointerType::get(Ctx, 0)),
+                      {imm}, nextName());
+    }
+
+    return getPointerFromMCExpr();
 }

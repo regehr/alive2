@@ -244,13 +244,7 @@ void riscv2llvm::lift(MCInst &I) {
       break;
       assert(false);
     }
-    Value *ptr{nullptr};
-    if (CurInst->getOperand(2).isImm()) {
-      auto imm = readFromImmOperand(2, 12, 64);
-      ptr = createGEP(i8ty, readFromRegOperand(1, ptrTy), {imm}, nextName());
-    } else {
-      ptr = getPointerOperand();
-    }
+    Value *ptr = getPointerOperand();
     Value *loaded = createLoad(size, ptr);
     if (size != i64ty)
       loaded = sExt ? createSExt(loaded, i64ty) : createZExt(loaded, i64ty);
@@ -274,13 +268,7 @@ void riscv2llvm::lift(MCInst &I) {
       assert(false);
     }
     auto value = readFromRegOperand(0, size);
-    Value *ptr;
-    if (CurInst->getOperand(2).isImm()) {
-      auto b = readFromImmOperand(2, 12, 64);
-      ptr = createGEP(i8ty, readFromRegOperand(1, ptrTy), {b}, nextName());
-    } else {
-      ptr = getPointerOperand();
-    }
+    auto ptr = getPointerOperand();
     createStore(value, ptr);
     break;
   }
@@ -291,8 +279,9 @@ void riscv2llvm::lift(MCInst &I) {
     if (CurInst->getOperand(2).isImm()) {
       auto b = readFromImmOperand(2, 12, 64);
       updateOutputReg(createAdd(a, b));
-    } else {
-      auto ptr = getPointerOperand();
+    }
+    else {
+      Value *ptr = getPointerFromMCExpr();
       auto res = createGEP(i8ty, ptr, {a}, nextName());
       updateOutputReg(res);
     }
