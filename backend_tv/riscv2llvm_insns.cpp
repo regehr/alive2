@@ -198,18 +198,24 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+  case RISCV::LB:
+  case RISCV::LBU:
   case RISCV::LH:
   case RISCV::LHU:
   case RISCV::LW:
   case RISCV::LWU:
+  case RISCV::C_LD:
   case RISCV::LD: {
     bool sExt;
     switch (opcode) {
+      case RISCV::LB:
     case RISCV::LH:
     case RISCV::LW:
+    case RISCV::C_LD:
     case RISCV::LD:
       sExt = true;
       break;
+      case RISCV::LBU:
     case RISCV::LHU:
     case RISCV::LWU:
       sExt = false;
@@ -219,6 +225,10 @@ void riscv2llvm::lift(MCInst &I) {
     }
     Type *size{nullptr};
     switch (opcode) {
+    case RISCV::LB:
+    case RISCV::LBU:
+      size = i8ty;
+      break;
     case RISCV::LH:
     case RISCV::LHU:
       size = i16ty;
@@ -227,6 +237,7 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::LWU:
       size = i32ty;
       break;
+    case RISCV::C_LD:
     case RISCV::LD:
     default:
       size = i64ty;
