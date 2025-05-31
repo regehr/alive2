@@ -359,12 +359,12 @@ Value *riscv2llvm::getPointerFromMCExpr() {
 }
 
 Value *riscv2llvm::getPointerOperand() {
-    if (CurInst->getOperand(2).isImm()) {
-      auto imm = readFromImmOperand(2, 12, 64);
-      return createGEP(getIntTy(8), 
-                      readFromRegOperand(1, PointerType::get(Ctx, 0)),
-                      {imm}, nextName());
-    }
+  if (CurInst->getOperand(2).isImm()) {
+    auto imm = readFromImmOperand(2, 12, 64);
+    return createGEP(getIntTy(8),
+                     readFromRegOperand(1, PointerType::get(Ctx, 0)), {imm},
+                     nextName());
+  }
 
-    return getPointerFromMCExpr();
+  return getPointerFromMCExpr();
 }

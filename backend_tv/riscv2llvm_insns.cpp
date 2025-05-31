@@ -126,9 +126,9 @@ void riscv2llvm::lift(MCInst &I) {
     auto b = readFromRegOperand(2, i64ty);
     Value *res;
     switch (opcode) {
-      case RISCV::MUL:
-        res = createMul(a, b);
-        break;
+    case RISCV::MUL:
+      res = createMul(a, b);
+      break;
     case RISCV::ADD:
     case RISCV::C_ADD:
       res = createAdd(a, b);
@@ -237,14 +237,14 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::LD: {
     bool sExt;
     switch (opcode) {
-      case RISCV::LB:
+    case RISCV::LB:
     case RISCV::LH:
     case RISCV::LW:
     case RISCV::C_LD:
     case RISCV::LD:
       sExt = true;
       break;
-      case RISCV::LBU:
+    case RISCV::LBU:
     case RISCV::LHU:
     case RISCV::LWU:
       sExt = false;
@@ -322,8 +322,7 @@ void riscv2llvm::lift(MCInst &I) {
     if (CurInst->getOperand(2).isImm()) {
       auto b = readFromImmOperand(2, 12, 64);
       updateOutputReg(createAdd(a, b));
-    }
-    else {
+    } else {
       Value *ptr = getPointerFromMCExpr();
       auto res = createGEP(i8ty, ptr, {a}, nextName());
       updateOutputReg(res);
