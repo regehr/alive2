@@ -29,7 +29,7 @@ void riscv2llvm::lift(MCInst &I) {
   auto i32ty = getIntTy(32);
   auto i64ty = getIntTy(64);
   // auto i128ty = getIntTy(128);
-  auto ptrTy = llvm::PointerType::get(Ctx, 0);
+  // auto ptrTy = llvm::PointerType::get(Ctx, 0);
 
   switch (opcode) {
 
@@ -61,18 +61,30 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
-  case RISCV::C_BNEZ: {
+  case RISCV::C_BNEZ:
+  case RISCV::C_BEQZ: {
     auto a = readFromRegOperand(0, i64ty);
     auto [dst_true, dst_false] = getBranchTargetsOperand(1);
     Value *zero = getUnsignedIntConst(0, 64);
-    Value *cond = createICmp(ICmpInst::Predicate::ICMP_NE, a, zero);
+    Value *cond;
+    switch (opcode) {
+    case RISCV::C_BNEZ:
+      cond = createICmp(ICmpInst::Predicate::ICMP_NE, a, zero);
+      break;
+    case RISCV::C_BEQZ:
+      cond = createICmp(ICmpInst::Predicate::ICMP_EQ, a, zero);
+      break;
+    default:
+      assert(false);
+    }
     createBranch(cond, dst_true, dst_false);
     break;
   }
 
   case RISCV::BLT:
   case RISCV::BLTU:
-  case RISCV::BNE: {
+  case RISCV::BNE:
+  case RISCV::BEQ: {
     auto a = readFromRegOperand(0, i64ty);
     auto b = readFromRegOperand(1, i64ty);
     auto [dst_true, dst_false] = getBranchTargetsOperand(2);
@@ -86,6 +98,9 @@ void riscv2llvm::lift(MCInst &I) {
       break;
     case RISCV::BNE:
       cond = createICmp(ICmpInst::Predicate::ICMP_NE, a, b);
+      break;
+    case RISCV::BEQ:
+      cond = createICmp(ICmpInst::Predicate::ICMP_EQ, a, b);
       break;
     default:
       assert(false);
@@ -104,11 +119,16 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::C_OR:
   case RISCV::OR:
   case RISCV::C_XOR:
-  case RISCV::XOR: {
+  case RISCV::XOR:
+  case RISCV::SRL:
+  case RISCV::SLL: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromRegOperand(2, i64ty);
     Value *res;
     switch (opcode) {
+      case RISCV::MUL:
+        res = createMul(a, b);
+        break;
     case RISCV::ADD:
     case RISCV::C_ADD:
       res = createAdd(a, b);
@@ -129,8 +149,11 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::XOR:
       res = createXor(a, b);
       break;
-    case RISCV::MUL:
-      res = createMul(a, b);
+    case RISCV::SRL:
+      res = createMaskedLShr(a, b);
+      break;
+    case RISCV::SLL:
+      res = createMaskedShl(a, b);
       break;
     default:
       assert(false);
@@ -162,6 +185,12 @@ void riscv2llvm::lift(MCInst &I) {
     }
     auto resExt = createSExt(res, i64ty);
     updateOutputReg(resExt);
+    break;
+  }
+
+  case RISCV::C_LI: {
+    auto imm = readFromImmOperand(1, 12, 64);
+    updateOutputReg(imm);
     break;
   }
 
@@ -252,16 +281,30 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+  case RISCV::C_SB:
+  case RISCV::SB:
+  case RISCV::C_SH:
+  case RISCV::SH:
+  case RISCV::C_SW:
   case RISCV::SW:
   case RISCV::C_SD:
   case RISCV::SD: {
     Type *size{nullptr};
     switch (opcode) {
+    case RISCV::C_SB:
+    case RISCV::SB:
+      size = i8ty;
+      break;
+    case RISCV::C_SH:
+    case RISCV::SH:
+      size = i16ty;
+      break;
+    case RISCV::C_SW:
     case RISCV::SW:
       size = i32ty;
       break;
-    case RISCV::SD:
     case RISCV::C_SD:
+    case RISCV::SD:
       size = i64ty;
       break;
     default:
@@ -344,12 +387,6 @@ void riscv2llvm::lift(MCInst &I) {
 
   case RISCV::C_MV: {
     auto a = readFromRegOperand(1, i64ty);
-    updateOutputReg(a);
-    break;
-  }
-
-  case RISCV::C_LI: {
-    auto a = readFromImmOperand(1, 12, 64);
     updateOutputReg(a);
     break;
   }
