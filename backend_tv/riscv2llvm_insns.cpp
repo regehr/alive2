@@ -84,7 +84,9 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::BLT:
   case RISCV::BLTU:
   case RISCV::BNE:
-  case RISCV::BEQ: {
+  case RISCV::BEQ:
+  case RISCV::BGE:
+  case RISCV::BGEU: {
     auto a = readFromRegOperand(0, i64ty);
     auto b = readFromRegOperand(1, i64ty);
     auto [dst_true, dst_false] = getBranchTargetsOperand(2);
@@ -102,6 +104,12 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::BEQ:
       cond = createICmp(ICmpInst::Predicate::ICMP_EQ, a, b);
       break;
+    case RISCV::BGE:
+      cond = createICmp(ICmpInst::Predicate::ICMP_SGE, a, b);
+      break;
+    case RISCV::BGEU:
+      cond = createICmp(ICmpInst::Predicate::ICMP_UGE, a, b);
+      break;
     default:
       assert(false);
     }
@@ -109,7 +117,10 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+  case RISCV::C_MUL:
   case RISCV::MUL:
+  case RISCV::DIV:
+  case RISCV::DIVU:
   case RISCV::C_ADD:
   case RISCV::ADD:
   case RISCV::C_SUB:
@@ -126,11 +137,18 @@ void riscv2llvm::lift(MCInst &I) {
     auto b = readFromRegOperand(2, i64ty);
     Value *res;
     switch (opcode) {
+    case RISCV::C_MUL:
     case RISCV::MUL:
       res = createMul(a, b);
       break;
-    case RISCV::ADD:
+    case RISCV::DIV:
+      res = createSDiv(a, b);
+      break;
+    case RISCV::DIVU:
+      res = createUDiv(a, b);
+      break;
     case RISCV::C_ADD:
+    case RISCV::ADD:
       res = createAdd(a, b);
       break;
     case RISCV::C_SUB:
@@ -162,16 +180,31 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+  case RISCV::MULW:
+  case RISCV::DIVW:
+  case RISCV::DIVUW:
   case RISCV::C_ADDW:
   case RISCV::ADDW:
   case RISCV::C_SUBW:
-  case RISCV::SUBW: {
+  case RISCV::SUBW:
+  case RISCV::SRLW:
+  case RISCV::SLLW:
+  case RISCV::SRAW: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromRegOperand(2, i64ty);
     auto a32 = createTrunc(a, i32ty);
     auto b32 = createTrunc(b, i32ty);
     Value *res;
     switch (opcode) {
+    case RISCV::MULW:
+      res = createMul(a32, b32);
+      break;
+    case RISCV::DIVW:
+      res = createSDiv(a32, b32);
+      break;
+    case RISCV::DIVUW:
+      res = createUDiv(a32, b32);
+      break;
     case RISCV::C_ADDW:
     case RISCV::ADDW:
       res = createAdd(a32, b32);
@@ -179,6 +212,15 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::C_SUBW:
     case RISCV::SUBW:
       res = createSub(a32, b32);
+      break;
+    case RISCV::SRLW:
+      res = createMaskedLShr(a32, b32);
+      break;
+    case RISCV::SLLW:
+      res = createMaskedShl(a32, b32);
+      break;
+    case RISCV::SRAW:
+      res = createMaskedAShr(a32, b32);
       break;
     default:
       assert(false);
@@ -231,6 +273,7 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::LBU:
   case RISCV::LH:
   case RISCV::LHU:
+  case RISCV::C_LW:
   case RISCV::LW:
   case RISCV::LWU:
   case RISCV::C_LD:
@@ -239,6 +282,7 @@ void riscv2llvm::lift(MCInst &I) {
     switch (opcode) {
     case RISCV::LB:
     case RISCV::LH:
+    case RISCV::C_LW:
     case RISCV::LW:
     case RISCV::C_LD:
     case RISCV::LD:
@@ -262,6 +306,7 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::LHU:
       size = i16ty;
       break;
+    case RISCV::C_LW:
     case RISCV::LW:
     case RISCV::LWU:
       size = i32ty;
@@ -316,12 +361,31 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+  case RISCV::C_SDSP: {
+    auto op = CurInst->getOperand(2);
+    assert(op.isImm());
+    auto imm_int = op.getImm() & ((1U << 12) - 1);
+    auto imm = getUnsignedIntConst(imm_int, 12);
+    auto imm_ext = createZExt(imm, i64ty);
+    auto amt = getSignedIntConst(3, 64);
+    auto imm_scaled = createMaskedShl(imm_ext, amt);
+    auto sp = readFromRegOperand(1, i64ty);
+    updateOutputReg(createAdd(sp, imm_scaled));
+    break;
+  }
+
+  case RISCV::C_ADDI16SP:
   case RISCV::C_ADDI:
   case RISCV::ADDI: {
     auto a = readFromRegOperand(1, i64ty);
     if (CurInst->getOperand(2).isImm()) {
-      auto b = readFromImmOperand(2, 12, 64);
-      updateOutputReg(createAdd(a, b));
+      auto imm = readFromImmOperand(2, 12, 64);
+      if (opcode == RISCV::C_ADDI16SP) {
+        auto scaled = createMaskedShl(imm, getUnsignedIntConst(4, 64));
+        updateOutputReg(createAdd(a, scaled));
+        break;
+      }
+      updateOutputReg(createAdd(a, imm));
     } else {
       Value *ptr = getPointerFromMCExpr();
       auto res = createGEP(i8ty, ptr, {a}, nextName());
