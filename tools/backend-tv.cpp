@@ -313,10 +313,12 @@ version )EOF";
     lifter::DefaultDL =
         "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32";
     lifter::DefaultCPU = "generic";
+    lifter::DefaultFeatures = "";
   } else if (opt_backend == "riscv64") {
     lifter::DefaultTT = llvm::Triple("riscv64-unknown-linux-gnu");
     lifter::DefaultDL = "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128";
     lifter::DefaultCPU = "generic";
+    lifter::DefaultFeatures = "+m";
   } else {
     *out << "ERROR: Only aarch64 or riscv64 are supported\n";
     exit(-1);

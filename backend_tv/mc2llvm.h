@@ -57,7 +57,8 @@ public:
   mc2llvm(llvm::Function *srcFn, std::unique_ptr<llvm::MemoryBuffer> MB)
       : LiftedModule{new llvm::Module("LiftedModule", srcFn->getContext())},
         Ctx{srcFn->getContext()}, srcFn{srcFn},
-        STI{Targ->createMCSubtargetInfo(DefaultTT.getTriple(), DefaultCPU, "")},
+        STI{Targ->createMCSubtargetInfo(DefaultTT.getTriple(), DefaultCPU,
+                                        DefaultFeatures)},
         DL{srcFn->getParent()->getDataLayout()},
         MCII{Targ->createMCInstrInfo()},
         MRI{Targ->createMCRegInfo(DefaultTT.getTriple())},

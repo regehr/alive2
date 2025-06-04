@@ -9,7 +9,9 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include <cassert>
 #include <iostream>
+#include <memory>
 
 using namespace std;
 using namespace llvm;
@@ -17,11 +19,23 @@ using namespace lifter;
 
 SmallString<1024> Asm;
 
+void appendTargetFeatures(std::unique_ptr<llvm::Module> &MClone) {
+  for (llvm::Function &F : *MClone) {
+    if (F.hasFnAttribute("target-features")) {
+      std::string current_features =
+          F.getFnAttribute("target-features").getValueAsString().str();
+      F.addFnAttr("target-features", current_features + "," + DefaultFeatures);
+    }
+  }
+}
+
 unique_ptr<MemoryBuffer> lifter::generateAsm(Module &M) {
+  assert(DefaultFeatures != NULL &&
+         "[generateAsm] DefaultFeatures must be set");
   TargetOptions Opt;
   auto RM = optional<Reloc::Model>();
-  unique_ptr<TargetMachine> TM(
-      Targ->createTargetMachine(DefaultTT, DefaultCPU, "", Opt, RM));
+  unique_ptr<TargetMachine> TM(Targ->createTargetMachine(
+      DefaultTT, DefaultCPU, DefaultFeatures, Opt, RM));
 
   Asm = "";
   raw_svector_ostream os(Asm);
@@ -38,6 +52,10 @@ unique_ptr<MemoryBuffer> lifter::generateAsm(Module &M) {
    */
   auto MClone = CloneModule(M);
   MClone->setDataLayout(TM->createDataLayout());
+
+  if (DefaultFeatures[0] != '\0')
+    appendTargetFeatures(MClone);
+
   pass.run(*MClone.get());
   return MemoryBuffer::getMemBuffer(Asm.c_str());
 }

@@ -40,6 +40,7 @@ extern llvm::Constant *stackSize;
 extern llvm::Triple DefaultTT;
 extern const char *DefaultDL;
 extern const char *DefaultCPU;
+extern const char *DefaultFeatures;
 
 extern std::unordered_map<unsigned, llvm::Instruction *> lineMap;
 

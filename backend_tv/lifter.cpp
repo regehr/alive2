@@ -39,6 +39,7 @@ std::string DefaultBackend;
 llvm::Triple DefaultTT;
 const char *DefaultDL;
 const char *DefaultCPU;
+const char *DefaultFeatures;
 
 void init(std::string &backend) {
   DefaultBackend = backend;
