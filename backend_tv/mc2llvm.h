@@ -629,6 +629,16 @@ public:
                                         nextName(), LLVMBB);
   }
 
+  llvm::BinaryOperator *createURem(llvm::Value *a, llvm::Value *b) override {
+    return llvm::BinaryOperator::Create(llvm::Instruction::URem, a, b,
+                                        nextName(), LLVMBB);
+  }
+
+  llvm::BinaryOperator *createSRem(llvm::Value *a, llvm::Value *b) override {
+    return llvm::BinaryOperator::Create(llvm::Instruction::SRem, a, b,
+                                        nextName(), LLVMBB);
+  }
+
   llvm::BinaryOperator *createMul(llvm::Value *a, llvm::Value *b) override {
     return llvm::BinaryOperator::Create(llvm::Instruction::Mul, a, b,
                                         nextName(), LLVMBB);

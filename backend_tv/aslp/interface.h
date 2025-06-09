@@ -161,6 +161,10 @@ public:
 
   virtual expr_t createSDiv(expr_t a, expr_t b) = 0;
 
+  virtual expr_t createURem(expr_t a, expr_t b) = 0;
+
+  virtual expr_t createSRem(expr_t a, expr_t b) = 0;
+
   virtual expr_t createMul(expr_t a, expr_t b) = 0;
 
   virtual expr_t createAdd(expr_t a, expr_t b) = 0;
