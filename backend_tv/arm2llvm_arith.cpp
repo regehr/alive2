@@ -16,47 +16,18 @@ void arm2llvm::lift_udiv(unsigned opcode) {
   auto zero = getUnsignedIntConst(0, size);
   auto lhs = readFromOperand(1);
   auto rhs = readFromOperand(2);
-  auto A = createAlloca(getIntTy(size), getUnsignedIntConst(1, 64), "");
-  createStore(zero, A);
-  auto rhsIsZero = createICmp(ICmpInst::Predicate::ICMP_EQ, rhs, zero);
-  auto DivBB = BasicBlock::Create(Ctx, "", liftedFn);
-  auto ContBB = BasicBlock::Create(Ctx, "", liftedFn);
-  createBranch(rhsIsZero, ContBB, DivBB);
-  LLVMBB = DivBB;
-  auto divResult = createUDiv(lhs, rhs);
-  createStore(divResult, A);
-  createBranch(ContBB);
-  LLVMBB = ContBB;
-  auto result = createLoad(getIntTy(size), A);
+  auto result = createCheckedUDiv(lhs, rhs, zero);
   updateOutputReg(result);
 }
 
 void arm2llvm::lift_sdiv(unsigned opcode) {
   // can't directly lift ARM sdiv to LLVM sdiv because the latter
   // is UB for divide by zero and INT_MIN / -1
-  auto Size = getInstSize(opcode);
-  auto Zero = getUnsignedIntConst(0, Size);
-  auto IntMin = createMaskedShl(getUnsignedIntConst(1, Size),
-                                getUnsignedIntConst(Size - 1, Size));
-  auto LHS = readFromOperand(1);
-  auto RHS = readFromOperand(2);
-  auto ResMem = createAlloca(getIntTy(Size), getUnsignedIntConst(1, 64), "");
-  createStore(Zero, ResMem);
-  auto RHSIsZero = createICmp(ICmpInst::Predicate::ICMP_EQ, RHS, Zero);
-  auto LHSIsIntMin = createICmp(ICmpInst::Predicate::ICMP_EQ, LHS, IntMin);
-  auto RHSIsAllOnes =
-      createICmp(ICmpInst::Predicate::ICMP_EQ, RHS, getAllOnesConst(Size));
-  auto IsOverflow = createAnd(LHSIsIntMin, RHSIsAllOnes);
-  auto Cond = createOr(RHSIsZero, IsOverflow);
-  auto DivBB = BasicBlock::Create(Ctx, "", liftedFn);
-  auto ContBB = BasicBlock::Create(Ctx, "", liftedFn);
-  createBranch(Cond, ContBB, DivBB);
-  LLVMBB = DivBB;
-  auto DivResult = createSDiv(LHS, RHS);
-  createStore(DivResult, ResMem);
-  createBranch(ContBB);
-  LLVMBB = ContBB;
-  auto result = createLoad(getIntTy(Size), ResMem);
+  auto size = getInstSize(opcode);
+  auto zero = getUnsignedIntConst(0, size);
+  auto lhs = readFromOperand(1);
+  auto rhs = readFromOperand(2);
+  auto result = createCheckedSDiv(lhs, rhs, zero, zero);
   updateOutputReg(result);
 }
 

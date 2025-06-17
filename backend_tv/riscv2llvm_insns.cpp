@@ -1,10 +1,13 @@
+#include "backend_tv/mc2llvm.h"
 #include "backend_tv/riscv2llvm.h"
 
 #include "llvm/BinaryFormat/ELF.h"
+#include "llvm/IR/Value.h"
 #include "llvm/MC/MCAsmInfo.h"
 
 #include <cassert>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 #define GET_INSTRINFO_ENUM
@@ -544,34 +547,58 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::REMU:
   case RISCV::REMW:
   case RISCV::REMUW: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto b = readFromRegOperand(2, i64ty);
+    Value *lhs;
+    Value *rhs;
+    uint64_t size;
     switch (opcode) {
     case RISCV::DIV:
-      lift_sdiv(64);
-      break;
     case RISCV::DIVU:
-      lift_udiv(64);
+    case RISCV::REM:
+    case RISCV::REMU:
+      size = 64;
+      lhs = a;
+      rhs = b;
       break;
     case RISCV::DIVW:
-      lift_sdiv(32);
-      break;
     case RISCV::DIVUW:
-      lift_udiv(32);
-      break;
-    case RISCV::REM:
-      lift_srem(64);
-      break;
-    case RISCV::REMU:
-      lift_urem(64);
-      break;
     case RISCV::REMW:
-      lift_srem(32);
-      break;
     case RISCV::REMUW:
-      lift_urem(32);
+      size = 32;
+      lhs = createTrunc(a, i32ty);
+      rhs = createTrunc(b, i32ty);
       break;
     default:
       assert(false);
     }
+
+    auto allOnes = getAllOnesConst(size);
+    auto intMin = createMaskedShl(getUnsignedIntConst(1, size),
+                                  getUnsignedIntConst(size - 1, size));
+
+    Value *res;
+    switch (opcode) {
+    case RISCV::DIV:
+    case RISCV::DIVW:
+      res = createCheckedSDiv(lhs, rhs, allOnes, intMin);
+      break;
+    case RISCV::DIVU:
+    case RISCV::DIVUW:
+      res = createCheckedUDiv(lhs, rhs, allOnes);
+      break;
+    case RISCV::REM:
+    case RISCV::REMW:
+      res = createCheckedSRem(lhs, rhs, lhs, getUnsignedIntConst(0, size));
+      break;
+    case RISCV::REMU:
+    case RISCV::REMUW:
+      res = createCheckedURem(lhs, rhs, lhs);
+      break;
+    default:
+      assert(false);
+    }
+    updateOutputReg(res);
     break;
   }
 

@@ -419,6 +419,148 @@ Value *mc2llvm::concat(Value *a, Value *b) {
   return createOr(shifted_a, wide_b);
 }
 
+Value *mc2llvm::createCheckedUDiv(Value *a, Value *b,
+                                  llvm::Value *ifDivByZero) {
+  // division by zero is UB for LLVM
+  unsigned size = getBitWidth(a);
+  unsigned sizeb = getBitWidth(b);
+  assert(size == sizeb);
+
+  auto divBB = BasicBlock::Create(Ctx, "", liftedFn);
+  auto retBB = BasicBlock::Create(Ctx, "", liftedFn);
+
+  auto intTy = getIntTy(size);
+  auto zero = getUnsignedIntConst(0, size);
+
+  auto resPtr = createAlloca(intTy, getUnsignedIntConst(1, 64), "");
+  createStore(ifDivByZero, resPtr);
+  auto RHSIsZero = createICmp(ICmpInst::Predicate::ICMP_EQ, b, zero);
+  createBranch(RHSIsZero, retBB, divBB);
+
+  LLVMBB = divBB;
+  auto divResult = createUDiv(a, b);
+  createStore(divResult, resPtr);
+  createBranch(retBB);
+
+  LLVMBB = retBB;
+  auto result = createLoad(intTy, resPtr);
+  return result;
+}
+
+Value *mc2llvm::createCheckedSDiv(Value *a, Value *b, llvm::Value *ifDivByZero,
+                                  llvm::Value *ifOverflow) {
+  // division by zero and INT_MIN / -1 is UB for LLVM
+  unsigned size = getBitWidth(a);
+  unsigned sizeb = getBitWidth(b);
+  assert(size == sizeb);
+
+  auto checkOverflowBB = BasicBlock::Create(Ctx, "", liftedFn);
+  auto overflowBB = BasicBlock::Create(Ctx, "", liftedFn);
+  auto divBB = BasicBlock::Create(Ctx, "", liftedFn);
+  auto retBB = BasicBlock::Create(Ctx, "", liftedFn);
+
+  auto intTy = getIntTy(size);
+  auto allOnes = getAllOnesConst(size);
+  auto zero = getUnsignedIntConst(0, size);
+
+  auto resPtr = createAlloca(intTy, getUnsignedIntConst(1, 64), "");
+  createStore(ifDivByZero, resPtr);
+  auto RHSIsZero = createICmp(ICmpInst::Predicate::ICMP_EQ, b, zero);
+  createBranch(RHSIsZero, retBB, checkOverflowBB);
+
+  LLVMBB = checkOverflowBB;
+  auto intMin = createMaskedShl(getUnsignedIntConst(1, size),
+                                getUnsignedIntConst(size - 1, size));
+  auto LHSIsIntMin = createICmp(ICmpInst::Predicate::ICMP_EQ, a, intMin);
+  auto RHSIsAllOnes = createICmp(ICmpInst::Predicate::ICMP_EQ, b, allOnes);
+  auto isOverflow = createAnd(LHSIsIntMin, RHSIsAllOnes);
+  createBranch(isOverflow, overflowBB, divBB);
+
+  LLVMBB = overflowBB;
+  createStore(ifOverflow, resPtr);
+  createBranch(retBB);
+
+  LLVMBB = divBB;
+  auto divResult = createSDiv(a, b);
+  createStore(divResult, resPtr);
+  createBranch(retBB);
+
+  LLVMBB = retBB;
+  auto result = createLoad(intTy, resPtr);
+  return result;
+}
+
+Value *mc2llvm::createCheckedURem(Value *a, Value *b,
+                                  llvm::Value *ifDivByZero) {
+  // division by zero (and thus the remainder) is UB for LLVM
+  unsigned size = getBitWidth(a);
+  unsigned sizeb = getBitWidth(b);
+  assert(size == sizeb);
+
+  auto remBB = BasicBlock::Create(Ctx, "", liftedFn);
+  auto retBB = BasicBlock::Create(Ctx, "", liftedFn);
+
+  auto intTy = getIntTy(size);
+  auto zero = getUnsignedIntConst(0, size);
+
+  auto resPtr = createAlloca(intTy, getUnsignedIntConst(1, 64), "");
+  createStore(ifDivByZero, resPtr);
+  auto RHSIsZero = createICmp(ICmpInst::Predicate::ICMP_EQ, b, zero);
+  createBranch(RHSIsZero, retBB, remBB);
+
+  LLVMBB = remBB;
+  auto remResult = createURem(a, b);
+  createStore(remResult, resPtr);
+  createBranch(retBB);
+
+  LLVMBB = retBB;
+  auto result = createLoad(intTy, resPtr);
+  return result;
+}
+
+Value *mc2llvm::createCheckedSRem(Value *a, Value *b, llvm::Value *ifDivByZero,
+                                  llvm::Value *ifOverflow) {
+  // division by zero and INT_MIN / -1 (and thus the remainder) is UB for LLVM
+  unsigned size = getBitWidth(a);
+  unsigned sizeb = getBitWidth(b);
+  assert(size == sizeb);
+
+  auto checkOverflowBB = BasicBlock::Create(Ctx, "", liftedFn);
+  auto overflowBB = BasicBlock::Create(Ctx, "", liftedFn);
+  auto remBB = BasicBlock::Create(Ctx, "", liftedFn);
+  auto retBB = BasicBlock::Create(Ctx, "", liftedFn);
+
+  auto intTy = getIntTy(size);
+  auto allOnes = getAllOnesConst(size);
+  auto zero = getUnsignedIntConst(0, size);
+
+  auto resPtr = createAlloca(intTy, getUnsignedIntConst(1, 64), "");
+  createStore(ifDivByZero, resPtr);
+  auto RHSIsZero = createICmp(ICmpInst::Predicate::ICMP_EQ, b, zero);
+  createBranch(RHSIsZero, retBB, checkOverflowBB);
+
+  LLVMBB = checkOverflowBB;
+  auto intMin = createMaskedShl(getUnsignedIntConst(1, size),
+                                getUnsignedIntConst(size - 1, size));
+  auto LHSIsIntMin = createICmp(ICmpInst::Predicate::ICMP_EQ, a, intMin);
+  auto RHSIsAllOnes = createICmp(ICmpInst::Predicate::ICMP_EQ, b, allOnes);
+  auto isOverflow = createAnd(LHSIsIntMin, RHSIsAllOnes);
+  createBranch(isOverflow, overflowBB, remBB);
+
+  LLVMBB = overflowBB;
+  createStore(ifOverflow, resPtr);
+  createBranch(retBB);
+
+  LLVMBB = remBB;
+  auto remResult = createSRem(a, b);
+  createStore(remResult, resPtr);
+  createBranch(retBB);
+
+  LLVMBB = retBB;
+  auto result = createLoad(intTy, resPtr);
+  return result;
+}
+
 void mc2llvm::assertTrue(Value *cond) {
   assert(cond->getType()->getIntegerBitWidth() == 1 && "assert requires i1");
   CallInst::Create(assertDecl, {cond}, "", LLVMBB);

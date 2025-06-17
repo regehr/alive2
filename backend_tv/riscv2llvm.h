@@ -77,10 +77,6 @@ class riscv2llvm final : public mc2llvm {
   getBranchTargetsOperand(int op);
   llvm::Value *getPointerFromMCExpr();
   llvm::Value *getPointerOperand();
-  void lift_udiv(uint64_t size);
-  void lift_sdiv(uint64_t size);
-  void lift_urem(uint64_t size);
-  void lift_srem(uint64_t size);
 
 public:
   riscv2llvm(llvm::Function *srcFn, std::unique_ptr<llvm::MemoryBuffer> MB,
