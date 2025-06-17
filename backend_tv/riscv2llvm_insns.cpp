@@ -514,10 +514,7 @@ void riscv2llvm::lift(MCInst &I) {
 
   case RISCV::C_MUL:
   case RISCV::MUL:
-  case RISCV::DIV:
-  case RISCV::DIVU:
-  case RISCV::REM:
-  case RISCV::REMU: {
+  case RISCV::MULW: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromRegOperand(2, i64ty);
     Value *res;
@@ -526,18 +523,12 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::MUL:
       res = createMul(a, b);
       break;
-    case RISCV::DIV:
-      res = createSDiv(a, b);
+    case RISCV::MULW: {
+      auto a32 = createTrunc(a, i32ty);
+      auto b32 = createTrunc(b, i32ty);
+      res = createSExt(createMul(a32, b32), i64ty);
       break;
-    case RISCV::DIVU:
-      res = createUDiv(a, b);
-      break;
-    case RISCV::REM:
-      res = createSRem(a, b);
-      break;
-    case RISCV::REMU:
-      res = createURem(a, b);
-      break;
+    }
     default:
       assert(false);
     }
@@ -545,37 +536,42 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
-  case RISCV::MULW:
+  case RISCV::DIV:
+  case RISCV::DIVU:
   case RISCV::DIVW:
   case RISCV::DIVUW:
+  case RISCV::REM:
+  case RISCV::REMU:
   case RISCV::REMW:
   case RISCV::REMUW: {
-    auto a = readFromRegOperand(1, i64ty);
-    auto b = readFromRegOperand(2, i64ty);
-    auto a32 = createTrunc(a, i32ty);
-    auto b32 = createTrunc(b, i32ty);
-    Value *res;
     switch (opcode) {
-    case RISCV::MULW:
-      res = createMul(a32, b32);
+    case RISCV::DIV:
+      lift_sdiv(64);
+      break;
+    case RISCV::DIVU:
+      lift_udiv(64);
       break;
     case RISCV::DIVW:
-      res = createSDiv(a32, b32);
+      lift_sdiv(32);
       break;
     case RISCV::DIVUW:
-      res = createUDiv(a32, b32);
+      lift_udiv(32);
+      break;
+    case RISCV::REM:
+      lift_srem(64);
+      break;
+    case RISCV::REMU:
+      lift_urem(64);
       break;
     case RISCV::REMW:
-      res = createSRem(a32, b32);
+      lift_srem(32);
       break;
     case RISCV::REMUW:
-      res = createURem(a32, b32);
+      lift_urem(32);
       break;
     default:
       assert(false);
     }
-    auto resExt = createSExt(res, i64ty);
-    updateOutputReg(resExt);
     break;
   }
 

@@ -3,6 +3,6 @@ target triple = "riscv64"
 
 define i64 @tf_0_foo(i64 %0, i64 %1) {
 entry:
-  %div31 = sdiv i64 %0, %1
-  ret i64 %div31
+  %rem = srem i64 %0, %1
+  ret i64 %rem
 }
