@@ -19,6 +19,8 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Metadata.h"
@@ -108,6 +110,12 @@ llvm::cl::opt<bool> save_lifted_ir(
     llvm::cl::desc("Save lifted LLVM IR to file (default=false)"),
     llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
 
+llvm::cl::opt<bool> run_replace_ptrtoint(
+    "run-replace-ptrtoint",
+    llvm::cl::desc(
+        "Replace ptr-int round trips with single GEP (default=false)"),
+    llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
+
 llvm::cl::opt<string> opt_asm_input(
     "asm-input",
     llvm::cl::desc("Use the provied file as lifted assembly, instead of "
@@ -120,6 +128,55 @@ llvm::Triple DefaultTT;
 const char *DefaultDL;
 const char *DefaultCPU;
 const char *DefaultFeatures;
+
+// Given an intToPtr instruction, checks for a round trip
+// from a ptrToInt instruction, then replaces with a single GEP instruction.
+bool tryReplaceRoundTrip(llvm::IntToPtrInst *intToPtr) {
+  assert(intToPtr);
+
+  // we only understand add instructions in this context
+  auto *op_inst = dyn_cast<llvm::Instruction>(intToPtr->getOperand(0));
+  if (!op_inst || op_inst->getOpcode() != llvm::Instruction::Add ||
+      op_inst->getNumUses() > 1)
+    return false;
+
+  // keep track of (ptr + int) vs (int + ptr)
+  bool ptrOnLeft = true;
+  auto *ptrToInt = dyn_cast<llvm::PtrToIntInst>(op_inst->getOperand(0));
+
+  if (!ptrToInt) {
+    ptrOnLeft = false;
+    ptrToInt = dyn_cast<llvm::PtrToIntInst>(op_inst->getOperand(1));
+  }
+
+  if (!ptrToInt || ptrToInt->getNumUses() > 1)
+    return false;
+
+  llvm::IRBuilder<> B(intToPtr);
+
+  llvm::Value *gep = B.CreateGEP(B.getInt8Ty(), ptrToInt->getOperand(0),
+                                 {op_inst->getOperand(ptrOnLeft ? 1 : 0)}, "");
+
+  intToPtr->replaceAllUsesWith(gep);
+  intToPtr->eraseFromParent();
+  op_inst->eraseFromParent();
+  ptrToInt->eraseFromParent();
+
+  return true;
+}
+
+// find and collapse sequences of the form ptrToInt, add, intToPtr
+// into a single GEP instruction. Possible performance benefits.
+void tryReplacePtrtoInt(llvm::Function *fn) {
+  // apparently iterating in this way is stable
+  for (auto it = instructions(*fn).begin(), end = instructions(*fn).end();
+       it != end;) {
+    llvm::Instruction &Inst = *it++;
+    if (auto *intToPtr = dyn_cast<llvm::IntToPtrInst>(&Inst)) {
+      tryReplaceRoundTrip(intToPtr);
+    }
+  }
+}
 
 void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
           llvm::TargetLibraryInfoWrapperPass &TLI) {
@@ -239,6 +296,10 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
     ofstream of(p);
     of << lifted;
     of.close();
+  }
+
+  if (run_replace_ptrtoint) {
+    tryReplacePtrtoInt(F2);
   }
 
   if (!opt_skip_verification)
