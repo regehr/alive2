@@ -144,6 +144,7 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::C_XOR:
   case RISCV::XOR:
   case RISCV::SRL:
+  case RISCV::SRA:
   case RISCV::SLL: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromRegOperand(2, i64ty);
@@ -171,6 +172,9 @@ void riscv2llvm::lift(MCInst &I) {
       break;
     case RISCV::SRL:
       res = createMaskedLShr(a, b);
+      break;
+    case RISCV::SRA:
+      res = createMaskedAShr(a, b);
       break;
     case RISCV::SLL:
       res = createMaskedShl(a, b);
@@ -446,13 +450,24 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+  case RISCV::SLLIW:
   case RISCV::SRLIW: {
     auto a = readFromRegOperand(1, i64ty);
     auto a32 = createTrunc(a, i32ty);
     auto imm_op = CurInst->getOperand(2);
     auto imm_int = imm_op.getImm() & ((1U << 5) - 1);
     auto imm = getUnsignedIntConst(imm_int, 32);
-    auto res = createMaskedLShr(a32, imm);
+    Value *res{nullptr};
+    switch (opcode) {
+    case RISCV::SLLIW:
+      res = createMaskedShl(a32, imm);
+      break;
+    case RISCV::SRLIW:
+      res = createMaskedLShr(a32, imm);
+      break;
+    default:
+      assert(false);
+    }
     updateOutputReg(res, /*SExt=*/true);
     break;
   }
