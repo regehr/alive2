@@ -109,9 +109,17 @@ void riscv2llvm::updateReg(Value *V, uint64_t Reg) {
 }
 
 void riscv2llvm::updateOutputReg(Value *V, bool SExt) {
-  assert(!SExt); // FIXME implement
-  auto destReg = CurInst->getOperand(0).getReg();
-  updateReg(V, destReg);
+  // we'll need to update this function if we run across any
+  // instructions that only partially update the contents of a
+  // register
+  auto W = getBitWidth(V);
+  if (SExt) {
+    if (W < 64)
+      V = createSExt(V, getIntTy(64));
+  } else {
+    assert(W == 64);
+  }
+  updateReg(V, CurInst->getOperand(0).getReg());
 }
 
 Value *riscv2llvm::makeLoadWithOffset(Value *base, Value *offset, int size) {

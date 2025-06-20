@@ -207,8 +207,7 @@ void riscv2llvm::lift(MCInst &I) {
     default:
       assert(false);
     }
-    auto resExt = createSExt(res, i64ty);
-    updateOutputReg(resExt);
+    updateOutputReg(res, /*SExt=*/true);
     break;
   }
 
@@ -435,8 +434,7 @@ void riscv2llvm::lift(MCInst &I) {
     auto b = readFromImmOperand(2, 12, 32);
     auto a32 = createTrunc(a, i32ty);
     auto res = createAdd(a32, b);
-    auto resExt = createSExt(res, i64ty);
-    updateOutputReg(resExt);
+    updateOutputReg(res, /*SExt=*/true);
     break;
   }
 
@@ -447,8 +445,7 @@ void riscv2llvm::lift(MCInst &I) {
     auto imm_int = imm_op.getImm() & ((1U << 5) - 1);
     auto imm = getUnsignedIntConst(imm_int, 32);
     auto res = createMaskedLShr(a32, imm);
-    auto resExt = createSExt(res, i64ty);
-    updateOutputReg(resExt);
+    updateOutputReg(res, /*SExt=*/true);
     break;
   }
 
@@ -529,13 +526,13 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::MULW: {
       auto a32 = createTrunc(a, i32ty);
       auto b32 = createTrunc(b, i32ty);
-      res = createSExt(createMul(a32, b32), i64ty);
+      res = createMul(a32, b32);
       break;
     }
     default:
       assert(false);
     }
-    updateOutputReg(res);
+    updateOutputReg(res, /*SExt=*/true);
     break;
   }
 
@@ -598,7 +595,7 @@ void riscv2llvm::lift(MCInst &I) {
     default:
       assert(false);
     }
-    updateOutputReg(res);
+    updateOutputReg(res, /*SExt=*/true);
     break;
   }
 
