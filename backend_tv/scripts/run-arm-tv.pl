@@ -7,7 +7,7 @@ use Sys::CPU;
 use BSD::Resource;
 use File::Basename;
 
-my $CPU_LIMIT = 1 * 60;
+my $CPU_LIMIT = 30;
 my $VMEM_LIMIT = 10 * 1000 * 1000 * 1000;
 
 my $NPROCS = Sys::CPU::cpu_count();
@@ -34,7 +34,7 @@ my $count = 0;
 sub check($) {
     (my $fn) = @_;
     (my $fh, my $tmpfn) = File::Temp::tempfile();
-    runit("${ARMTV} $ISEL $XTRA --smt-to=10000000 $fn > $tmpfn 2>&1");
+    runit("/usr/bin/timeout -v ${CPU_LIMIT} ${ARMTV} $ISEL $XTRA --smt-to=10000000 $fn > $tmpfn 2>&1");
     open my $INF, "<$tmpfn" or die;
     my $data = "";
     while (my $line = <$INF>) {
@@ -98,7 +98,7 @@ foreach my $fn (@files) {
     my $pid = fork();
     die unless $pid >= 0;
     if ($pid == 0) {
-        die "setrlimit CPU" unless setrlimit(RLIMIT_CPU, $CPU_LIMIT, $CPU_LIMIT);
+        # die "setrlimit CPU" unless setrlimit(RLIMIT_CPU, $CPU_LIMIT, $CPU_LIMIT);
         die "setrlimit VMEM" unless setrlimit(RLIMIT_VMEM, $VMEM_LIMIT, $VMEM_LIMIT);
         test($fn);
         exit(0);
