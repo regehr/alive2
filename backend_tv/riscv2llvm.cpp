@@ -370,7 +370,7 @@ void riscv2llvm::checkArgSupport(Argument &arg) {}
 void riscv2llvm::checkFuncSupport(Function &func) {}
 void riscv2llvm::checkTypeSupport(Type *ty) {
   if (ty->isFloatingPointTy()) {
-    *out << "\nERROR: float point not yet supported\n\n";
+    *out << "\nERROR: floating point not yet supported\n\n";
     exit(-1);
   }
   if (ty->isVectorTy()) {
