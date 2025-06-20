@@ -951,7 +951,6 @@ void mc2llvm::checkInstSupport(Instruction &i, const DataLayout &DL,
         }
       } else {
         // FIXME -- do we need to handle this case?
-        assert(false);
       }
     }
   }

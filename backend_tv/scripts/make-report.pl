@@ -105,7 +105,7 @@ sub classify($) {
         if ($data =~ /^(ERROR: .*)$/) {
             return "[f] $1";
         }
-        if ($data =~ /^(.*Assertion.*failed/) {
+        if ($data =~ /^(.*Assertion.*failed)/) {
             return "[f] $1";
         }
         if ($data =~ /^(UNREACHABLE.*)$/) {
