@@ -32,7 +32,7 @@ void riscv2llvm::lift(MCInst &I) {
   auto i16ty = getIntTy(16);
   auto i32ty = getIntTy(32);
   auto i64ty = getIntTy(64);
-  // auto i128ty = getIntTy(128);
+  auto i128ty = getIntTy(128);
   auto ptrTy = llvm::PointerType::get(Ctx, 0);
 
   switch (opcode) {
@@ -539,12 +539,36 @@ void riscv2llvm::lift(MCInst &I) {
      * M extension instructions
      */
 
+  case RISCV::MULH:
+  case RISCV::MULHSU:
+  case RISCV::MULHU: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto b = readFromRegOperand(2, i64ty);
+    Value *ax{nullptr}, *bx{nullptr};
+    if (opcode == RISCV::MULHU)
+      ax = createZExt(a, i128ty);
+    else
+      ax = createSExt(a, i128ty);
+    if (opcode == RISCV::MULH)
+      bx = createSExt(b, i128ty);
+    else
+      bx = createZExt(b, i128ty);
+    auto res = createMul(ax, bx);
+    Value *resShift{nullptr};
+    if (opcode == RISCV::MULHU)
+      resShift = createRawLShr(res, getUnsignedIntConst(64, 128));
+    else
+      resShift = createRawAShr(res, getUnsignedIntConst(64, 128));
+    updateOutputReg(createTrunc(resShift, i64ty));
+    break;
+  }
+
   case RISCV::C_MUL:
   case RISCV::MUL:
   case RISCV::MULW: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromRegOperand(2, i64ty);
-    Value *res;
+    Value *res{nullptr};
     switch (opcode) {
     case RISCV::C_MUL:
     case RISCV::MUL:
