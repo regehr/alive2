@@ -105,17 +105,8 @@ sub classify($) {
         if ($data =~ /^(ERROR: .*)$/) {
             return "[f] $1";
         }
-        if ($data =~ /\/(lifter.cpp:[0-9]+):.*Assertion `/) {
-            return "[f] Assertion failed at $1";
-        }
-        if ($data =~ /\/(Instructions.cpp:[0-9]+):.*Assertion `/) {
-            return "[f] Assertion failed at $1";
-        }
-        if ($data =~ /\/(Instructions.cpp:[0-9]+):.*Assertion `/) {
-            return "[f] Assertion failed at $1";
-        }
-        if ($data =~ /\/(MCInst.h:[0-9]+):.*Assertion `/) {
-            return "[f] Assertion failed at $1";
+        if ($data =~ /^(.*Assertion.*failed/) {
+            return "[f] $1";
         }
         if ($data =~ /^(UNREACHABLE.*)$/) {
             return "[f] $1";
