@@ -44,18 +44,26 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::C_NOP_HINT:
     break;
 
+  // JDR: I don't understand why JAL is getting generated sometimes
+  // for simple direct branches. here we're ignoring the register
+  // update.
+  case RISCV::JAL:
+  case RISCV::C_JAL:
   case RISCV::C_J: {
     /*
      * copied from ARM -- maybe move to portable code
      */
+    int operand = 0;
+    if (opcode == RISCV::JAL || opcode == RISCV::C_JAL)
+      operand = 1;
     BasicBlock *dst{nullptr};
     // JDR: I don't understand this
-    if (CurInst->getOperand(0).isImm()) {
+    if (CurInst->getOperand(operand).isImm()) {
       // handles the case when we add an entry block with no predecessors
-      auto &dst_name = Str->MF.BBs[getImm(0)].getName();
+      auto &dst_name = Str->MF.BBs[getImm(operand)].getName();
       dst = getBBByName(dst_name);
     } else {
-      dst = getBB(CurInst->getOperand(0));
+      dst = getBB(CurInst->getOperand(operand));
     }
     if (dst) {
       createBranch(dst);
