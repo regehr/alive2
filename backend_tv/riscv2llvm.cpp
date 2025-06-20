@@ -169,7 +169,7 @@ void riscv2llvm::doReturn() {
   if (retTyp->isVoidTy()) {
     createReturn(nullptr);
   } else {
-    Value *retVal = nullptr;
+    Value *retVal{nullptr};
     // FIXME handle vectors and FP
     retVal = readFromReg(RISCV::X10, i64ty);
     if (retTyp->isPointerTy()) {
@@ -251,7 +251,7 @@ void riscv2llvm::platformInit() {
       goto end;
     }
 
-    assert(false && "unimplemented");
+    assert(false && "argument unimplemented");
 #if 0
     
     // first 8 vector/FP parameters go in the first 8 vector registers
