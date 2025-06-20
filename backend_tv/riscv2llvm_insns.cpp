@@ -451,6 +451,7 @@ void riscv2llvm::lift(MCInst &I) {
   }
 
   case RISCV::SLLIW:
+  case RISCV::SRAIW:
   case RISCV::SRLIW: {
     auto a = readFromRegOperand(1, i64ty);
     auto a32 = createTrunc(a, i32ty);
@@ -461,6 +462,9 @@ void riscv2llvm::lift(MCInst &I) {
     switch (opcode) {
     case RISCV::SLLIW:
       res = createMaskedShl(a32, imm);
+      break;
+    case RISCV::SRAIW:
+      res = createMaskedAShr(a32, imm);
       break;
     case RISCV::SRLIW:
       res = createMaskedLShr(a32, imm);
