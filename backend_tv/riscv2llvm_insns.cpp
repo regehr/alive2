@@ -82,7 +82,7 @@ void riscv2llvm::lift(MCInst &I) {
     auto a = readFromRegOperand(0, i64ty);
     auto [dst_true, dst_false] = getBranchTargetsOperand(1);
     Value *zero = getUnsignedIntConst(0, 64);
-    Value *cond;
+    Value *cond{nullptr};
     switch (opcode) {
     case RISCV::C_BNEZ:
       cond = createICmp(ICmpInst::Predicate::ICMP_NE, a, zero);
@@ -106,29 +106,30 @@ void riscv2llvm::lift(MCInst &I) {
     auto a = readFromRegOperand(0, i64ty);
     auto b = readFromRegOperand(1, i64ty);
     auto [dst_true, dst_false] = getBranchTargetsOperand(2);
-    Value *cond;
+    ICmpInst::Predicate pred = ICmpInst::Predicate::BAD_ICMP_PREDICATE;
     switch (opcode) {
     case RISCV::BLT:
-      cond = createICmp(ICmpInst::Predicate::ICMP_SLT, a, b);
+      pred = ICmpInst::Predicate::ICMP_SLT;
       break;
     case RISCV::BLTU:
-      cond = createICmp(ICmpInst::Predicate::ICMP_ULT, a, b);
+      pred = ICmpInst::Predicate::ICMP_ULT;
       break;
     case RISCV::BNE:
-      cond = createICmp(ICmpInst::Predicate::ICMP_NE, a, b);
+      pred = ICmpInst::Predicate::ICMP_NE;
       break;
     case RISCV::BEQ:
-      cond = createICmp(ICmpInst::Predicate::ICMP_EQ, a, b);
+      pred = ICmpInst::Predicate::ICMP_EQ;
       break;
     case RISCV::BGE:
-      cond = createICmp(ICmpInst::Predicate::ICMP_SGE, a, b);
+      pred = ICmpInst::Predicate::ICMP_SGE;
       break;
     case RISCV::BGEU:
-      cond = createICmp(ICmpInst::Predicate::ICMP_UGE, a, b);
+      pred = ICmpInst::Predicate::ICMP_UGE;
       break;
     default:
       assert(false);
     }
+    auto cond = createICmp(pred, a, b);
     createBranch(cond, dst_true, dst_false);
     break;
   }
@@ -148,7 +149,7 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::SLL: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromRegOperand(2, i64ty);
-    Value *res;
+    Value *res{nullptr};
     switch (opcode) {
     case RISCV::C_ADD:
     case RISCV::ADD:
@@ -197,7 +198,7 @@ void riscv2llvm::lift(MCInst &I) {
     auto b = readFromRegOperand(2, i64ty);
     auto a32 = createTrunc(a, i32ty);
     auto b32 = createTrunc(b, i32ty);
-    Value *res;
+    Value *res{nullptr};
     switch (opcode) {
     case RISCV::C_ADDW:
     case RISCV::ADDW:
@@ -387,9 +388,9 @@ void riscv2llvm::lift(MCInst &I) {
       if (opcode == RISCV::C_ADDI16SP) {
         auto scaled = createMaskedShl(imm, getUnsignedIntConst(4, 64));
         updateOutputReg(createAdd(a, scaled));
-        break;
+      } else {
+        updateOutputReg(createAdd(a, imm));
       }
-      updateOutputReg(createAdd(a, imm));
     } else {
       Value *ptr = getPointerFromMCExpr();
       updateOutputReg(ptr);
@@ -409,7 +410,7 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::ORI: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromImmOperand(2, 12, 64);
-    Value *res;
+    Value *res{nullptr};
     switch (opcode) {
     case RISCV::C_ANDI:
     case RISCV::ANDI:
@@ -486,7 +487,7 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::SLT: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromRegOperand(2, i64ty);
-    Value *res;
+    Value *res{nullptr};
     switch (opcode) {
     case RISCV::SLT:
       res = createICmp(ICmpInst::Predicate::ICMP_SLT, a, b);
@@ -506,7 +507,7 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::SLTIU: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromImmOperand(2, 12, 64);
-    Value *res;
+    Value *res{nullptr};
     switch (opcode) {
     case RISCV::SLTI:
       res = createICmp(ICmpInst::Predicate::ICMP_SLT, a, b);
@@ -597,9 +598,8 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::REMUW: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromRegOperand(2, i64ty);
-    Value *lhs;
-    Value *rhs;
-    uint64_t size;
+    Value *lhs{nullptr}, *rhs{nullptr};
+    uint64_t size{-1UL};
     switch (opcode) {
     case RISCV::DIV:
     case RISCV::DIVU:
@@ -622,10 +622,9 @@ void riscv2llvm::lift(MCInst &I) {
     }
 
     auto allOnes = getAllOnesConst(size);
-    auto intMin = createMaskedShl(getUnsignedIntConst(1, size),
-                                  getUnsignedIntConst(size - 1, size));
+    auto intMin = getSignedMinConst(size);
 
-    Value *res;
+    Value *res{nullptr};
     switch (opcode) {
     case RISCV::DIV:
     case RISCV::DIVW:
