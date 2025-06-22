@@ -275,10 +275,15 @@ Byte::Byte(const Memory &m, const StateValue &v, unsigned bits_read,
               : v.non_poison;
   p = concat_if(p, np.concat(v.value));
   if (num_sub_byte_bits) {
-    if ((bits_read % 8) == 0)
-      bits_read = 0;
-    p = p.concat(expr::mkUInt(bits_read, num_sub_byte_bits)
-                   .concat(expr::mkUInt(byte_number, size_byte_number())));
+    // optimization: byte number doesn't matter in assembly
+    if (m.isAsmMode()) {
+      p = p.concat_zeros(sub_byte_bits());
+    } else {
+      if ((bits_read % 8) == 0)
+        bits_read = 0;
+      p = p.concat(expr::mkUInt(bits_read, num_sub_byte_bits)
+                     .concat(expr::mkUInt(byte_number, size_byte_number())));
+    }
   }
   p = p.concat_zeros(padding_nonptr_byte());
   assert(!p.isValid() || p.bits() == bitsByte());
@@ -353,7 +358,7 @@ expr Byte::byteNumber() const {
 
 expr Byte::isPoison() const {
   if (!does_int_mem_access)
-    return  does_ptr_mem_access ? !ptrNonpoison() : true;
+    return does_ptr_mem_access ? !ptrNonpoison() : true;
   if (isAsmMode())
     return false;
 
@@ -413,10 +418,14 @@ expr Byte::refined(const Byte &other) const {
   expr np2 = asm_mode ? other.nonPoison() : other.nonptrNonpoison();
 
   // int byte
-  expr int_cnstr = true;
+  expr int_cnstr = (asm_mode || !num_sub_byte_bits) ? expr(true)
+    : (np1 == 0 ||
+       (numStoredBits() == other.numStoredBits() &&
+        byteNumber() == other.byteNumber()));
+
   if (does_int_mem_access) {
     if (bits_poison_per_byte == bits_byte) {
-      int_cnstr = (np2 & np1) == np1 && (v1 & np1) == (v2 & np1);
+      int_cnstr &= (np2 & np1) == np1 && (v1 & np1) == (v2 & np1);
     }
     else if (bits_poison_per_byte > 1) {
       assert((bits_byte % bits_poison_per_byte) == 0);
@@ -431,7 +440,7 @@ expr Byte::refined(const Byte &other) const {
       }
     } else {
       assert(!np1.isValid() || np1.bits() == 1);
-      int_cnstr = np1 == 0 || ((np1.eq(np2) ? true : np2 == 1) && v1 == v2);
+      int_cnstr &= np1 == 0 || ((np1.eq(np2) ? true : np2 == 1) && v1 == v2);
     }
   }
 
@@ -659,7 +668,7 @@ static StateValue bytesToValue(const Memory &m, const vector<Byte> &bytes,
       non_poison &=
         ub_pre(expr::mkIf(is_ptr,
                           b.ptrByteoffset() == i && ptr_value == loaded_ptr,
-                          b.nonptrValue() == 0));
+                          b.nonptrValue() == 0 && does_int_mem_access));
       non_poison &= !b.isPoison();
     }
     if (is_asm)
@@ -1004,9 +1013,8 @@ static bool isDerivedFromLoad(const expr &e) {
 Memory::AliasSet Memory::computeAliasing(const Pointer &ptr, const expr &bytes,
                                          uint64_t align, bool write) const {
   AliasSet aliasing(*this);
-  auto sz_local = next_local_bid;
+  auto sz_local    = min(next_local_bid, (unsigned)aliasing.size(true));
   auto sz_nonlocal = aliasing.size(false);
-  assert(sz_local <= aliasing.size(true));
 
   auto check_alias = [&](AliasSet &alias, bool local, unsigned bid,
                          const expr &offset) {
