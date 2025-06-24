@@ -649,6 +649,81 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+    /*
+     * B extension instructions
+     */
+
+  case RISCV::ADD_UW: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto b = readFromRegOperand(2, i64ty);
+    auto a32 = createTrunc(a, i32ty);
+    auto ax = createZExt(a32, i64ty);
+    auto res = createAdd(b, ax);
+    updateOutputReg(res);
+    break;
+  }
+  
+  case RISCV::SEXT_B:
+  case RISCV::SEXT_H:
+  case RISCV::ZEXT_H_RV64: {
+    auto a = readFromRegOperand(1, i64ty);
+
+    Value *res{nullptr};
+    switch (opcode) {
+    case RISCV::SEXT_B:
+      res = createTrunc(a, i8ty);
+      break;
+    case RISCV::SEXT_H:
+      res = createTrunc(a, i16ty);
+      break;
+    case RISCV::ZEXT_H_RV64:
+      res = createZExt(createTrunc(a, i16ty), i64ty);
+      break;
+    default:
+      assert(false);
+    }
+    updateOutputReg(res, /*SExt=*/true);
+    break;
+  }
+
+  case RISCV::ANDN:
+  case RISCV::ORN: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto b = readFromRegOperand(2, i64ty);
+    auto notb = createNot(b);
+
+    Value *res{nullptr};
+    switch (opcode) {
+    case RISCV::ANDN:
+      res = createAnd(a, notb);
+      break;
+    case RISCV::ORN:
+      res = createOr(a, notb);
+      break;
+    default:
+      assert(false);
+    }
+    updateOutputReg(res);
+    break;
+  }
+
+  case RISCV::XNOR: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto b = readFromRegOperand(2, i64ty);
+    auto res = createNot(createXor(a, b));
+    updateOutputReg(res);
+    break;
+  }
+
+  case RISCV::SH1ADD: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto b = readFromRegOperand(2, i64ty);
+    auto a_sh1 = createMaskedShl(a, getUnsignedIntConst(1, 64));
+    auto res = createAdd(a_sh1, b);
+    updateOutputReg(res);
+    break;
+  }
+
   default:
     visitError();
   }

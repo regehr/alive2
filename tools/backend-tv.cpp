@@ -317,8 +317,9 @@ version )EOF";
     DefaultTT = llvm::Triple("riscv64-unknown-linux-gnu");
     DefaultDL = "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128";
     DefaultCPU = "generic";
-    DefaultFeatures = "+m";
-    // DefaultFeatures = "+m,+zba,+zbb,+zbs";
+    // +m includes zmmul
+    // +b = +zba,+zbb,+zbs
+    DefaultFeatures = "+m,+b";
     LLVMInitializeRISCVTargetInfo();
     LLVMInitializeRISCVTarget();
     LLVMInitializeRISCVTargetMC();
