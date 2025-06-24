@@ -82,17 +82,18 @@ void riscv2llvm::lift(MCInst &I) {
     auto a = readFromRegOperand(0, i64ty);
     auto [dst_true, dst_false] = getBranchTargetsOperand(1);
     Value *zero = getUnsignedIntConst(0, 64);
-    Value *cond{nullptr};
+    ICmpInst::Predicate pred = ICmpInst::Predicate::BAD_ICMP_PREDICATE;
     switch (opcode) {
     case RISCV::C_BNEZ:
-      cond = createICmp(ICmpInst::Predicate::ICMP_NE, a, zero);
+      pred = ICmpInst::Predicate::ICMP_NE;
       break;
     case RISCV::C_BEQZ:
-      cond = createICmp(ICmpInst::Predicate::ICMP_EQ, a, zero);
+      pred = ICmpInst::Predicate::ICMP_EQ;
       break;
     default:
       assert(false);
     }
+    auto cond = createICmp(pred, a, zero);
     createBranch(cond, dst_true, dst_false);
     break;
   }
@@ -487,17 +488,18 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::SLT: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromRegOperand(2, i64ty);
-    Value *res{nullptr};
+    ICmpInst::Predicate pred = ICmpInst::Predicate::BAD_ICMP_PREDICATE;
     switch (opcode) {
     case RISCV::SLT:
-      res = createICmp(ICmpInst::Predicate::ICMP_SLT, a, b);
+      pred = ICmpInst::Predicate::ICMP_SLT;
       break;
     case RISCV::SLTU:
-      res = createICmp(ICmpInst::Predicate::ICMP_ULT, a, b);
+      pred = ICmpInst::Predicate::ICMP_ULT;
       break;
     default:
       assert(false);
     }
+    auto res = createICmp(pred, a, b);
     auto resExt = createZExt(res, i64ty);
     updateOutputReg(resExt);
     break;
@@ -507,17 +509,18 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::SLTIU: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromImmOperand(2, 12, 64);
-    Value *res{nullptr};
+    ICmpInst::Predicate pred = ICmpInst::Predicate::BAD_ICMP_PREDICATE;
     switch (opcode) {
     case RISCV::SLTI:
-      res = createICmp(ICmpInst::Predicate::ICMP_SLT, a, b);
+      pred = ICmpInst::Predicate::ICMP_SLT;
       break;
     case RISCV::SLTIU:
-      res = createICmp(ICmpInst::Predicate::ICMP_ULT, a, b);
+      pred = ICmpInst::Predicate::ICMP_ULT;
       break;
     default:
       assert(false);
     }
+    auto res = createICmp(pred, a, b);
     auto resExt = createZExt(res, i64ty);
     updateOutputReg(resExt);
     break;
