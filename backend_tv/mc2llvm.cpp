@@ -259,6 +259,8 @@ std::string mc2llvm::mapExprVar(const MCExpr *expr) {
   llvm::raw_string_ostream ss(name);
   expr->print(ss, nullptr);
 
+  *out << "MapExprVar\n";
+  
   // If the expression starts with a relocation specifier, strip it and map
   // the rest to a string name of the global variable. Assuming there is only
   // one relocation specifier, and it is at the beginning
@@ -269,7 +271,14 @@ std::string mc2llvm::mapExprVar(const MCExpr *expr) {
   if (std::regex_search(name, sm1, reloc)) {
     name = sm1.suffix();
   }
-
+  // FIXME -- this is a hack to keep up with a change in LLVM, we can
+  // do this better
+  std::smatch sm2;
+  std::regex specifier("specifier\\([0-9]+,(.*)\\)");
+  if (std::regex_match(name, sm2, specifier)) {
+    name = sm2[1];
+  }
+  
   name = demangle(name);
   auto [root, offset] = getOffset(name);
   name = root;
@@ -309,14 +318,27 @@ pair<Value *, bool> mc2llvm::getExprVar(const MCExpr *expr) {
   // for the rest (variable in the Expr) in the instExprVarMap and globals.
   // Assuming there is only one relocation specifier, and it is at the
   // beginning (std::regex_constants::match_continuous).
+
+  string stringVar;
+  
   if (std::regex_search(sss, sm, re, std::regex_constants::match_continuous)) {
-    string stringVar = sm.suffix();
+    stringVar = sm.suffix();
     // Check the relocation specifiers to determine whether to store ptr
     // global value in the register or load the value from the global
     if (!sm.empty() && (sm[0] == ":lo12:")) {
       storePtr = false;
     }
+  }
 
+  // FIXME -- this is a hack to keep up with a change in LLVM, we can
+  // do this better
+  std::smatch sm2;
+  std::regex specifier("specifier\\([0-9]+,(.*)\\)");
+  if (std::regex_match(sss, sm2, specifier)) {
+    stringVar = sm2[1];
+  }
+
+  if (stringVar != "") {
     stringVar = demangle(stringVar);
 
     if (!lookupGlobal(stringVar)) {
