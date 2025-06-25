@@ -677,14 +677,36 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
-  case RISCV::BSETI: {
+  case RISCV::BSETI:
+  case RISCV::RORI:
+  case RISCV::BCLRI:
+  case RISCV::BINVI: {
     // handling this seperately from BSET allows us to work with the immediate
     auto a = readFromRegOperand(1, i64ty);
     auto op = CurInst->getOperand(2);
     assert(op.isImm());
     auto shamt = op.getImm() & 0b111111;
-    auto bit = getUnsignedIntConst(1U << shamt, 64);
-    auto res = createOr(a, bit);
+
+    Value *res{nullptr};
+    switch (opcode) {
+    case RISCV::BSETI:
+      res = createOr(a, getUnsignedIntConst(1UL << shamt, 64));
+      break;
+    case RISCV::RORI: {
+      auto lo = createMaskedLShr(a, getUnsignedIntConst(shamt, 64));
+      auto hi = createMaskedShl(a, getUnsignedIntConst(64 - shamt, 64));
+      res = createOr(lo, hi);
+      break;
+    }
+    case RISCV::BCLRI:
+      res = createAnd(a, getUnsignedIntConst(~(1UL << shamt), 64));
+      break;
+    case RISCV::BINVI:
+      res = createXor(a, getUnsignedIntConst(1UL << shamt, 64));
+      break;
+    default:
+      assert(false);
+    }
     updateOutputReg(res);
     break;
   }
@@ -741,10 +763,53 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
-  case RISCV::SH1ADD: {
+  case RISCV::SH1ADD:
+  case RISCV::SH1ADD_UW:
+  case RISCV::SH2ADD:
+  case RISCV::SH2ADD_UW:
+  case RISCV::SH3ADD:
+  case RISCV::SH3ADD_UW: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromRegOperand(2, i64ty);
-    auto a_sh1 = createMaskedShl(a, getUnsignedIntConst(1, 64));
+
+    uint64_t shamt = 0;
+    switch (opcode) {
+    case RISCV::SH1ADD:
+    case RISCV::SH1ADD_UW: 
+      shamt = 1;
+      break; 
+    case RISCV::SH2ADD:
+    case RISCV::SH2ADD_UW: 
+      shamt = 2;
+      break;
+    case RISCV::SH3ADD:
+    case RISCV::SH3ADD_UW: 
+      shamt = 3;
+      break;
+    default:
+      assert(false);
+    }
+    assert(shamt != 0);
+    auto shamt_val = getUnsignedIntConst(shamt, 64);
+
+    Value *index{nullptr};
+    switch (opcode) {
+    case RISCV::SH1ADD:
+    case RISCV::SH2ADD:
+    case RISCV::SH3ADD:
+      index = a;
+      break; 
+    case RISCV::SH1ADD_UW: 
+    case RISCV::SH2ADD_UW: 
+    case RISCV::SH3ADD_UW:
+      index = createZExt(createTrunc(a, i32ty), i64ty);
+      break;
+    default:
+      assert(false);
+    }
+    assert(index);
+
+    auto a_sh1 = createMaskedShl(index, shamt_val);
     auto res = createAdd(a_sh1, b);
     updateOutputReg(res);
     break;
