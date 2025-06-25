@@ -493,8 +493,7 @@ Value *mc2llvm::createCheckedSDiv(Value *a, Value *b, llvm::Value *ifDivByZero,
   createBranch(RHSIsZero, retBB, checkOverflowBB);
 
   LLVMBB = checkOverflowBB;
-  auto intMin = createMaskedShl(getUnsignedIntConst(1, size),
-                                getUnsignedIntConst(size - 1, size));
+  auto intMin = getSignedMinConst(size);
   auto LHSIsIntMin = createICmp(ICmpInst::Predicate::ICMP_EQ, a, intMin);
   auto RHSIsAllOnes = createICmp(ICmpInst::Predicate::ICMP_EQ, b, allOnes);
   auto isOverflow = createAnd(LHSIsIntMin, RHSIsAllOnes);
@@ -564,8 +563,7 @@ Value *mc2llvm::createCheckedSRem(Value *a, Value *b, llvm::Value *ifDivByZero,
   createBranch(RHSIsZero, retBB, checkOverflowBB);
 
   LLVMBB = checkOverflowBB;
-  auto intMin = createMaskedShl(getUnsignedIntConst(1, size),
-                                getUnsignedIntConst(size - 1, size));
+  auto intMin = getSignedMinConst(size);
   auto LHSIsIntMin = createICmp(ICmpInst::Predicate::ICMP_EQ, a, intMin);
   auto RHSIsAllOnes = createICmp(ICmpInst::Predicate::ICMP_EQ, b, allOnes);
   auto isOverflow = createAnd(LHSIsIntMin, RHSIsAllOnes);
