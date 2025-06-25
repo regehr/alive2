@@ -662,7 +662,30 @@ void riscv2llvm::lift(MCInst &I) {
     updateOutputReg(res);
     break;
   }
-  
+
+  case RISCV::BSET: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto b = readFromRegOperand(2, i64ty);
+    auto mask = getUnsignedIntConst(0b111111, 64);
+    auto shamt = createAnd(b, mask);
+    auto bit = createRawShl(getUnsignedIntConst(1, 64), shamt);
+    auto res = createOr(a, bit);
+    updateOutputReg(res);
+    break;
+  }
+
+  case RISCV::BSETI: {
+    // handling this seperately from BSET allows us to work with the immediate
+    auto a = readFromRegOperand(1, i64ty);
+    auto op = CurInst->getOperand(2);
+    assert(op.isImm());
+    auto shamt = op.getImm() & 0b111111;
+    auto bit = getUnsignedIntConst(1U << shamt, 64);
+    auto res = createOr(a, bit);
+    updateOutputReg(res);
+    break;
+  }
+
   case RISCV::SEXT_B:
   case RISCV::SEXT_H:
   case RISCV::ZEXT_H_RV64: {
