@@ -1287,10 +1287,11 @@ StateValue FpUnaryOpVerticalZip::toSMT(State &s) const {
       v2s.emplace_back(std::move(v2));
     }
     auto retty = getType().getAsAggregateType();
+    unsigned v2idx = 1 + retty->isPadding(1);
     vals.emplace_back(
       retty->getChild(0).getAsAggregateType()->aggregateVals(v1s));
     vals.emplace_back(
-      retty->getChild(1).getAsAggregateType()->aggregateVals(v2s));
+      retty->getChild(v2idx).getAsAggregateType()->aggregateVals(v2s));
   } else {
     auto [v1, v2] = scalar(v, val->getType());
     vals.emplace_back(std::move(v1));
@@ -1304,9 +1305,10 @@ expr FpUnaryOpVerticalZip::getTypeConstraints(const Function &f) const {
            val->getType().enforceFloatOrVectorType() &&
            getType().enforceStructType();
   if (auto ty = getType().getAsStructType()) {
+    unsigned v2idx = 1 + ty->isPadding(1);
     c &= ty->numElementsExcludingPadding() == 2 &&
          ty->getChild(0) == val->getType() &&
-         ty->getChild(1).enforceIntOrVectorType(32);
+         ty->getChild(v2idx).enforceIntOrVectorType(32);
   }
   return c;
 }
