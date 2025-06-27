@@ -666,7 +666,31 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
-  case RISCV::BSET: {
+  case RISCV::CLZ:
+  case RISCV::CLZW: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto res = createCtlz(opcode == RISCV::CLZ ? a : createTrunc(a, i32ty));
+    updateOutputReg(res, /*SExt=*/true);
+    break;
+  }
+
+  case RISCV::CPOP:
+  case RISCV::CPOPW: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto res = createCtPop(opcode == RISCV::CPOP ? a : createTrunc(a, i32ty));
+    updateOutputReg(res, /*SExt=*/true);
+    break;
+  }
+
+  case RISCV::CTZ:
+  case RISCV::CTZW: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto res = createCttz(opcode == RISCV::CTZ ? a : createTrunc(a, i32ty));
+    updateOutputReg(res, /*SExt=*/true);
+    break;
+  }
+
+  case RISCV::BSET:
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromRegOperand(2, i64ty);
     auto mask = getUnsignedIntConst(0b111111, 64);

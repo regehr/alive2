@@ -550,6 +550,13 @@ public:
                                   LLVMBB);
   }
 
+  llvm::CallInst *createCttz(llvm::Value *v) override {
+    auto *decl = llvm::Intrinsic::getOrInsertDeclaration(
+        LiftedModule, llvm::Intrinsic::cttz, v->getType());
+    return llvm::CallInst::Create(decl, {v, getBoolConst(false)}, nextName(),
+                                  LLVMBB);
+  }
+
   llvm::CallInst *createBSwap(llvm::Value *v) override {
     auto *decl = llvm::Intrinsic::getOrInsertDeclaration(
         LiftedModule, llvm::Intrinsic::bswap, v->getType());

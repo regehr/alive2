@@ -143,6 +143,8 @@ public:
 
   virtual expr_t createCtlz(expr_t v) = 0;
 
+  virtual expr_t createCttz(expr_t v) = 0;
+
   virtual expr_t createBSwap(expr_t v) = 0;
 
   virtual expr_t createVectorReduceAdd(expr_t v) = 0;
