@@ -260,7 +260,7 @@ std::string mc2llvm::mapExprVar(const MCExpr *expr) {
   expr->print(ss, nullptr);
 
   *out << "MapExprVar\n";
-  
+
   // If the expression starts with a relocation specifier, strip it and map
   // the rest to a string name of the global variable. Assuming there is only
   // one relocation specifier, and it is at the beginning
@@ -278,7 +278,7 @@ std::string mc2llvm::mapExprVar(const MCExpr *expr) {
   if (std::regex_match(name, sm2, specifier)) {
     name = sm2[1];
   }
-  
+
   name = demangle(name);
   auto [root, offset] = getOffset(name);
   name = root;
@@ -320,7 +320,7 @@ pair<Value *, bool> mc2llvm::getExprVar(const MCExpr *expr) {
   // beginning (std::regex_constants::match_continuous).
 
   string stringVar;
-  
+
   if (std::regex_search(sss, sm, re, std::regex_constants::match_continuous)) {
     stringVar = sm.suffix();
     // Check the relocation specifiers to determine whether to store ptr
