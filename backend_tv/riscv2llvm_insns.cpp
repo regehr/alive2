@@ -880,15 +880,15 @@ void riscv2llvm::lift(MCInst &I) {
     uint64_t shamt = 0;
     switch (opcode) {
     case RISCV::SH1ADD:
-    case RISCV::SH1ADD_UW: 
+    case RISCV::SH1ADD_UW:
       shamt = 1;
-      break; 
+      break;
     case RISCV::SH2ADD:
-    case RISCV::SH2ADD_UW: 
+    case RISCV::SH2ADD_UW:
       shamt = 2;
       break;
     case RISCV::SH3ADD:
-    case RISCV::SH3ADD_UW: 
+    case RISCV::SH3ADD_UW:
       shamt = 3;
       break;
     default:
@@ -903,9 +903,9 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::SH2ADD:
     case RISCV::SH3ADD:
       index = a;
-      break; 
-    case RISCV::SH1ADD_UW: 
-    case RISCV::SH2ADD_UW: 
+      break;
+    case RISCV::SH1ADD_UW:
+    case RISCV::SH2ADD_UW:
     case RISCV::SH3ADD_UW:
       index = createZExt(createTrunc(a, i32ty), i64ty);
       break;
