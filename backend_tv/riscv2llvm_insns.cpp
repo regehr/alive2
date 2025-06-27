@@ -691,12 +691,49 @@ void riscv2llvm::lift(MCInst &I) {
   }
 
   case RISCV::BSET:
+  case RISCV::ROL:
+  case RISCV::ROR:
+  case RISCV::BCLR:
+  case RISCV::BEXT:
+  case RISCV::BINV: {
     auto a = readFromRegOperand(1, i64ty);
     auto b = readFromRegOperand(2, i64ty);
     auto mask = getUnsignedIntConst(0b111111, 64);
     auto shamt = createAnd(b, mask);
     auto bit = createRawShl(getUnsignedIntConst(1, 64), shamt);
-    auto res = createOr(a, bit);
+    Value *res{nullptr};
+    switch (opcode) {
+    case RISCV::BSET:
+      res = createOr(a, bit);
+      break;
+    case RISCV::ROL: {
+      auto shamt2 = createSub(getUnsignedIntConst(64, 64), shamt);
+      auto lo = createMaskedLShr(a, shamt2);
+      auto hi = createMaskedShl(a, shamt);
+      res = createOr(lo, hi);
+      break;
+    }
+    case RISCV::ROR: {
+      auto shamt2 = createSub(getUnsignedIntConst(64, 64), shamt);
+      auto lo = createMaskedLShr(a, shamt);
+      auto hi = createMaskedShl(a, shamt2);
+      res = createOr(lo, hi);
+      break;
+    }
+    case RISCV::BCLR:
+      res = createAnd(a, createNot(bit));
+      break;
+    case RISCV::BEXT: {
+      auto shifted = createMaskedLShr(a, shamt);
+      res = createAnd(shifted, getUnsignedIntConst(1, 64));
+      break;
+    }
+    case RISCV::BINV:
+      res = createXor(a, bit);
+      break;
+    default:
+      assert(false);
+    }
     updateOutputReg(res);
     break;
   }
@@ -704,8 +741,10 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::BSETI:
   case RISCV::RORI:
   case RISCV::BCLRI:
-  case RISCV::BINVI: {
-    // handling this seperately from BSET allows us to work with the immediate
+  case RISCV::BEXTI:
+  case RISCV::BINVI:
+  case RISCV::SLLI_UW: {
+    // instructions with a 6-bit, unsigned immediate
     auto a = readFromRegOperand(1, i64ty);
     auto op = CurInst->getOperand(2);
     assert(op.isImm());
@@ -725,9 +764,20 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::BCLRI:
       res = createAnd(a, getUnsignedIntConst(~(1UL << shamt), 64));
       break;
+    case RISCV::BEXTI: {
+      auto shifted = createMaskedLShr(a, getUnsignedIntConst(shamt, 64));
+      res = createAnd(shifted, getUnsignedIntConst(1, 64));
+      break;
+    }
     case RISCV::BINVI:
       res = createXor(a, getUnsignedIntConst(1UL << shamt, 64));
       break;
+    case RISCV::SLLI_UW: {
+      auto a32 = createTrunc(a, i32ty);
+      auto ax = createZExt(a32, i64ty);
+      res = createMaskedShl(ax, getUnsignedIntConst(shamt, 64));
+      break;
+    }
     default:
       assert(false);
     }
@@ -735,6 +785,7 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+  case RISCV::REV8_RV64:
   case RISCV::SEXT_B:
   case RISCV::SEXT_H:
   case RISCV::ZEXT_H_RV64: {
@@ -742,6 +793,9 @@ void riscv2llvm::lift(MCInst &I) {
 
     Value *res{nullptr};
     switch (opcode) {
+    case RISCV::REV8_RV64:
+      res = createBSwap(a);
+      break;
     case RISCV::SEXT_B:
       res = createTrunc(a, i8ty);
       break;
