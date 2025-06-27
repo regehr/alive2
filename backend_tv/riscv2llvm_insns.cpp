@@ -812,6 +812,33 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+  case RISCV::MIN:
+  case RISCV::MINU:
+  case RISCV::MAX:
+  case RISCV::MAXU: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto b = readFromRegOperand(2, i64ty);
+    Value *res{nullptr};
+    switch (opcode) {
+    case RISCV::MIN:
+      res = createSMin(a, b);
+      break;
+    case RISCV::MINU:
+      res = createUMin(a, b);
+      break;
+    case RISCV::MAX:
+      res = createSMax(a, b);
+      break;
+    case RISCV::MAXU:
+      res = createUMax(a, b);
+      break;
+    default:
+      assert(false);
+    }
+    updateOutputReg(res);
+    break;
+  }
+
   case RISCV::ANDN:
   case RISCV::ORN: {
     auto a = readFromRegOperand(1, i64ty);
