@@ -24,7 +24,8 @@ void riscv2llvm::lift(MCInst &I) {
   auto opcode = I.getOpcode();
   // StringRef instStr = InstPrinter->getOpcodeName(opcode);
   auto newbb = BasicBlock::Create(Ctx, "lifter_" + nextName(), liftedFn);
-  createBranch(newbb);
+  if (!LLVMBB->getTerminator())
+    createBranch(newbb);
   LLVMBB = newbb;
 
   // auto i1ty = getIntTy(1);
