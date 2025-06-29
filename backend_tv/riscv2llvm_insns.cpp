@@ -693,6 +693,7 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::BSET:
   case RISCV::ROL:
   case RISCV::ROR:
+  case RISCV::RORW:
   case RISCV::BCLR:
   case RISCV::BEXT:
   case RISCV::BINV: {
@@ -706,18 +707,15 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::BSET:
       res = createOr(a, bit);
       break;
-    case RISCV::ROL: {
-      auto shamt2 = createSub(getUnsignedIntConst(64, 64), shamt);
-      auto lo = createMaskedLShr(a, shamt2);
-      auto hi = createMaskedShl(a, shamt);
-      res = createOr(lo, hi);
+    case RISCV::ROL:
+      res = createFShl(a, a, shamt);
       break;
-    }
-    case RISCV::ROR: {
-      auto shamt2 = createSub(getUnsignedIntConst(64, 64), shamt);
-      auto lo = createMaskedLShr(a, shamt);
-      auto hi = createMaskedShl(a, shamt2);
-      res = createOr(lo, hi);
+    case RISCV::ROR:
+      res = createFShr(a, a, shamt);
+      break;
+    case RISCV::RORW: {
+      auto a32 = createTrunc(a, i32ty);
+      res = createFShr(a32, a32, createTrunc(shamt, i32ty));
       break;
     }
     case RISCV::BCLR:
@@ -734,7 +732,7 @@ void riscv2llvm::lift(MCInst &I) {
     default:
       assert(false);
     }
-    updateOutputReg(res);
+    updateOutputReg(res, /*SExt=*/true);
     break;
   }
 
@@ -756,17 +754,12 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::BSETI:
       res = createOr(a, getUnsignedIntConst(1UL << shamt, 64));
       break;
-    case RISCV::RORI: {
-      auto lo = createMaskedLShr(a, getUnsignedIntConst(shamt, 64));
-      auto hi = createMaskedShl(a, getUnsignedIntConst(64 - shamt, 64));
-      res = createOr(lo, hi);
+    case RISCV::RORI:
+      res = createFShr(a, a, getUnsignedIntConst(shamt, 64));
       break;
-    }
     case RISCV::RORIW: {
-      auto aw = createTrunc(a, i32ty);
-      auto lo = createMaskedLShr(aw, getUnsignedIntConst(shamt, 32));
-      auto hi = createMaskedShl(aw, getUnsignedIntConst(32 - shamt, 32));
-      res = createOr(lo, hi);
+      auto a32 = createTrunc(a, i32ty);
+      res = createFShr(a32, a32, getUnsignedIntConst(shamt, 32));
       break;
     }
     case RISCV::BCLRI:
