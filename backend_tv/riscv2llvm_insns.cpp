@@ -740,6 +740,7 @@ void riscv2llvm::lift(MCInst &I) {
 
   case RISCV::BSETI:
   case RISCV::RORI:
+  case RISCV::RORIW:
   case RISCV::BCLRI:
   case RISCV::BEXTI:
   case RISCV::BINVI:
@@ -758,6 +759,13 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::RORI: {
       auto lo = createMaskedLShr(a, getUnsignedIntConst(shamt, 64));
       auto hi = createMaskedShl(a, getUnsignedIntConst(64 - shamt, 64));
+      res = createOr(lo, hi);
+      break;
+    }
+    case RISCV::RORIW: {
+      auto aw = createTrunc(a, i32ty);
+      auto lo = createMaskedLShr(aw, getUnsignedIntConst(shamt, 32));
+      auto hi = createMaskedShl(aw, getUnsignedIntConst(32 - shamt, 32));
       res = createOr(lo, hi);
       break;
     }
@@ -781,7 +789,7 @@ void riscv2llvm::lift(MCInst &I) {
     default:
       assert(false);
     }
-    updateOutputReg(res);
+    updateOutputReg(res, /*SExt=*/true);
     break;
   }
 
