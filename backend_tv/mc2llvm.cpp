@@ -246,6 +246,7 @@ std::tuple<string, long> mc2llvm::getOffset(const string &var) {
 }
 
 string mc2llvm::demangle(const string &name) {
+  assert(name != "");
   if (name.rfind(".L.", 0) == 0) {
     // the assembler has mangled local symbols, which start with a
     // dot, by prefixing them with ".L"; here we demangle
@@ -257,20 +258,15 @@ string mc2llvm::demangle(const string &name) {
 
 std::string mc2llvm::MCExprToName(const MCExpr *expr) {
   auto sr = dyn_cast<MCSymbolRefExpr>(expr);
-  if (sr) {
-    auto name = demangle((string)sr->getSymbol().getName());
-    assert(name != "");
-    return name;
-  }
+  if (sr)
+    return demangle((string)sr->getSymbol().getName());
   auto spec = dyn_cast<MCSpecifierExpr>(expr);
   assert(spec);
   auto var = spec->getSubExpr();
   assert(var);
   sr = dyn_cast<MCSymbolRefExpr>(var);
   assert(sr);
-  auto name = demangle((string)sr->getSymbol().getName());
-  assert(name != "");
-  return name;
+  return demangle((string)sr->getSymbol().getName());
 }
 
 std::string mc2llvm::mapExprVar(const MCExpr *expr) {
