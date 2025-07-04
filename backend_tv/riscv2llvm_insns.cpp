@@ -1,6 +1,7 @@
 #include "backend_tv/mc2llvm.h"
 #include "backend_tv/riscv2llvm.h"
 
+#include "Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/IR/Value.h"
 #include "llvm/MC/MCAsmInfo.h"

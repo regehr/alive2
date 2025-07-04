@@ -1,14 +1,10 @@
 #include "backend_tv/arm2llvm.h"
 
+#include "Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.h"
+
 using namespace std;
 using namespace lifter;
 using namespace llvm;
-
-#define GET_INSTRINFO_ENUM
-#include "Target/AArch64/AArch64GenInstrInfo.inc"
-
-#define GET_REGINFO_ENUM
-#include "Target/AArch64/AArch64GenRegisterInfo.inc"
 
 void arm2llvm::lift_tbz(unsigned opcode) {
   auto i1 = getIntTy(1);

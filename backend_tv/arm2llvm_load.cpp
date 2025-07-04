@@ -1,16 +1,12 @@
 #include "backend_tv/arm2llvm.h"
 
+#include "Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.h"
+
 #include <vector>
 
 using namespace lifter;
 using namespace llvm;
 using namespace std;
-
-#define GET_INSTRINFO_ENUM
-#include "Target/AArch64/AArch64GenInstrInfo.inc"
-
-#define GET_REGINFO_ENUM
-#include "Target/AArch64/AArch64GenRegisterInfo.inc"
 
 void arm2llvm::lift_ldp_2(unsigned opcode) {
   auto i64 = getIntTy(64);
@@ -895,8 +891,8 @@ void arm2llvm::lift_ldr1(unsigned opcode) {
   MCOperand &op2 = CurInst->getOperand(2);
   if (op2.isExpr()) {
     *out << "[operand 2 is expr]\n";
-    auto [globalVar, storePtr] = getExprVar(op2.getExpr());
-    if (storePtr) {
+    auto [globalVar, specifier] = getExprVar(op2.getExpr());
+    if (specifier == AArch64::S_GOT_LO12) {
       Value *ptrToInt = createPtrToInt(globalVar, getIntTy(size * 8));
       updateOutputReg(ptrToInt, sExt);
     } else {

@@ -1,5 +1,10 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCAsmInfo.h"
+
+// FIXME remove
+#include "Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.h"
 
 #include "backend_tv/lifter.h"
 #include "backend_tv/mc2llvm.h"
@@ -256,21 +261,28 @@ string mc2llvm::demangle(const string &name) {
   }
 }
 
-std::string mc2llvm::MCExprToName(const MCExpr *expr) {
+pair<std::string, uint16_t> mc2llvm::MCExprToName(const MCExpr *expr) {
   auto sr = dyn_cast<MCSymbolRefExpr>(expr);
-  if (sr)
-    return demangle((string)sr->getSymbol().getName());
+  if (sr) {
+    *out << "raw symbol ref expr\n";
+    return make_pair(demangle((string)sr->getSymbol().getName()), 0xfff);
+  }
   auto spec = dyn_cast<MCSpecifierExpr>(expr);
   assert(spec);
+  auto specifier = spec->getSpecifier();
+  if (true) {
+    string name{AArch64::getSpecifierName(*spec)};
+    *out << "relocation expr, specifier = " << name << "\n";
+  }
   auto var = spec->getSubExpr();
   assert(var);
   sr = dyn_cast<MCSymbolRefExpr>(var);
   assert(sr);
-  return demangle((string)sr->getSymbol().getName());
+  return make_pair(demangle((string)sr->getSymbol().getName()), specifier);
 }
 
 std::string mc2llvm::mapExprVar(const MCExpr *expr) {
-  auto name = MCExprToName(expr);
+  auto [name, specifier] = MCExprToName(expr);
 
   // FIXME -- we'll probably need to deal with offsets
 
@@ -284,12 +296,8 @@ std::string mc2llvm::mapExprVar(const MCExpr *expr) {
   return name;
 }
 
-pair<Value *, bool> mc2llvm::getExprVar(const MCExpr *expr) {
-  auto name = MCExprToName(expr);
-
-  // Default to true meaning store the ptr global value rather than loading
-  // the value from the global
-  bool storePtr = false;
+pair<Value *, uint16_t> mc2llvm::getExprVar(const MCExpr *expr) {
+  auto [name, specifier] = MCExprToName(expr);
 
   Value *globalVar = lookupGlobal(name);
   if (!globalVar) {
@@ -320,11 +328,12 @@ pair<Value *, bool> mc2llvm::getExprVar(const MCExpr *expr) {
   if (offset != 0) {
     // FIXME -- would be better to return the root symbol and the
     // offset separately, and let the caller do the pointer
-    // arithmetic
+    // arithmetic?
     globalVar = createGEP(getIntTy(8), globalVar,
                           {getUnsignedIntConst(offset, 64)}, "");
   }
-  return make_pair(globalVar, storePtr);
+
+  return make_pair(globalVar, specifier);
 }
 
 Value *mc2llvm::createUSHL(Value *a, Value *b) {

@@ -907,11 +907,11 @@ public:
   std::tuple<std::string, long> getOffset(const std::string &var);
   // Reads an Expr and maps containing string variable to a global variable
   std::string mapExprVar(const llvm::MCExpr *expr);
-  std::string MCExprToName(const llvm::MCExpr *expr);
+  std::pair<std::string, uint16_t> MCExprToName(const llvm::MCExpr *expr);
   std::string demangle(const std::string &name);
   // Reads an Expr and gets the global variable corresponding the containing
   // string variable. Assuming the Expr consists of a single global variable.
-  std::pair<llvm::Value *, bool> getExprVar(const llvm::MCExpr *expr);
+  std::pair<llvm::Value *, uint16_t> getExprVar(const llvm::MCExpr *expr);
   // negative shift exponents go the other direction
   llvm::Value *createUSHL(llvm::Value *a, llvm::Value *b);
   // negative shift exponents go the other direction

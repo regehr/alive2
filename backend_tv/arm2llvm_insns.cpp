@@ -1,10 +1,6 @@
 #include "backend_tv/arm2llvm.h"
 
-#define GET_INSTRINFO_ENUM
-#include "Target/AArch64/AArch64GenInstrInfo.inc"
-
-#define GET_REGINFO_ENUM
-#include "Target/AArch64/AArch64GenRegisterInfo.inc"
+#include "Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.h"
 
 #define AARCH64_MAP_IMPL
 #include "aslp/aarch64_map.h"
