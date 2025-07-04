@@ -256,11 +256,17 @@ string mc2llvm::demangle(const string &name) {
 }
 
 std::string mc2llvm::MCExprToName(const MCExpr *expr) {
+  auto sr = dyn_cast<MCSymbolRefExpr>(expr);
+  if (sr) {
+    auto name = demangle((string)sr->getSymbol().getName());
+    assert(name != "");
+    return name;
+  }
   auto spec = dyn_cast<MCSpecifierExpr>(expr);
   assert(spec);
   auto var = spec->getSubExpr();
   assert(var);
-  auto sr = dyn_cast<MCSymbolRefExpr>(var);
+  sr = dyn_cast<MCSymbolRefExpr>(var);
   assert(sr);
   auto name = demangle((string)sr->getSymbol().getName());
   assert(name != "");
