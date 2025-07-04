@@ -1,4 +1,5 @@
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/MC/MCSymbol.h"
 
 #include "backend_tv/lifter.h"
 #include "backend_tv/mc2llvm.h"
@@ -254,36 +255,22 @@ string mc2llvm::demangle(const string &name) {
   }
 }
 
+std::string mc2llvm::MCExprToName(const MCExpr *expr) {
+  auto spec = dyn_cast<MCSpecifierExpr>(expr);
+  assert(spec);
+  auto var = spec->getSubExpr();
+  assert(var);
+  auto sr = dyn_cast<MCSymbolRefExpr>(var);
+  assert(sr);
+  auto name = demangle((string)sr->getSymbol().getName());
+  assert(name != "");
+  return name;
+}
+
 std::string mc2llvm::mapExprVar(const MCExpr *expr) {
-  std::string name;
-  llvm::raw_string_ostream ss(name);
-  expr->print(ss, nullptr);
+  auto name = MCExprToName(expr);
 
-  *out << "MapExprVar\n";
-
-  // If the expression starts with a relocation specifier, strip it and map
-  // the rest to a string name of the global variable. Assuming there is only
-  // one relocation specifier, and it is at the beginning
-  // (std::regex_constants::match_continuous).
-  // eg: ":lo12:a" becomes  "a"
-  std::smatch sm1;
-  std::regex reloc("^:[a-z0-9_]+:");
-  if (std::regex_search(name, sm1, reloc)) {
-    name = sm1.suffix();
-  }
-  // FIXME -- this is a hack to keep up with a change in LLVM, we can
-  // do this better
-  std::smatch sm2;
-  std::regex specifier("specifier\\([0-9]+,(.*)\\)");
-  if (std::regex_match(name, sm2, specifier)) {
-    name = sm2[1];
-  }
-
-  name = demangle(name);
-  auto [root, offset] = getOffset(name);
-  name = root;
-
-  // FIXME -- yikes why are we ignoring the offset????
+  // FIXME -- we'll probably need to deal with offsets
 
   if (!lookupGlobal(name)) {
     *out << "\ncan't find global '" << name << "'\n";
@@ -296,88 +283,38 @@ std::string mc2llvm::mapExprVar(const MCExpr *expr) {
 }
 
 pair<Value *, bool> mc2llvm::getExprVar(const MCExpr *expr) {
-  Value *globalVar;
+  auto name = MCExprToName(expr);
+
   // Default to true meaning store the ptr global value rather than loading
   // the value from the global
-  bool storePtr = true;
-  std::string sss;
+  bool storePtr = false;
 
-  // Matched strings
-  std::smatch sm;
+  Value *globalVar = lookupGlobal(name);
+  if (!globalVar) {
+    *out << "\nERROR: global '" << name << "' not found\n\n";
+    exit(-1);
+  }
 
-  // Regex to match relocation specifiers
-  std::regex re(":[a-z0-9_]+:");
+  // FIXME
+  long offset = 0;
 
-  llvm::raw_string_ostream ss(sss);
-  expr->print(ss, nullptr);
-
-  auto [root, offset] = getOffset(sss);
-  sss = root;
-
-  // If the expression starts with a relocation specifier, strip it and look
-  // for the rest (variable in the Expr) in the instExprVarMap and globals.
-  // Assuming there is only one relocation specifier, and it is at the
-  // beginning (std::regex_constants::match_continuous).
-
-  string stringVar;
-
-  if (std::regex_search(sss, sm, re, std::regex_constants::match_continuous)) {
-    stringVar = sm.suffix();
-    // Check the relocation specifiers to determine whether to store ptr
-    // global value in the register or load the value from the global
-    if (!sm.empty() && (sm[0] == ":lo12:")) {
-      storePtr = false;
+  // Look through all visited ADRP instructions to find one in which
+  // name was the operand used.
+  bool foundStringVar = false;
+  for (const auto &exprVar : instExprVarMap) {
+    if (exprVar.second == name) {
+      foundStringVar = true;
+      break;
     }
   }
 
-  // FIXME -- this is a hack to keep up with a change in LLVM, we can
-  // do this better
-  std::smatch sm2;
-  std::regex specifier("specifier\\([0-9]+,(.*)\\)");
-  if (std::regex_match(sss, sm2, specifier)) {
-    stringVar = sm2[1];
+  if (!foundStringVar) {
+    *out << "\nERROR: Did not use \"" << name
+         << "\" in an ADRP "
+            "instruction\n\n";
+    exit(-1);
   }
 
-  if (stringVar != "") {
-    stringVar = demangle(stringVar);
-
-    if (!lookupGlobal(stringVar)) {
-      *out << "\nERROR: instruction mentions '" << stringVar << "'\n";
-      *out << "which is not a global variable we know about\n\n";
-      exit(-1);
-    }
-
-    // Look through all visited ADRP instructions to find one in which
-    // stringVar was the operand used.
-    bool foundStringVar = false;
-    for (const auto &exprVar : instExprVarMap) {
-      if (exprVar.second == stringVar) {
-        foundStringVar = true;
-        break;
-      }
-    }
-
-    if (!foundStringVar) {
-      *out << "\nERROR: Did not use \"" << stringVar
-           << "\" in an ADRP "
-              "instruction\n\n";
-      exit(-1);
-    }
-
-    globalVar = lookupGlobal(stringVar);
-    if (!globalVar) {
-      *out << "\nERROR: global not found\n\n";
-      exit(-1);
-    }
-  } else {
-    globalVar = lookupGlobal(demangle(sss));
-    if (!globalVar) {
-      *out << "\nERROR: global not found\n\n";
-      exit(-1);
-    }
-  }
-
-  assert(globalVar);
   if (offset != 0) {
     // FIXME -- would be better to return the root symbol and the
     // offset separately, and let the caller do the pointer

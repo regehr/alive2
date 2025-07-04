@@ -142,6 +142,7 @@ std::variant<err_t, stmt_t> bridge::parse(std::string_view aslt) {
 
 
 std::variant<err_t, result_t> bridge::run_special(const llvm::MCInst& inst, const opcode_t& bytes) {
+#if 0
   llvm::BasicBlock* bb{nullptr};
   std::string name{"special_unknown"};
 
@@ -180,6 +181,9 @@ std::variant<err_t, result_t> bridge::run_special(const llvm::MCInst& inst, cons
     return std::make_tuple(name, stmt_t{bb, bb});
   else
     return err_t::missing;
+#endif
+  assert(false);
+  return err_t::missing;
 }
 
 

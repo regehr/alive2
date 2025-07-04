@@ -803,7 +803,7 @@ void riscv2llvm::lift(MCInst &I) {
 
     // extract LSB
     auto bits = createAnd(s3, getUnsignedIntConst(0x0101010101010101, 64));
-    
+
     // scale any 0x01 to 0xFF
     auto res = createMul(bits, getUnsignedIntConst(0xFF, 64));
     updateOutputReg(res);

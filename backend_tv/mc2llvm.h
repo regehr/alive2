@@ -907,6 +907,7 @@ public:
   std::tuple<std::string, long> getOffset(const std::string &var);
   // Reads an Expr and maps containing string variable to a global variable
   std::string mapExprVar(const llvm::MCExpr *expr);
+  std::string MCExprToName(const llvm::MCExpr *expr);
   std::string demangle(const std::string &name);
   // Reads an Expr and gets the global variable corresponding the containing
   // string variable. Assuming the Expr consists of a single global variable.
