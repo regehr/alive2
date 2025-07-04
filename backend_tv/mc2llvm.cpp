@@ -265,7 +265,7 @@ pair<std::string, uint16_t> mc2llvm::MCExprToName(const MCExpr *expr) {
   auto sr = dyn_cast<MCSymbolRefExpr>(expr);
   if (sr) {
     *out << "raw symbol ref expr\n";
-    return make_pair(demangle((string)sr->getSymbol().getName()), 0xfff);
+    return make_pair(demangle((string)sr->getSymbol().getName()), NO_SPECIFIER);
   }
   auto spec = dyn_cast<MCSpecifierExpr>(expr);
   assert(spec);
@@ -308,21 +308,21 @@ pair<Value *, uint16_t> mc2llvm::getExprVar(const MCExpr *expr) {
   // FIXME
   long offset = 0;
 
-  // Look through all visited ADRP instructions to find one in which
-  // name was the operand used.
-  bool foundStringVar = false;
-  for (const auto &exprVar : instExprVarMap) {
-    if (exprVar.second == name) {
-      foundStringVar = true;
-      break;
+  if (specifier != NO_SPECIFIER) {
+    // Look through all visited ADRP instructions to find one in which
+    // name was the operand used.
+    bool foundStringVar = false;
+    for (const auto &exprVar : instExprVarMap) {
+      if (exprVar.second == name) {
+        foundStringVar = true;
+        break;
+      }
     }
-  }
-
-  if (!foundStringVar) {
-    *out << "\nERROR: Did not use \"" << name
-         << "\" in an ADRP "
-            "instruction\n\n";
-    exit(-1);
+    if (!foundStringVar) {
+      *out << "\nERROR: Did not use \"" << name
+           << "\" in an ADRP instruction\n\n";
+      exit(-1);
+    }
   }
 
   if (offset != 0) {

@@ -68,6 +68,8 @@ public:
   llvm::Function *myAlloc{nullptr};
   llvm::Constant *stackSize{nullptr};
 
+  const uint16_t NO_SPECIFIER = 0xfff;
+  
   // amount of stack available for use by the lifted function, in bytes
   const int stackBytes = 1024;
 
