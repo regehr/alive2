@@ -142,6 +142,16 @@ Alive2 :: arm-tv/intrinsics/trap.aarch64.ll
 Of these, vec fails due to different vector poison behaviour, fneg fails due to storing pointers,
 and MRS/MSR/trap are not yet implemented in the aslt\_visitor.
 
+To test only the ASLP lifter, use a command like this:
+```
+../tests/lit/lit.py ../tests/arm-tv/  --filter '\(aslp\)'
+```
+
+Analogously, to test only the non-ASLP lifter:
+```
+../tests/lit/lit.py ../tests/arm-tv/  --filter '\(classic\)'
+```
+
 ## details
 
 The Aslp approach, while promising, is complicated to implement due to the differences in abstraction between LLVM MCInst and the ARM opcode
