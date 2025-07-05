@@ -1015,7 +1015,7 @@ public:
    * does this target-specific relocation specifier indicate that the
    * symbol is indirected through the global offset table?
    */
-  virtual bool isGOT(uint16_t spec) = 0;
+  virtual bool isGOT(uint16_t spec) override = 0;
 };
 
 } // end namespace lifter
