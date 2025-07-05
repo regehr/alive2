@@ -159,7 +159,7 @@ std::variant<err_t, result_t> bridge::run_special(const llvm::MCInst& inst, cons
       auto expr = inst.getOperand(1).getExpr();
       expr_t global = iface.lookupExprVar(*expr);
 
-      auto [name, specifier] = iface.MCExprToName(expr);
+      auto [_, specifier] = iface.MCExprToName(expr);
       if (iface.isGOT(specifier)) {
         auto alloc = iface.createAlloca(global->getType(), nullptr, iface.nextName());
         iface.createStore(global, alloc);
