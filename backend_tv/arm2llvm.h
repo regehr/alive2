@@ -83,6 +83,8 @@ public:
 
   void doReturn() override;
 
+  bool isGOT(uint16_t spec) override;
+
   std::tuple<llvm::Value *, llvm::Value *, llvm::Value *, llvm::Value *>
   FPCompare(llvm::Value *a, llvm::Value *b);
 

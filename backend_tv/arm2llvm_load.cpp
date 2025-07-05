@@ -892,7 +892,7 @@ void arm2llvm::lift_ldr1(unsigned opcode) {
   if (op2.isExpr()) {
     *out << "[operand 2 is expr]\n";
     auto [globalVar, specifier] = getExprVar(op2.getExpr());
-    if (specifier == AArch64::S_GOT_LO12) {
+    if (isGOT(specifier)) {
       Value *ptrToInt = createPtrToInt(globalVar, getIntTy(size * 8));
       updateOutputReg(ptrToInt, sExt);
     } else {

@@ -69,6 +69,10 @@ class riscv2llvm final : public mc2llvm {
   void checkFuncSupport(llvm::Function &func) override;
   void checkTypeSupport(llvm::Type *ty) override;
 
+  bool isGOT(uint16_t spec) override {
+    assert(false);
+  }
+
   unsigned mapRegToBackingReg(unsigned Reg);
   llvm::Value *readFromReg(unsigned Reg, llvm::Type *ty);
   llvm::Value *readFromRegOperand(int idx, llvm::Type *ty);

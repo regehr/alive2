@@ -1167,6 +1167,8 @@ void mc2llvm::fixupOptimizedTgt(Function *tgt) {
     arg->removeAttr(llvm::Attribute::ReadNone);
     arg->removeAttr(llvm::Attribute::ReadOnly);
     arg->removeAttr(llvm::Attribute::WriteOnly);
+    // As of July 2025, Alive2 is giving false alarms relating to initializes
+    arg->removeAttr(llvm::Attribute::Initializes);
   }
 
   /*

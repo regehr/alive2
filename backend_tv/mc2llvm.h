@@ -909,7 +909,7 @@ public:
   std::tuple<std::string, long> getOffset(const std::string &var);
   // Reads an Expr and maps containing string variable to a global variable
   std::string mapExprVar(const llvm::MCExpr *expr);
-  std::pair<std::string, uint16_t> MCExprToName(const llvm::MCExpr *expr);
+  std::pair<std::string, uint16_t> MCExprToName(const llvm::MCExpr *expr) override;
   std::string demangle(const std::string &name);
   // Reads an Expr and gets the global variable corresponding the containing
   // string variable. Assuming the Expr consists of a single global variable.
@@ -1011,6 +1011,11 @@ public:
    * artifically ensure there are not empty BBs
    */
   virtual unsigned sentinelNOP() = 0;
+  /*
+   * does this target-specific relocation specifier indicate that the
+   * symbol is indirected through the global offset table?
+   */
+  virtual bool isGOT(uint16_t spec) = 0;
 };
 
 } // end namespace lifter

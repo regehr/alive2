@@ -3385,3 +3385,7 @@ void arm2llvm::checkTypeSupport(Type *ty) {
     }
   }
 }
+
+bool arm2llvm::isGOT(uint16_t spec) {
+  return spec == AArch64::S_GOT_LO12;
+}

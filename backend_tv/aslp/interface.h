@@ -46,6 +46,8 @@ public:
   // instruction they come from
   virtual std::string nextName() = 0;
 
+  virtual bool isGOT(uint16_t spec) = 0;
+  virtual std::pair<std::string, uint16_t> MCExprToName(const llvm::MCExpr *expr) = 0;
   virtual expr_t lookupExprVar(const llvm::MCExpr&) = 0;
   virtual void updateOutputReg(expr_t V, bool SExt = false) = 0;
 
