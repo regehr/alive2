@@ -52,6 +52,7 @@ void arm2llvm::lift_movz(unsigned opcode) {
   assert(CurInst->getOperand(1).isImm());
   auto lhs = readFromOperand(1);
   lhs = regShift(lhs, getImm(2));
+  // JDR fixme this add is useless
   auto rhs = getUnsignedIntConst(0, size);
   auto ident = createAdd(lhs, rhs);
   updateOutputReg(ident);

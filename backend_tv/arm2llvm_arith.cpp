@@ -235,7 +235,7 @@ void arm2llvm::lift_adc_sbc(unsigned opcode) {
   case AArch64::SBCSWr:
   case AArch64::SBCSXr:
     b = createNot(b);
-    return;
+    break;
   }
 
   auto [res, flags] = addWithCarry(a, b, getC());
