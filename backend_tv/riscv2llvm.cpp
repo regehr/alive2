@@ -333,7 +333,8 @@ Value *riscv2llvm::getPointerFromMCExpr() {
   auto addrExpr = rvExpr->getSubExpr();
   assert(addrExpr);
   if (auto binaryExpr = dyn_cast<MCBinaryExpr>(addrExpr)) {
-    if (binaryExpr->getOpcode() == MCBinaryExpr::Add) {
+    auto opc = binaryExpr->getOpcode();
+    if (opc == MCBinaryExpr::Add || opc == MCBinaryExpr::Sub) {
       auto LHS = binaryExpr->getLHS();
       auto RHS = binaryExpr->getRHS();
       assert(LHS && LHS->getKind() == MCExpr::SymbolRef);
@@ -343,7 +344,10 @@ Value *riscv2llvm::getPointerFromMCExpr() {
       assert(CE);
       auto offset = CE->getValue();
       auto i8ty = getIntTy(8);
-      auto offsetVal = getSignedIntConst(offset, 64);
+      Value *offsetVal = getSignedIntConst(offset, 64);
+      auto zero = getSignedIntConst(0, 64);
+      if (opc == MCBinaryExpr::Sub)
+        offsetVal = createSub(zero, offsetVal);
       ptr = createGEP(i8ty, ptr, {offsetVal}, nextName());
       return ptr;
     } else {
