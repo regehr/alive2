@@ -69,7 +69,7 @@ public:
   llvm::Constant *stackSize{nullptr};
 
   const uint16_t NO_SPECIFIER = 0xfff;
-  
+
   // amount of stack available for use by the lifted function, in bytes
   const int stackBytes = 1024;
 
@@ -909,7 +909,8 @@ public:
   std::tuple<std::string, long> getOffset(const std::string &var);
   // Reads an Expr and maps containing string variable to a global variable
   std::string mapExprVar(const llvm::MCExpr *expr);
-  std::pair<std::string, uint16_t> MCExprToName(const llvm::MCExpr *expr) override;
+  std::pair<std::string, uint16_t>
+  MCExprToName(const llvm::MCExpr *expr) override;
   std::string demangle(const std::string &name);
   // Reads an Expr and gets the global variable corresponding the containing
   // string variable. Assuming the Expr consists of a single global variable.

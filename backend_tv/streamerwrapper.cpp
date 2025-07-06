@@ -9,7 +9,7 @@ void MCFunction::checkEntryBlock(unsigned jumpOpcode) {
   // does; we can fix that up by adding an extra block at the start
   // of the function. simplifyCFG will clean this up when it's not
   // needed.
-  BBs.emplace(BBs.begin(), "arm_tv_entry");
+  BBs.emplace(BBs.begin(), "entry");
   MCInst jmp_instr;
   jmp_instr.setOpcode(jumpOpcode);
   jmp_instr.addOperand(MCOperand::createImm(1));

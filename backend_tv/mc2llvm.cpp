@@ -1,7 +1,6 @@
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCSymbol.h"
-#include "llvm/MC/MCAsmInfo.h"
-#include "llvm/MC/MCAsmInfo.h"
 
 // FIXME remove
 #include "Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.h"

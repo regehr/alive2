@@ -259,9 +259,7 @@ void riscv2llvm::platformInit() {
       goto end;
     }
 
-    assert(false && "argument unimplemented");
 #if 0
-    
     // first 8 vector/FP parameters go in the first 8 vector registers
     if ((argTy->isVectorTy() || argTy->isFloatingPointTy()) && vecArgNum < 8) {
       auto Reg = AArch64::Q0 + vecArgNum;
@@ -269,14 +267,18 @@ void riscv2llvm::platformInit() {
       ++vecArgNum;
       goto end;
     }
+#endif
 
-    // anything else goes onto the stack
+    // everything else goes onto the stack
+
     {
+#if 0
       // 128-bit alignment required for 128-bit arguments
       if ((getBitWidth(val) == 128) && ((stackSlot % 2) != 0)) {
         ++stackSlot;
         *out << " (actual stack slot = " << stackSlot << ")";
       }
+#endif
 
       if (stackSlot >= numStackSlots) {
         *out << "\nERROR: maximum stack slots for parameter values "
@@ -285,7 +287,7 @@ void riscv2llvm::platformInit() {
       }
 
       auto addr =
-          createGEP(i64, paramBase, {getUnsignedIntConst(stackSlot, 64)}, "");
+          createGEP(i64ty, paramBase, {getUnsignedIntConst(stackSlot, 64)}, "");
       createStore(val, addr);
 
       if (getBitWidth(val) == 64) {
@@ -296,8 +298,6 @@ void riscv2llvm::platformInit() {
         assert(false);
       }
     }
-#endif
-
   end:
     *out << "\n";
   }
