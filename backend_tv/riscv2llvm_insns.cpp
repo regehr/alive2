@@ -694,6 +694,7 @@ void riscv2llvm::lift(MCInst &I) {
 
   case RISCV::BSET:
   case RISCV::ROL:
+  case RISCV::ROLW:
   case RISCV::ROR:
   case RISCV::RORW:
   case RISCV::BCLR:
@@ -712,6 +713,11 @@ void riscv2llvm::lift(MCInst &I) {
     case RISCV::ROL:
       res = createFShl(a, a, shamt);
       break;
+    case RISCV::ROLW: {
+      auto a32 = createTrunc(a, i32ty);
+      res = createFShl(a32, a32, createTrunc(shamt, i32ty));
+      break;
+    }
     case RISCV::ROR:
       res = createFShr(a, a, shamt);
       break;

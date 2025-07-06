@@ -47,15 +47,10 @@ void arm2llvm::lift_movn() {
 }
 
 void arm2llvm::lift_movz(unsigned opcode) {
-  auto size = getInstSize(opcode);
   assert(CurInst->getOperand(0).isReg());
   assert(CurInst->getOperand(1).isImm());
-  auto lhs = readFromOperand(1);
-  lhs = regShift(lhs, getImm(2));
-  // JDR fixme this add is useless
-  auto rhs = getUnsignedIntConst(0, size);
-  auto ident = createAdd(lhs, rhs);
-  updateOutputReg(ident);
+  auto op = readFromOperand(1);
+  updateOutputReg(regShift(op, getImm(2)));
 }
 
 // https://developer.arm.com/documentation/ddi0595/2021-06/AArch64-Registers/NZCV--Condition-Flags

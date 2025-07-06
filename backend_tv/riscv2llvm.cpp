@@ -64,7 +64,7 @@ Value *riscv2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
     return V;
 
   if (argTy->isVectorTy() || argTy->isFloatingPointTy()) {
-    assert(false && "to be implemented!");
+    assert(false && "vectors and floats not supported yet");
   }
 
   assert(argTy->isIntegerTy());
