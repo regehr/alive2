@@ -3398,4 +3398,3 @@ void arm2llvm::checkCallingConv(Function *fn) {
     exit(-1);
   }
 }
-

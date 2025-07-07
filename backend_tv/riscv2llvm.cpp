@@ -390,4 +390,3 @@ void riscv2llvm::checkCallingConv(Function *fn) {
     exit(-1);
   }
 }
-

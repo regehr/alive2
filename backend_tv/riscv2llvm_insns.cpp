@@ -46,6 +46,11 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::C_NOP_HINT:
     break;
 
+  case RISCV::UNIMP:
+    *out << "UNIMP instruction cannot be lifted\n";
+    exit(-1);
+    break;
+
   // JDR: I don't understand why JAL is getting generated sometimes
   // for simple direct branches. here we're ignoring the register
   // update.

@@ -119,7 +119,7 @@ public:
   unsigned branchInst() override;
 
   void checkCallingConv(llvm::Function *fn) override;
-  
+
   llvm::Value *conditionHolds(uint64_t cond);
 
   std::tuple<llvm::Value *, std::tuple<llvm::Value *, llvm::Value *,
