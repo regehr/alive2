@@ -55,6 +55,8 @@ class riscv2llvm final : public mc2llvm {
 
   void lift(llvm::MCInst &I) override;
 
+  void checkCallingConv(llvm::Function *fn) override;
+  
   void platformInit() override;
 
   unsigned branchInst() override;

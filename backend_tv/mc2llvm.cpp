@@ -779,15 +779,6 @@ pair<Function *, Function *> mc2llvm::run() {
   return make_pair(srcFn, liftedFn);
 }
 
-void mc2llvm::checkCallingConv(Function *fn) {
-  if (fn->getCallingConv() != CallingConv::C &&
-      fn->getCallingConv() != CallingConv::Fast) {
-    *out
-        << "\nERROR: Only the C and fast calling conventions are supported\n\n";
-    exit(-1);
-  }
-}
-
 void mc2llvm::avoidArgMD(CallInst *ci, const string &str) {
   auto &Ctx = ci->getContext();
   auto val = MetadataAsValue::get(Ctx, MDString::get(Ctx, str));

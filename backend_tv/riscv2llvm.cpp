@@ -382,3 +382,12 @@ void riscv2llvm::checkTypeSupport(Type *ty) {
     exit(-1);
   }
 }
+
+void riscv2llvm::checkCallingConv(Function *fn) {
+  if (fn->getCallingConv() != CallingConv::C) {
+    *out
+        << "\nERROR: Only the C and fast calling conventions are supported\n\n";
+    exit(-1);
+  }
+}
+

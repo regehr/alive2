@@ -941,7 +941,6 @@ public:
   void invalidateReg(unsigned Reg, unsigned Width);
   void createRegStorage(unsigned Reg, unsigned Width, const std::string &Name);
   std::pair<llvm::Function *, llvm::Function *> run();
-  void checkCallingConv(llvm::Function *fn);
   void avoidArgMD(llvm::CallInst *ci, const std::string &str);
   void checkInstSupport(llvm::Instruction &i, const llvm::DataLayout &DL,
                         std::set<llvm::Type *> &typeSet);
@@ -1017,6 +1016,10 @@ public:
    * symbol is indirected through the global offset table?
    */
   virtual bool isGOT(uint16_t spec) override = 0;
+  /*
+   * exit unless this function's calling convention is supported
+   */
+  virtual void checkCallingConv(llvm::Function *fn) = 0;
 };
 
 } // end namespace lifter

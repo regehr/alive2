@@ -3389,3 +3389,13 @@ void arm2llvm::checkTypeSupport(Type *ty) {
 bool arm2llvm::isGOT(uint16_t spec) {
   return spec == AArch64::S_GOT_LO12;
 }
+
+void arm2llvm::checkCallingConv(Function *fn) {
+  if (fn->getCallingConv() != CallingConv::C &&
+      fn->getCallingConv() != CallingConv::Fast) {
+    *out
+        << "\nERROR: Only the C and fast calling conventions are supported\n\n";
+    exit(-1);
+  }
+}
+
