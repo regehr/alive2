@@ -133,9 +133,150 @@ Value *riscv2llvm::getIndexedElement(unsigned idx, unsigned eltSize,
   return nullptr;
 }
 
+vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy) {
+  *out << "entering marshallArgs()\n";
+  assert(fTy);
+  if (fTy->getReturnType()->isStructTy()) {
+    *out << "\nERROR: we don't support structures in return values yet\n\n";
+    exit(-1);
+  }
+  if (fTy->getReturnType()->isArrayTy()) {
+    *out << "\nERROR: we don't support arrays in return values yet\n\n";
+    exit(-1);
+  }
+  unsigned vecArgNum = 0;
+  unsigned scalarArgNum = 0;
+  // unsigned stackSlot = 0;
+  vector<Value *> args;
+  for (auto arg = fTy->param_begin(); arg != fTy->param_end(); ++arg) {
+    Type *argTy = *arg;
+    assert(argTy);
+    *out << "  vecArgNum = " << vecArgNum << " scalarArgNum = " << scalarArgNum
+         << "\n";
+    if (argTy->isStructTy()) {
+      *out << "\nERROR: we don't support structures in arguments yet\n\n";
+      exit(-1);
+    }
+    if (argTy->isArrayTy()) {
+      *out << "\nERROR: we don't support arrays in arguments yet\n\n";
+      exit(-1);
+    }
+    Value *param{nullptr};
+    if (argTy->isFloatingPointTy() || argTy->isVectorTy()) {
+      assert(false);
+#if 0
+      if (vecArgNum < 8) {
+        param = readFromReg(AArch64::Q0 + vecArgNum, argTy);
+        ++vecArgNum;
+      } else {
+        auto sz = getBitWidth(argTy);
+        if (sz > 64 && ((stackSlot % 2) != 0)) {
+          ++stackSlot;
+          *out << "aligning stack slot for large vector parameter\n";
+        }
+        *out << "vector parameter going on stack with size = " << sz << "\n";
+        auto SP = readPtrFromReg(AArch64::SP);
+        auto addr = createGEP(getIntTy(64), SP,
+                              {getUnsignedIntConst(stackSlot, 64)}, nextName());
+        param = createBitCast(createLoad(getIntTy(sz), addr), argTy);
+        ++stackSlot;
+        if (sz > 64)
+          ++stackSlot;
+      }
+#endif
+    } else if (argTy->isIntegerTy() || argTy->isPointerTy()) {
+      // FIXME check signext and zeroext
+      if (scalarArgNum < 8) {
+        param = readFromReg(RISCV::X10 + scalarArgNum, getIntTy(64));
+        ++scalarArgNum;
+      } else {
+	assert(false);
+#if 0
+        auto SP = readPtrFromReg(AArch64::SP);
+        auto addr = createGEP(getIntTy(64), SP,
+                              {getUnsignedIntConst(stackSlot, 64)}, nextName());
+        param = createLoad(getIntTy(64), addr);
+        ++stackSlot;
+#endif
+      }
+      if (!argTy->isPointerTy()) {
+        assert(argTy->getIntegerBitWidth() <= 64);
+        if (argTy->getIntegerBitWidth() < 64)
+          param = createTrunc(param, getIntTy(argTy->getIntegerBitWidth()));
+      }
+    } else {
+      assert(false && "unknown arg type\n");
+    }
+    args.push_back(param);
+  }
+  *out << "marshalled up " << args.size() << " arguments\n";
+  return args;
+}
+
 void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
                         const string &calleeName) {
-  assert(false);
+  *out << "entering doCall()\n";
+
+  for (auto &arg : FC.getFunctionType()->params()) {
+    if (auto vTy = dyn_cast<VectorType>(arg))
+      checkVectorTy(vTy);
+  }
+  if (auto RT = dyn_cast<VectorType>(FC.getFunctionType()->getReturnType()))
+    checkVectorTy(RT);
+
+  auto args = marshallArgs(FC.getFunctionType());
+
+  // ugh -- these functions have an LLVM "immediate" as their last
+  // argument; this is not present in the assembly at all, we have
+  // to provide it by hand
+  if (calleeName == "llvm.memset.p0.i64" ||
+      calleeName == "llvm.memset.p0.i32" ||
+      calleeName == "llvm.memcpy.p0.p0.i64" ||
+      calleeName == "llvm.memmove.p0.p0.i64")
+    args[3] = getBoolConst(false);
+
+  auto CI = CallInst::Create(FC, args, "", LLVMBB);
+
+  bool sext{false}, zext{false};
+
+  assert(llvmCI);
+  if (llvmCI->hasFnAttr(Attribute::NoReturn)) {
+    auto a = CI->getAttributes();
+    auto a2 = a.addFnAttribute(Ctx, Attribute::NoReturn);
+    CI->setAttributes(a2);
+  }
+  // NB we have to check for both function attributes and call site
+  // attributes
+  if (llvmCI->hasRetAttr(Attribute::SExt))
+    sext = true;
+  if (llvmCI->hasRetAttr(Attribute::ZExt))
+    zext = true;
+  auto calledFn = llvmCI->getCalledFunction();
+  if (calledFn) {
+    if (calledFn->hasRetAttribute(Attribute::SExt))
+      sext = true;
+    if (calledFn->hasRetAttribute(Attribute::ZExt))
+      zext = true;
+  }
+
+  auto RV = enforceSExtZExt(CI, sext, zext);
+
+  // invalidate machine state that is not guaranteed to be preserved across a
+  // call
+  for (unsigned reg = 5; reg <= 7; ++reg)
+    invalidateReg(RISCV::X0 + reg, 64);
+  for (unsigned reg = 28; reg <= 31; ++reg)
+    invalidateReg(RISCV::X0 + reg, 64);
+
+  auto retTy = FC.getFunctionType()->getReturnType();
+  if (retTy->isIntegerTy() || retTy->isPointerTy()) {
+    updateReg(RV, RISCV::X10);
+  } else if (retTy->isFloatingPointTy() || retTy->isVectorTy()) {
+    assert(false);
+    // updateReg(RV, AArch64::Q0);
+  } else {
+    assert(retTy->isVoidTy());
+  }
 }
 
 Value *riscv2llvm::readFromRegOperand(int idx, Type *ty) {
@@ -251,7 +392,7 @@ void riscv2llvm::platformInit() {
     auto *val =
         enforceSExtZExt(arg, srcArg->hasSExtAttr(), srcArg->hasZExtAttr());
 
-    // first 8 integer parameters go in the first 8 integer registers
+    // first 8 integer parameters go in integer registers starting at X10
     if ((argTy->isIntegerTy() || argTy->isPointerTy()) && scalarArgNum < 8) {
       auto Reg = RISCV::X10 + scalarArgNum;
       createStore(val, RegFile[Reg]);
@@ -385,8 +526,7 @@ void riscv2llvm::checkTypeSupport(Type *ty) {
 
 void riscv2llvm::checkCallingConv(Function *fn) {
   if (fn->getCallingConv() != CallingConv::C) {
-    *out
-        << "\nERROR: Only the C and fast calling conventions are supported\n\n";
+    *out << "\nERROR: Only the C calling convention is supported\n\n";
     exit(-1);
   }
 }

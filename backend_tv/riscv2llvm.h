@@ -87,6 +87,7 @@ class riscv2llvm final : public mc2llvm {
   getBranchTargetsOperand(int op);
   llvm::Value *getPointerFromMCExpr();
   llvm::Value *getPointerOperand();
+  std::vector<llvm::Value *> marshallArgs(llvm::FunctionType *fTy);
 
 public:
   riscv2llvm(llvm::Function *srcFn, std::unique_ptr<llvm::MemoryBuffer> MB,
