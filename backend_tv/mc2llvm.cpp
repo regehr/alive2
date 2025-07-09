@@ -2,9 +2,6 @@
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCSymbol.h"
 
-// FIXME remove
-#include "Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.h"
-
 #include "backend_tv/lifter.h"
 #include "backend_tv/mc2llvm.h"
 
@@ -269,10 +266,6 @@ pair<std::string, uint16_t> mc2llvm::MCExprToName(const MCExpr *expr) {
   auto spec = dyn_cast<MCSpecifierExpr>(expr);
   assert(spec);
   auto specifier = spec->getSpecifier();
-  if (true) {
-    string name{AArch64::getSpecifierName(*spec)};
-    *out << "relocation expr, specifier = " << name << "\n";
-  }
   auto var = spec->getSubExpr();
   assert(var);
   sr = dyn_cast<MCSymbolRefExpr>(var);
@@ -298,15 +291,18 @@ std::string mc2llvm::mapExprVar(const MCExpr *expr) {
 pair<Value *, uint16_t> mc2llvm::getExprVar(const MCExpr *expr) {
   auto [name, specifier] = MCExprToName(expr);
 
+  *out << "getExprVar = " << name << "\n";
+  
   Value *globalVar = lookupGlobal(name);
   if (!globalVar) {
     *out << "\nERROR: global '" << name << "' not found\n\n";
     exit(-1);
   }
 
-  // FIXME
+  // FIXME?
   long offset = 0;
 
+#if 0
   if (specifier != NO_SPECIFIER) {
     // Look through all visited ADRP instructions to find one in which
     // name was the operand used.
@@ -323,6 +319,7 @@ pair<Value *, uint16_t> mc2llvm::getExprVar(const MCExpr *expr) {
       exit(-1);
     }
   }
+#endif
 
   if (offset != 0) {
     // FIXME -- would be better to return the root symbol and the
@@ -541,12 +538,16 @@ void mc2llvm::assertSame(Value *a, Value *b) {
 }
 
 void mc2llvm::doDirectCall() {
+  *out << "in doDirectCall\n";
+  
   auto &op0 = CurInst->getOperand(0);
   assert(op0.isExpr());
   auto [expr, _] = getExprVar(op0.getExpr());
   assert(expr);
   string calleeName = (string)expr->getName();
 
+  *out << " callee is " << calleeName << "\n";
+  
   if (calleeName == "__stack_chk_fail") {
     createTrap();
     return;

@@ -199,7 +199,9 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy) {
         ++stackSlot;
 #endif
       }
-      if (!argTy->isPointerTy()) {
+      if (argTy->isPointerTy()) {
+        param = new IntToPtrInst(param, PointerType::get(Ctx, 0), "", LLVMBB);
+      } else {
         assert(argTy->getIntegerBitWidth() <= 64);
         if (argTy->getIntegerBitWidth() < 64)
           param = createTrunc(param, getIntTy(argTy->getIntegerBitWidth()));
@@ -232,8 +234,10 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   if (calleeName == "llvm.memset.p0.i64" ||
       calleeName == "llvm.memset.p0.i32" ||
       calleeName == "llvm.memcpy.p0.p0.i64" ||
-      calleeName == "llvm.memmove.p0.p0.i64")
+      calleeName == "llvm.memmove.p0.p0.i64") {
+    *out << "adding constant Boolean as args[3]\n";
     args[3] = getBoolConst(false);
+  }
 
   auto CI = CallInst::Create(FC, args, "", LLVMBB);
 
@@ -268,6 +272,12 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   for (unsigned reg = 28; reg <= 31; ++reg)
     invalidateReg(RISCV::X0 + reg, 64);
 
+#if 0
+  // invalidate argument regs?
+  for (unsigned reg = 10; reg <= 17; ++reg)
+    invalidateReg(RISCV::X0 + reg, 64);
+#endif
+  
   auto retTy = FC.getFunctionType()->getReturnType();
   if (retTy->isIntegerTy() || retTy->isPointerTy()) {
     updateReg(RV, RISCV::X10);

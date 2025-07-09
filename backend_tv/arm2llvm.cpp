@@ -1099,6 +1099,8 @@ void arm2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   if (auto RT = dyn_cast<VectorType>(FC.getFunctionType()->getReturnType()))
     checkVectorTy(RT);
 
+  // FIXME: invalidate argument registers before putting arguments there
+
   auto args = marshallArgs(FC.getFunctionType());
 
   // ugh -- these functions have an LLVM "immediate" as their last
