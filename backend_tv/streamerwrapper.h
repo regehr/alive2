@@ -230,9 +230,9 @@ public:
   virtual void emitValueImpl(const llvm::MCExpr *Value, unsigned Size,
                              llvm::SMLoc Loc = llvm::SMLoc()) override;
 
-  virtual void emitValueToAlignment(llvm::Align Alignment, int64_t Value = 0,
-                                    unsigned ValueSize = 1,
-                                    unsigned MaxBytesToEmit = 0) override {
+  virtual void emitValueToAlignment(llvm::Align Alignment, int64_t Fill = 0,
+                                    uint8_t FillLen = 1,
+				    unsigned MaxBytesToEmit = 0) override {
     *out << "[emitValueToAlignment= " << Alignment.value() << "]\n";
     curAlign = Alignment;
   }
