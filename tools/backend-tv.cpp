@@ -10,7 +10,6 @@
 #include "tools/transform.h"
 #include "util/version.h"
 
-#include "AArch64TargetMachine.h"
 #include "Target/AArch64/AArch64Subtarget.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
@@ -24,10 +23,8 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
-#include "llvm/InitializePasses.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Passes/PassBuilder.h"
-#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/SourceMgr.h"
@@ -41,7 +38,6 @@
 
 #include <fstream>
 #include <iostream>
-#include <sstream>
 #include <utility>
 
 using namespace tools;
