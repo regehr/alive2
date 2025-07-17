@@ -33,6 +33,7 @@
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/raw_os_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/IPO/GlobalDCE.h"
 #include "llvm/Transforms/IPO/Internalize.h"
@@ -114,6 +115,12 @@ llvm::cl::opt<bool> run_replace_ptrtoint(
     "run-replace-ptrtoint",
     llvm::cl::desc(
         "Replace ptr-int round trips with single GEP (default=false)"),
+    llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
+
+llvm::cl::opt<bool> test_replace_ptrtoint(
+    "test-replace-ptrtoint",
+    llvm::cl::desc(
+        "Test run-replace-ptrtoint flag by running the pass on source (default=false)"),
     llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
 
 llvm::cl::opt<string> opt_asm_input(
@@ -212,6 +219,15 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
   for (auto &F : *srcModule) {
     if (&F != srcFn && !F.isDeclaration())
       F.deleteBody();
+  }
+
+  if (test_replace_ptrtoint) {
+    llvm::raw_os_ostream streamWrapper(*out);
+    srcFn->print(streamWrapper);
+    tryReplacePtrtoInt(srcFn);
+    srcFn->print(streamWrapper);
+    streamWrapper.flush();
+    exit(0);
   }
 
   if (opt_internalize) {

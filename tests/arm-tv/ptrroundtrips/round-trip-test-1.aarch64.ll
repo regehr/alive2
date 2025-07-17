@@ -1,5 +1,5 @@
-; TEST-ARGS: -run-replace-ptrtoint
-; should optimize 2 geps ; currently gets scrambled
+; TEST-ARGS: -test-replace-ptrtoint
+
 define ptr @g(ptr noundef %p, i64 noundef %idx1, i64 noundef %idx2) {
     %i1 = ptrtoint ptr %p to i64
     %i2 = add i64 %i1, %idx1
@@ -13,3 +13,5 @@ define ptr @g(ptr noundef %p, i64 noundef %idx1, i64 noundef %idx2) {
     %max = select i1 %cmp, ptr %p1, ptr %p2 ; cmp ? p1 : p2
     ret ptr %max
 }
+
+; CHECK: getelementptr
