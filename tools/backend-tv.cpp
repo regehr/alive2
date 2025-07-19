@@ -219,7 +219,6 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
 
   if (test_replace_ptrtoint) {
     llvm::raw_os_ostream streamWrapper(*out);
-    srcFn->print(streamWrapper);
     tryReplacePtrtoInt(srcFn);
     srcFn->print(streamWrapper);
     streamWrapper.flush();
