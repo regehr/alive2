@@ -16,3 +16,5 @@ define ptr @g(ptr noundef %p, i64 noundef %idx1, i64 noundef %idx2) {
 
 ; CHECK: getelementptr
 ; CHECK: getelementptr
+; CHECK-NOT: inttoptr
+; CHECK-NOT: ptrtoint

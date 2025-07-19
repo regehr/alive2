@@ -1,4 +1,4 @@
-; TEST-ARGS: -run-replace-ptrtoint
+; TEST-ARGS: -test-replace-ptrtoint
 ; should not collapse gep
 define ptr @b(ptr %p, i64 %idx, ptr nocapture noundef %x) {
     %i1 = ptrtoint ptr %p to i64
@@ -10,4 +10,4 @@ define ptr @b(ptr %p, i64 %idx, ptr nocapture noundef %x) {
     ret ptr %r
 }
 
-; CHECK-NOT: gep ptr
+; CHECK-NOT: getelementptr

@@ -8,3 +8,5 @@ define ptr @f(ptr %p, i64 %idx) {
 }
 
 ; CHECK: getelementptr
+; CHECK-NOT: inttoptr
+; CHECK-NOT: ptrtoint

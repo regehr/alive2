@@ -1,4 +1,4 @@
-; TEST-ARGS: -run-replace-ptrtoint
+; TEST-ARGS: -test-replace-ptrtoint
 ; should collapse into gep
 define ptr @h(ptr %p, i64 %idx) {
     %i1 = ptrtoint ptr %p to i64
@@ -7,4 +7,6 @@ define ptr @h(ptr %p, i64 %idx) {
     ret ptr %r
 }
 
-; CHECK: gep ptr %#0
+; CHECK: getelementptr
+; CHECK-NOT: inttoptr
+; CHECK-NOT: ptrtoint
