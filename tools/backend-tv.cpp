@@ -11,25 +11,25 @@
 #include "util/version.h"
 
 #include "Target/AArch64/AArch64Subtarget.h"
-#include "AArch64TargetMachine.h"
-#include "llvm/IR/DataLayout.h"
-#include "llvm/MC/TargetRegistry.h"
-#include "llvm/Support/TargetSelect.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Bitcode/BitcodeReader.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
-#include "llvm/InitializePasses.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Passes/PassBuilder.h"
-#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/raw_os_ostream.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/IPO/GlobalDCE.h"
@@ -38,7 +38,6 @@
 
 #include <fstream>
 #include <iostream>
-#include <sstream>
 #include <utility>
 
 using namespace tools;
@@ -108,6 +107,18 @@ llvm::cl::opt<bool> save_lifted_ir(
     llvm::cl::desc("Save lifted LLVM IR to file (default=false)"),
     llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
 
+llvm::cl::opt<bool> run_replace_ptrtoint(
+    "run-replace-ptrtoint",
+    llvm::cl::desc(
+        "Replace ptr-int round trips with single GEP (default=false)"),
+    llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
+
+llvm::cl::opt<bool> test_replace_ptrtoint(
+    "test-replace-ptrtoint",
+    llvm::cl::desc("Test run-replace-ptrtoint flag by running the pass on "
+                   "source (default=false)"),
+    llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
+
 llvm::cl::opt<string> opt_asm_input(
     "asm-input",
     llvm::cl::desc("Use the provied file as lifted assembly, instead of "
@@ -120,6 +131,55 @@ llvm::Triple DefaultTT;
 const char *DefaultDL;
 const char *DefaultCPU;
 const char *DefaultFeatures;
+
+// Given an intToPtr instruction, checks for a round trip
+// from a ptrToInt instruction, then replaces with a single GEP instruction.
+bool tryReplaceRoundTrip(llvm::IntToPtrInst *intToPtr) {
+  assert(intToPtr);
+
+  // we only understand add instructions in this context
+  auto *op_inst = dyn_cast<llvm::Instruction>(intToPtr->getOperand(0));
+  if (!op_inst || op_inst->getOpcode() != llvm::Instruction::Add ||
+      op_inst->getNumUses() > 1)
+    return false;
+
+  // keep track of (ptr + int) vs (int + ptr)
+  bool ptrOnLeft = true;
+  auto *ptrToInt = dyn_cast<llvm::PtrToIntInst>(op_inst->getOperand(0));
+
+  if (!ptrToInt) {
+    ptrOnLeft = false;
+    ptrToInt = dyn_cast<llvm::PtrToIntInst>(op_inst->getOperand(1));
+  }
+
+  if (!ptrToInt || ptrToInt->getNumUses() > 1)
+    return false;
+
+  llvm::IRBuilder<> B(intToPtr);
+
+  llvm::Value *gep = B.CreateGEP(B.getInt8Ty(), ptrToInt->getOperand(0),
+                                 {op_inst->getOperand(ptrOnLeft ? 1 : 0)}, "");
+
+  intToPtr->replaceAllUsesWith(gep);
+  intToPtr->eraseFromParent();
+  op_inst->eraseFromParent();
+  ptrToInt->eraseFromParent();
+
+  return true;
+}
+
+// find and collapse sequences of the form ptrToInt, add, intToPtr
+// into a single GEP instruction. Possible performance benefits.
+void tryReplacePtrtoInt(llvm::Function *fn) {
+  // apparently iterating in this way is stable
+  for (auto it = instructions(*fn).begin(), end = instructions(*fn).end();
+       it != end;) {
+    llvm::Instruction &Inst = *it++;
+    if (auto *intToPtr = dyn_cast<llvm::IntToPtrInst>(&Inst)) {
+      tryReplaceRoundTrip(intToPtr);
+    }
+  }
+}
 
 void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
           llvm::TargetLibraryInfoWrapperPass &TLI) {
@@ -155,6 +215,14 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
   for (auto &F : *srcModule) {
     if (&F != srcFn && !F.isDeclaration())
       F.deleteBody();
+  }
+
+  if (test_replace_ptrtoint) {
+    llvm::raw_os_ostream streamWrapper(*out);
+    tryReplacePtrtoInt(srcFn);
+    srcFn->print(streamWrapper);
+    streamWrapper.flush();
+    exit(0);
   }
 
   if (opt_internalize) {
@@ -199,9 +267,8 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
   std::unordered_map<unsigned, llvm::Instruction *> lineMap;
   if (opt_asm_input == "") {
     lifter::addDebugInfo(srcFn, lineMap);
-    AsmBuffer = lifter::generateAsm(*srcModule, Targ, DefaultTT,
-	 DefaultCPU,
-	 DefaultFeatures);
+    AsmBuffer = lifter::generateAsm(*srcModule, Targ, DefaultTT, DefaultCPU,
+                                    DefaultFeatures);
   } else {
     AsmBuffer = ExitOnErr(
         llvm::errorOrToExpected(llvm::MemoryBuffer::getFile(opt_asm_input)));
@@ -228,9 +295,9 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
   if (opt_asm_only)
     exit(0);
 
-  auto [F1, F2] = lifter::liftFunc(srcFn, std::move(AsmBuffer), lineMap, opt_optimize_tgt, out, Targ, DefaultTT,
-				   	  DefaultCPU,
-	DefaultFeatures);
+  auto [F1, F2] =
+      lifter::liftFunc(srcFn, std::move(AsmBuffer), lineMap, opt_optimize_tgt,
+                       out, Targ, DefaultTT, DefaultCPU, DefaultFeatures);
 
   auto lifted = lifter::moduleToString(F2->getParent());
   if (save_lifted_ir) {
@@ -239,6 +306,10 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
     ofstream of(p);
     of << lifted;
     of.close();
+  }
+
+  if (run_replace_ptrtoint) {
+    tryReplacePtrtoInt(F2);
   }
 
   if (!opt_skip_verification)
@@ -304,8 +375,7 @@ version )EOF";
   // FIXME: we should avoid hard-coding these
   if (opt_backend == "aarch64") {
     DefaultTT = llvm::Triple("aarch64-unknown-linux-gnu");
-    DefaultDL =
-        "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32";
+    DefaultDL = "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32";
     DefaultCPU = "generic";
     DefaultFeatures = "";
     LLVMInitializeAArch64TargetInfo();
@@ -329,7 +399,7 @@ version )EOF";
     *out << "ERROR: Only aarch64 or riscv64 are supported\n";
     exit(-1);
   }
-  
+
   srcModule.get()->setTargetTriple(DefaultTT);
   srcModule.get()->setDataLayout(DefaultDL);
 
