@@ -292,7 +292,7 @@ pair<Value *, uint16_t> mc2llvm::getExprVar(const MCExpr *expr) {
   auto [name, specifier] = MCExprToName(expr);
 
   *out << "getExprVar = " << name << "\n";
-  
+
   Value *globalVar = lookupGlobal(name);
   if (!globalVar) {
     *out << "\nERROR: global '" << name << "' not found\n\n";
@@ -539,7 +539,7 @@ void mc2llvm::assertSame(Value *a, Value *b) {
 
 void mc2llvm::doDirectCall() {
   *out << "in doDirectCall\n";
-  
+
   auto &op0 = CurInst->getOperand(0);
   assert(op0.isExpr());
   auto [expr, _] = getExprVar(op0.getExpr());
@@ -547,7 +547,7 @@ void mc2llvm::doDirectCall() {
   string calleeName = (string)expr->getName();
 
   *out << " callee is " << calleeName << "\n";
-  
+
   if (calleeName == "__stack_chk_fail") {
     createTrap();
     return;
@@ -873,12 +873,13 @@ void mc2llvm::checkInstSupport(Instruction &i, const DataLayout &DL,
         }
       }
 
-      if (callee->isVarArg()) {
+      auto name = (string)callee->getName();
+
+      if (name != "llvm.fake.use" && callee->isVarArg()) {
         *out << "\nERROR: varargs not supported\n\n";
         exit(-1);
       }
 
-      auto name = (string)callee->getName();
       if (name.find("llvm.memcpy.element.unordered.atomic") != string::npos) {
         *out << "\nERROR: atomic instrinsics not supported\n\n";
         exit(-1);

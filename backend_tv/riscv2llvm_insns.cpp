@@ -88,13 +88,13 @@ void riscv2llvm::lift(MCInst &I) {
     doDirectCall();
     break;
   }
-    
+
   case RISCV::PseudoTAIL: {
     doDirectCall();
     doReturn();
     break;
   }
-    
+
   case RISCV::C_BNEZ:
   case RISCV::C_BEQZ: {
     auto a = readFromRegOperand(0, i64ty);

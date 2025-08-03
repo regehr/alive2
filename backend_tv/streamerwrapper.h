@@ -232,7 +232,7 @@ public:
 
   virtual void emitValueToAlignment(llvm::Align Alignment, int64_t Fill = 0,
                                     uint8_t FillLen = 1,
-				    unsigned MaxBytesToEmit = 0) override {
+                                    unsigned MaxBytesToEmit = 0) override {
     *out << "[emitValueToAlignment= " << Alignment.value() << "]\n";
     curAlign = Alignment;
   }

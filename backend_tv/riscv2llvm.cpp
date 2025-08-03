@@ -190,7 +190,7 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy) {
         param = readFromReg(RISCV::X10 + scalarArgNum, getIntTy(64));
         ++scalarArgNum;
       } else {
-	assert(false);
+        assert(false);
 #if 0
         auto SP = readPtrFromReg(AArch64::SP);
         auto addr = createGEP(getIntTy(64), SP,
@@ -277,7 +277,7 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   for (unsigned reg = 10; reg <= 17; ++reg)
     invalidateReg(RISCV::X0 + reg, 64);
 #endif
-  
+
   auto retTy = FC.getFunctionType()->getReturnType();
   if (retTy->isIntegerTy() || retTy->isPointerTy()) {
     updateReg(RV, RISCV::X10);
