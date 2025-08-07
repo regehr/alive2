@@ -381,10 +381,8 @@ void riscv2llvm::lift(MCInst &I) {
     auto imm_int = op.getImm() & ((1U << 12) - 1);
     auto imm = getUnsignedIntConst(imm_int, 12);
     auto imm_ext = createZExt(imm, i64ty);
-    auto amt = getSignedIntConst(3, 64);
-    auto imm_scaled = createMaskedShl(imm_ext, amt);
     auto sp = readFromRegOperand(1, ptrTy);
-    auto addr = createGEP(i8ty, sp, {imm_scaled}, nextName());
+    auto addr = createGEP(i8ty, sp, {imm_ext}, nextName());
     switch (opcode) {
     case RISCV::C_LDSP:
       updateOutputReg(createLoad(i64ty, addr));

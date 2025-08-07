@@ -399,6 +399,10 @@ void riscv2llvm::platformInit() {
          << ", scalarArgNum = " << scalarArgNum
          << ", stackSlot = " << stackSlot;
     auto *argTy = arg->getType();
+
+    // FIXME -- this isn't correct for RISC-V, but since it's on the
+    // caller side, let's wait and see if we can find a false alarm
+    // before fixing it
     auto *val =
         enforceSExtZExt(arg, srcArg->hasSExtAttr(), srcArg->hasZExtAttr());
 
@@ -443,8 +447,10 @@ void riscv2llvm::platformInit() {
 
       if (getBitWidth(val) == 64) {
         stackSlot += 1;
+#if 0
       } else if (getBitWidth(val) == 128) {
         stackSlot += 2;
+#endif
       } else {
         assert(false);
       }
