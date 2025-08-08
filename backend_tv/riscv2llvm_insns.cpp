@@ -396,19 +396,20 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
-  case RISCV::C_ADDI16SP:
+  case RISCV::C_ADDI4SPN:
   case RISCV::C_ADDI:
   case RISCV::ADDI: {
     if (CurInst->getOperand(2).isImm()) {
       auto a = readFromRegOperand(1, i64ty);
       auto imm = readFromImmOperand(2, 12, 64);
-      if (opcode == RISCV::C_ADDI16SP) {
-        auto scaled = createMaskedShl(imm, getUnsignedIntConst(4, 64));
+      if (opcode == RISCV::C_ADDI4SPN) {
+        auto scaled = createRawShl(imm, getUnsignedIntConst(4, 64));
         updateOutputReg(createAdd(a, scaled));
       } else {
         updateOutputReg(createAdd(a, imm));
       }
     } else {
+      assert(opcode != RISCV::C_ADDI4SPN);
       Value *ptr = getPointerFromMCExpr();
       updateOutputReg(ptr);
     }
@@ -812,13 +813,13 @@ void riscv2llvm::lift(MCInst &I) {
     auto a = readFromRegOperand(1, i64ty);
 
     // smear byte to LSB
-    auto t1 = createMaskedLShr(a, getUnsignedIntConst(1, 64));
+    auto t1 = createRawLShr(a, getUnsignedIntConst(1, 64));
     auto t1m = createAnd(t1, getUnsignedIntConst(0x7F7F7F7F7F7F7F7F, 64));
     auto s1 = createOr(a, t1m);
-    auto t2 = createMaskedLShr(s1, getUnsignedIntConst(2, 64));
+    auto t2 = createRawLShr(s1, getUnsignedIntConst(2, 64));
     auto t2m = createAnd(t2, getUnsignedIntConst(0x3F3F3F3F3F3F3F3F, 64));
     auto s2 = createOr(s1, t2m);
-    auto t3 = createMaskedLShr(s2, getUnsignedIntConst(4, 64));
+    auto t3 = createRawLShr(s2, getUnsignedIntConst(4, 64));
     auto t3m = createAnd(t3, getUnsignedIntConst(0x0F0F0F0F0F0F0F0F, 64));
     auto s3 = createOr(s2, t3m);
 
