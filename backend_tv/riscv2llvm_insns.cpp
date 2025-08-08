@@ -399,6 +399,7 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+  case RISCV::C_ADDI16SP:
   case RISCV::C_ADDI4SPN:
   case RISCV::C_ADDI:
   case RISCV::ADDI: {
