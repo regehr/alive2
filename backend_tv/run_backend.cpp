@@ -40,6 +40,10 @@ unique_ptr<MemoryBuffer> lifter::generateAsm(Module &M, const Target *Targ,
   unique_ptr<TargetMachine> TM(Targ->createTargetMachine(
       DefaultTT, DefaultCPU, DefaultFeatures, Opt, RM));
 
+  // we should never allow machine outlining
+  TM->setMachineOutliner(false);
+  TM->setSupportsDefaultOutlining(false);
+
   Asm = "";
   raw_svector_ostream os(Asm);
 
