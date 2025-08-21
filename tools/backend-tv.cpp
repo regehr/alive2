@@ -111,7 +111,7 @@ llvm::cl::opt<bool> run_replace_ptrtoint(
     "run-replace-ptrtoint",
     llvm::cl::desc(
         "Replace ptr-int round trips with single GEP (default=false)"),
-    llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
+    llvm::cl::init(true), llvm::cl::cat(alive_cmdargs));
 
 llvm::cl::opt<bool> test_replace_ptrtoint(
     "test-replace-ptrtoint",

@@ -7,7 +7,7 @@ use Sys::CPU;
 use BSD::Resource;
 use File::Basename;
 
-my $CPU_LIMIT = 30;
+my $CPU_LIMIT = 120;
 my $VMEM_LIMIT = 10 * 1000 * 1000 * 1000;
 
 my $NPROCS = Sys::CPU::cpu_count();
@@ -22,6 +22,7 @@ my $ISEL = "";
 # my $ISEL = "-global-isel -global-isel-abort=0";
 
 my $XTRA = "-backend=riscv64";
+#my $XTRA = "";
 
 sub runit ($) {
     (my $cmd) = @_;
