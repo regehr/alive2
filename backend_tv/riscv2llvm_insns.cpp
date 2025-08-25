@@ -971,6 +971,42 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+    /*
+     * Floating point instructions (F, D, Q, and Zfh extensions)
+     */
+
+  case RISCV::FCVT_S_W: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto a32 = createTrunc(a, i32ty);
+    auto f = createSIToFP(a32, getFPType(32));
+    updateOutputReg(f);
+    break;
+  }
+
+  case RISCV::FCVT_W_S: {
+    // TODO: Make sure semantics math up for NaN inputs
+    auto f = readFromFPRegOperand(1, getFPType(32));
+    auto a = createFPToSI_sat(f, i32ty);
+    updateOutputReg(a, true);
+    break;
+  }
+
+  case RISCV::FMV_W_X: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto a32 = createTrunc(a, i32ty);
+    auto f = createBitCast(a32, getFPType(32));
+    updateOutputReg(f);
+    break;
+  }
+
+  case RISCV::FADD_S: {
+    auto a = readFromFPRegOperand(1, getFPType(32));
+    auto b = readFromFPRegOperand(2, getFPType(32));
+    auto res = createFAdd(a, b);
+    updateOutputReg(res);
+    break;
+  }
+
   default:
     visitError();
   }
