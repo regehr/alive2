@@ -77,10 +77,14 @@ class riscv2llvm final : public mc2llvm {
 
   unsigned mapRegToBackingReg(unsigned Reg);
   llvm::Value *readFromReg(unsigned Reg, llvm::Type *ty);
+  llvm::Value *readFromFPReg(unsigned Reg, llvm::Type *ty);
   llvm::Value *readFromRegOperand(int idx, llvm::Type *ty);
+  llvm::Value *readFromFPRegOperand(int idx, llvm::Type *ty);
   llvm::Value *readPtrFromRegOperand(int idx);
   llvm::Value *lookupReg(unsigned Reg);
+  llvm::Value *lookupFPReg(unsigned Reg);
   void updateReg(llvm::Value *V, uint64_t reg);
+  void updateFPReg(llvm::Value *V, uint64_t reg);
   llvm::Value *readFromImmOperand(int idx, unsigned immed_width,
                                   unsigned result_width);
   std::tuple<llvm::BasicBlock *, llvm::BasicBlock *>

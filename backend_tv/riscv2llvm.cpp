@@ -1,6 +1,7 @@
 #include "backend_tv/riscv2llvm.h"
 
 #include "Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/BinaryFormat/ELF.h"
 
 #include <cmath>
@@ -60,11 +61,11 @@ Value *riscv2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
   unsigned targetWidth = 64;
 
   // no work needed
-  if (argTy->isPointerTy() || argTy->isVoidTy())
+  if (argTy->isPointerTy() || argTy->isVoidTy() || argTy->isFloatingPointTy())
     return V;
 
-  if (argTy->isVectorTy() || argTy->isFloatingPointTy()) {
-    assert(false && "vectors and floats not supported yet");
+  if (argTy->isVectorTy() /* || argTy->isFloatingPointTy()*/) {
+    assert(false && "vectors not supported yet");
   }
 
   assert(argTy->isIntegerTy());
@@ -101,6 +102,21 @@ Value *riscv2llvm::lookupReg(unsigned Reg) {
   return RegFile[Reg];
 }
 
+Value *riscv2llvm::lookupFPReg(unsigned Reg) {
+  // for some reason the order in the enum is D, F, H, Q
+  assert((Reg >= RISCV::F0_D && Reg <= RISCV::F31_Q) || Reg == RISCV::FCSR);
+
+  // there's only one file for all FP widths
+  if (Reg >= RISCV::F0_D && Reg <= RISCV::F31_D) {
+    Reg = Reg - RISCV::F0_D + RISCV::F0_Q;
+  } else if (Reg >= RISCV::F0_F && Reg <= RISCV::F31_F) {
+    Reg = Reg - RISCV::F0_F + RISCV::F0_Q;
+  } else if (Reg >= RISCV::F0_H && Reg <= RISCV::F31_H) {
+    Reg = Reg - RISCV::F0_H + RISCV::F0_Q;
+  } 
+  return RegFile[Reg];
+}
+
 void riscv2llvm::updateReg(Value *V, uint64_t Reg) {
   // important -- squash updates to the zero register
   if (Reg == RISCV::X0)
@@ -108,18 +124,33 @@ void riscv2llvm::updateReg(Value *V, uint64_t Reg) {
   createStore(V, lookupReg(Reg));
 }
 
+void riscv2llvm::updateFPReg(Value *V, uint64_t Reg) {
+  createStore(V, lookupFPReg(Reg));
+}
+
 void riscv2llvm::updateOutputReg(Value *V, bool SExt) {
-  // we'll need to update this function if we run across any
-  // instructions that only partially update the contents of a
-  // register
   auto W = getBitWidth(V);
-  if (SExt) {
-    if (W < 64)
-      V = createSExt(V, getIntTy(64));
+  auto outputReg = CurInst->getOperand(0).getReg();
+  if (V->getType()->isFloatingPointTy()) {
+    if (W == 128)
+      updateFPReg(V, outputReg);
+
+    // NaN-box smaller FP types
+    auto bits = createBitCast(V, getIntTy(W));
+    auto extended = createZExt(bits, getIntTy(128));
+    auto maskAP = llvm::APInt::getHighBitsSet(128, 128 - W);
+    auto mask = llvm::ConstantInt::get(Ctx, maskAP);
+    auto nanBoxed = createOr(mask, extended);
+    updateFPReg(nanBoxed, outputReg);
   } else {
-    assert(W == 64);
+    if (SExt) {
+      if (W < 64)
+        V = createSExt(V, getIntTy(64));
+    } else {
+      assert(W == 64);
+    }
+    updateReg(V, outputReg);
   }
-  updateReg(V, CurInst->getOperand(0).getReg());
 }
 
 Value *riscv2llvm::makeLoadWithOffset(Value *base, Value *offset, int size) {
@@ -295,6 +326,12 @@ Value *riscv2llvm::readFromRegOperand(int idx, Type *ty) {
   return readFromReg(op.getReg(), ty);
 }
 
+Value *riscv2llvm::readFromFPRegOperand(int idx, Type *ty) {
+  auto op = CurInst->getOperand(idx);
+  assert(op.isReg());
+  return readFromFPReg(op.getReg(), ty);
+}
+
 Value *riscv2llvm::readPtrFromRegOperand(int idx) {
   auto ptrTy = llvm::PointerType::get(Ctx, 0);
   return readFromRegOperand(idx, ptrTy);
@@ -314,7 +351,14 @@ Value *riscv2llvm::readFromImmOperand(int idx, unsigned immed_width,
 }
 
 Value *riscv2llvm::readFromReg(unsigned Reg, Type *ty) {
+  assert(ty->isIntOrPtrTy());
   auto addr = lookupReg(Reg);
+  return createLoad(ty, addr);
+}
+
+Value *riscv2llvm::readFromFPReg(unsigned Reg, Type *ty) {
+  assert(ty->isFloatingPointTy());
+  auto addr = lookupFPReg(Reg);
   return createLoad(ty, addr);
 }
 
@@ -367,6 +411,16 @@ void riscv2llvm::platformInit() {
     createRegStorage(Reg, 64, Name.str());
     // initialReg[Reg - RISCV::X0] = readFromReg(Reg, i64ty);
   }
+
+  // allocate storage for the float register file
+  for (unsigned Reg = RISCV::F0_Q; Reg <= RISCV::F31_Q; ++Reg) {
+    stringstream Name;
+    Name << "F" << Reg - RISCV::F0_Q;
+    createRegStorage(Reg, 128, Name.str());
+  }
+
+  // allocate floating-point control and status register
+  createRegStorage(RISCV::FCSR, 32, "FCSR");
 
   *out << "created scalar registers\n";
 
@@ -530,10 +584,6 @@ Value *riscv2llvm::getPointerOperand() {
 void riscv2llvm::checkArgSupport(Argument &arg) {}
 void riscv2llvm::checkFuncSupport(Function &func) {}
 void riscv2llvm::checkTypeSupport(Type *ty) {
-  if (ty->isFloatingPointTy()) {
-    *out << "\nERROR: floating point not yet supported\n\n";
-    exit(-1);
-  }
   if (ty->isVectorTy()) {
     *out << "\nERROR: vectors not yet supported\n\n";
     exit(-1);

@@ -389,7 +389,7 @@ version )EOF";
     DefaultCPU = "generic";
     // +m includes zmmul
     // +b = +zba,+zbb,+zbs
-    DefaultFeatures = "+m,+b";
+    DefaultFeatures = "+m,+b,+f,+d,+q,+zfh";
     LLVMInitializeRISCVTargetInfo();
     LLVMInitializeRISCVTarget();
     LLVMInitializeRISCVTargetMC();
