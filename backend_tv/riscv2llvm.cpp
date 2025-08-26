@@ -132,8 +132,10 @@ void riscv2llvm::updateOutputReg(Value *V, bool SExt) {
   auto W = getBitWidth(V);
   auto outputReg = CurInst->getOperand(0).getReg();
   if (V->getType()->isFloatingPointTy()) {
-    if (W == 128)
+    if (W == 128) {
       updateFPReg(V, outputReg);
+      return;
+    }
 
     // NaN-box smaller FP types
     auto bits = createBitCast(V, getIntTy(W));
