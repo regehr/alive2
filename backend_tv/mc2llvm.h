@@ -269,6 +269,8 @@ public:
       return llvm::Type::getFloatTy(Ctx);
     else if (bits == 64)
       return llvm::Type::getDoubleTy(Ctx);
+    else if (bits == 128)
+      return llvm::Type::getFP128Ty(Ctx);
     else
       assert(false && "unsupported floating point type");
   }
@@ -894,6 +896,8 @@ public:
       return 32;
     } else if (ty->isDoubleTy()) {
       return 64;
+    } else if (ty->isFP128Ty()) {
+      return 128;
     } else if (ty->isPointerTy()) {
       return 64;
     } else {
