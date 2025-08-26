@@ -134,16 +134,15 @@ void riscv2llvm::updateOutputReg(Value *V, bool SExt) {
   if (V->getType()->isFloatingPointTy()) {
     if (W == 128) {
       updateFPReg(V, outputReg);
-      return;
+     } else {
+      // NaN-box smaller FP types
+      auto bits = createBitCast(V, getIntTy(W));
+      auto extended = createZExt(bits, getIntTy(128));
+      auto maskAP = llvm::APInt::getHighBitsSet(128, 128 - W);
+      auto mask = llvm::ConstantInt::get(Ctx, maskAP);
+      auto nanBoxed = createOr(mask, extended);
+      updateFPReg(nanBoxed, outputReg);
     }
-
-    // NaN-box smaller FP types
-    auto bits = createBitCast(V, getIntTy(W));
-    auto extended = createZExt(bits, getIntTy(128));
-    auto maskAP = llvm::APInt::getHighBitsSet(128, 128 - W);
-    auto mask = llvm::ConstantInt::get(Ctx, maskAP);
-    auto nanBoxed = createOr(mask, extended);
-    updateFPReg(nanBoxed, outputReg);
   } else {
     if (SExt) {
       if (W < 64)
