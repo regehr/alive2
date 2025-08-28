@@ -128,6 +128,20 @@ void riscv2llvm::updateFPReg(Value *V, uint64_t Reg) {
   createStore(V, lookupFPReg(Reg));
 }
 
+unsigned riscv2llvm::getRegSize(unsigned Reg) {
+  if (Reg >= RISCV::X0 && Reg <= RISCV::X31)
+    return /*XLen=*/64;
+  if (Reg >= RISCV::F0_F && Reg <= RISCV::F31_F)
+    return 32;
+  if (Reg >= RISCV::F0_D && Reg <= RISCV::F31_D)
+    return 64;
+  if (Reg >= RISCV::F0_H && Reg <= RISCV::F31_H)
+    return 16;
+  if (Reg >= RISCV::F0_Q && Reg <= RISCV::F31_Q)
+    return 128;
+  assert(false && "unhandled register");
+}
+
 void riscv2llvm::updateOutputReg(Value *V, bool SExt) {
   auto W = getBitWidth(V);
   auto outputReg = CurInst->getOperand(0).getReg();

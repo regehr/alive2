@@ -90,6 +90,8 @@ public:
 
   virtual expr_t createFAbs(expr_t v) = 0;
 
+  virtual expr_t createCopySign(expr_t mag, expr_t sign) = 0;
+
   virtual expr_t createSSubOverflow(expr_t a, expr_t b) = 0;
 
   virtual expr_t createSAddOverflow(expr_t a, expr_t b) = 0;
