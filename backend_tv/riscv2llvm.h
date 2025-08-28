@@ -75,6 +75,9 @@ class riscv2llvm final : public mc2llvm {
     assert(false);
   }
 
+  // Returns bitWidth corresponding the registers
+  unsigned getRegSize(unsigned Reg);
+
   unsigned mapRegToBackingReg(unsigned Reg);
   llvm::Value *readFromReg(unsigned Reg, llvm::Type *ty);
   llvm::Value *readFromFPReg(unsigned Reg, llvm::Type *ty);

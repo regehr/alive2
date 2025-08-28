@@ -393,6 +393,13 @@ public:
     return llvm::CallInst::Create(fabs_decl, {v}, nextName(), LLVMBB);
   }
 
+  llvm::Value *createCopySign(llvm::Value *mag, llvm::Value *sign) override {
+    auto copysign_decl = llvm::Intrinsic::getOrInsertDeclaration(
+        LiftedModule, llvm::Intrinsic::copysign, mag->getType());
+    return llvm::CallInst::Create(copysign_decl, {mag, sign}, nextName(),
+                                  LLVMBB);
+  }
+
   llvm::CallInst *createSSubOverflow(llvm::Value *a, llvm::Value *b) override {
     auto ssub_decl = llvm::Intrinsic::getOrInsertDeclaration(
         LiftedModule, llvm::Intrinsic::ssub_with_overflow, a->getType());

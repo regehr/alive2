@@ -983,9 +983,25 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+  case RISCV::FCVT_D_W: {
+    auto a = readFromRegOperand(1, i64ty);
+    auto a32 = createTrunc(a, i32ty);
+    auto f = createSIToFP(a32, getFPType(64));
+    updateOutputReg(f);
+    break;
+  }
+
   case RISCV::FCVT_W_S: {
     // TODO: Make sure semantics math up for NaN inputs
     auto f = readFromFPRegOperand(1, getFPType(32));
+    auto a = createFPToSI_sat(f, i32ty);
+    updateOutputReg(a, true);
+    break;
+  }
+
+  case RISCV::FCVT_W_D: {
+    // TODO: Make sure semantics math up for NaN inputs
+    auto f = readFromFPRegOperand(1, getFPType(64));
     auto a = createFPToSI_sat(f, i32ty);
     updateOutputReg(a, true);
     break;
@@ -999,13 +1015,65 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
-  case RISCV::FADD_S: {
-    auto a = readFromFPRegOperand(1, getFPType(32));
-    auto b = readFromFPRegOperand(2, getFPType(32));
-    auto res = createFAdd(a, b);
-    updateOutputReg(res);
-    break;
+#define CASE_FP_OPCODES(OPCODE)                                                \
+  case RISCV::OPCODE##_H:                                                      \
+  case RISCV::OPCODE##_S:                                                      \
+  case RISCV::OPCODE##_D:                                                      \
+  case RISCV::OPCODE##_Q
+
+#define HANDLE_FP_BINARY_OP(OPCODE, INST)                                      \
+  CASE_FP_OPCODES(OPCODE) : {                                                  \
+    auto operandSize = getRegSize(CurInst->getOperand(0).getReg());            \
+    auto operandTy = getFPType(operandSize);                                   \
+    auto a = readFromFPRegOperand(1, operandTy);                               \
+    auto b = readFromFPRegOperand(2, operandTy);                               \
+    auto res = create##INST(a, b);                                             \
+    updateOutputReg(res);                                                      \
+    break;                                                                     \
   }
+
+    HANDLE_FP_BINARY_OP(FADD, FAdd);
+    HANDLE_FP_BINARY_OP(FSUB, FSub);
+    HANDLE_FP_BINARY_OP(FMUL, FMul);
+
+#undef HANDLE_FP_BINARY_OP
+
+    CASE_FP_OPCODES(FSGNJN) : {
+      auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+      auto operandTy = getFPType(operandSize);
+      auto a = readFromFPRegOperand(1, operandTy);
+      auto b = readFromFPRegOperand(2, operandTy);
+      auto res = createCopySign(a, createFNeg(b));
+      updateOutputReg(res);
+      break;
+    }
+
+    CASE_FP_OPCODES(FSGNJX) : {
+      auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+      auto operandTy = getFPType(operandSize);
+      auto a = readFromFPRegOperand(1, operandTy);
+      auto b = readFromFPRegOperand(2, operandTy);
+      auto bitsTy = getIntTy(operandSize);
+      // XOR the sign bit of a.
+      auto bits = createBitCast(b, bitsTy);
+      auto signbit =
+          createICmp(ICmpInst::ICMP_SGT, bits, Constant::getNullValue(bitsTy));
+      auto res = createSelect(signbit, a, createFNeg(b));
+      updateOutputReg(res);
+      break;
+    }
+
+    CASE_FP_OPCODES(FSGNJ) : {
+      auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+      auto operandTy = getFPType(operandSize);
+      auto a = readFromFPRegOperand(1, operandTy);
+      auto b = readFromFPRegOperand(2, operandTy);
+      auto res = createCopySign(a, b);
+      updateOutputReg(res);
+      break;
+    }
+
+#undef CASE_FP_OPCODES
 
   default:
     visitError();
