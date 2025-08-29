@@ -155,6 +155,8 @@ public:
 
   virtual expr_t createFusedMultiplyAdd(expr_t a, expr_t b, expr_t c) = 0;
 
+  virtual expr_t createIsFPClass(expr_t a, uint32_t test) = 0;
+
   virtual expr_t createSelect(expr_t cond, expr_t a, expr_t b) = 0;
 
   virtual expr_t createICmp(llvm::ICmpInst::Predicate p, expr_t a, expr_t b) = 0;
