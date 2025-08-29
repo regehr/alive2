@@ -1,8 +1,10 @@
 #pragma once
 
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Verifier.h"
@@ -585,6 +587,14 @@ public:
     auto *decl = llvm::Intrinsic::getOrInsertDeclaration(
         LiftedModule, llvm::Intrinsic::fma, a->getType());
     return llvm::CallInst::Create(decl, {a, b, c}, nextName(), LLVMBB);
+  }
+
+  llvm::CallInst *createIsFPClass(llvm::Value *a, uint32_t test) override {
+    auto *decl = llvm::Intrinsic::getOrInsertDeclaration(
+        LiftedModule, llvm::Intrinsic::is_fpclass, a->getType());
+    return llvm::CallInst::Create(
+        decl, {a, llvm::ConstantInt::get(Ctx, llvm::APInt(32, test))},
+        nextName(), LLVMBB);
   }
 
   llvm::CallInst *createSQRT(llvm::Value *v) override {

@@ -2,6 +2,7 @@
 #include "backend_tv/riscv2llvm.h"
 
 #include "Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.h"
+#include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/IR/Value.h"
 #include "llvm/MC/MCAsmInfo.h"
@@ -1069,6 +1070,89 @@ void riscv2llvm::lift(MCInst &I) {
       auto a = readFromFPRegOperand(1, operandTy);
       auto b = readFromFPRegOperand(2, operandTy);
       auto res = createCopySign(a, b);
+      updateOutputReg(res);
+      break;
+    }
+
+#define HANDLE_FP_CMP_OP(OPCODE, INST)                                         \
+  CASE_FP_OPCODES(OPCODE) : {                                                  \
+    auto operandSize = getRegSize(CurInst->getOperand(1).getReg());            \
+    auto operandTy = getFPType(operandSize);                                   \
+    auto a = readFromFPRegOperand(1, operandTy);                               \
+    auto b = readFromFPRegOperand(2, operandTy);                               \
+    auto res = createFCmp(FCmpInst::FCMP_##INST, a, b);                        \
+    updateOutputReg(createZExt(res, i64ty));                                   \
+    break;                                                                     \
+  }
+
+    HANDLE_FP_CMP_OP(FLT, OLT);
+    HANDLE_FP_CMP_OP(FLE, OLE);
+    HANDLE_FP_CMP_OP(FEQ, OEQ);
+
+#undef HANDLE_FP_CMP_OP
+
+    CASE_FP_OPCODES(FMADD) : {
+      auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+      auto operandTy = getFPType(operandSize);
+      auto a = readFromFPRegOperand(1, operandTy);
+      auto b = readFromFPRegOperand(2, operandTy);
+      auto c = readFromFPRegOperand(3, operandTy);
+      auto res = createFusedMultiplyAdd(a, b, c);
+      updateOutputReg(res);
+      break;
+    }
+
+    CASE_FP_OPCODES(FMSUB) : {
+      auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+      auto operandTy = getFPType(operandSize);
+      auto a = readFromFPRegOperand(1, operandTy);
+      auto b = readFromFPRegOperand(2, operandTy);
+      auto c = readFromFPRegOperand(3, operandTy);
+      auto res = createFusedMultiplyAdd(a, b, createFNeg(c));
+      updateOutputReg(res);
+      break;
+    }
+
+    CASE_FP_OPCODES(FNMADD) : {
+      auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+      auto operandTy = getFPType(operandSize);
+      auto a = readFromFPRegOperand(1, operandTy);
+      auto b = readFromFPRegOperand(2, operandTy);
+      auto c = readFromFPRegOperand(3, operandTy);
+      auto res = createFNeg(createFusedMultiplyAdd(a, b, c));
+      updateOutputReg(res);
+      break;
+    }
+
+    CASE_FP_OPCODES(FNMSUB) : {
+      auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+      auto operandTy = getFPType(operandSize);
+      auto a = readFromFPRegOperand(1, operandTy);
+      auto b = readFromFPRegOperand(2, operandTy);
+      auto c = readFromFPRegOperand(3, operandTy);
+      auto res = createFusedMultiplyAdd(createFNeg(a), b, c);
+      updateOutputReg(res);
+      break;
+    }
+
+    CASE_FP_OPCODES(FCLASS) : {
+      auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
+      auto operandTy = getFPType(operandSize);
+      auto a = readFromFPRegOperand(1, operandTy);
+      Value *res = ConstantInt::get(i64ty, 1); // fcNegInf -> 1 << 0
+      auto createIte = [&](FPClassTest test, uint32_t Bit) {
+        res = createSelect(createIsFPClass(a, test),
+                           ConstantInt::get(i64ty, 1ULL << Bit), res);
+      };
+      createIte(fcNegNormal, 1);
+      createIte(fcNegSubnormal, 2);
+      createIte(fcNegZero, 3);
+      createIte(fcPosZero, 4);
+      createIte(fcPosSubnormal, 5);
+      createIte(fcPosNormal, 6);
+      createIte(fcPosInf, 7);
+      createIte(fcSNan, 8);
+      createIte(fcQNan, 9);
       updateOutputReg(res);
       break;
     }
