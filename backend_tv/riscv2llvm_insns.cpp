@@ -49,7 +49,7 @@ void riscv2llvm::lift(MCInst &I) {
   auto i32ty = getIntTy(32);
   auto i64ty = getIntTy(64);
   auto i128ty = getIntTy(128);
-  auto ptrTy = llvm::PointerType::get(Ctx, 0);
+  // auto ptrTy = llvm::PointerType::get(Ctx, 0);
 
   switch (opcode) {
 
