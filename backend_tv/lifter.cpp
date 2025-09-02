@@ -97,7 +97,7 @@ liftFunc(Function *srcFn, unique_ptr<MemoryBuffer> MB,
   *out << "\n\nabout to optimize lifted code:\n\n";
   *out << moduleToString(tgtModule) << std::endl;
 
-  auto err = llvm_util::optimize_module(tgtModule, optimize_tgt);
+  auto err = llvm_util::optimize_module(*tgtModule, optimize_tgt);
   if (!err.empty()) {
     *out << "\n\nERROR running LLVM optimizations:\n";
     *out << err << "\n";

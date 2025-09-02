@@ -1032,12 +1032,12 @@ reduced using llvm-reduce.
     // optimize_module(M1.get(), "Oz");
 
     if (opt_run_sroa) {
-      auto err = optimize_module(M1.get(), "mem2reg");
+      auto err = optimize_module(*M1.get(), "mem2reg");
       assert(err.empty());
     }
 
     if (opt_run_dce) {
-      auto err = optimize_module(M1.get(), "adce");
+      auto err = optimize_module(*M1.get(), "adce");
       assert(err.empty());
     }
 
@@ -1074,7 +1074,7 @@ reduced using llvm-reduce.
       doit(M1.get(), srcFn, verifier);
     } else {
       unique_ptr<Module> M2 = CloneModule(*M1.get());
-      auto err = optimize_module(M2.get(), optPass);
+      auto err = optimize_module(*M2.get(), optPass);
       if (!err.empty()) {
         *out << "Error parsing list of LLVM passes: " << err << '\n';
         return -1;

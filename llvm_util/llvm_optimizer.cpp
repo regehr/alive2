@@ -9,7 +9,7 @@ using namespace std;
 
 namespace llvm_util {
 
-string optimize_module(Module *M, string_view optArgs) {
+string optimize_module(Module &M, string_view optArgs) {
   LoopAnalysisManager LAM;
   FunctionAnalysisManager FAM;
   CGSCCAnalysisManager CGAM;
@@ -40,7 +40,7 @@ string optimize_module(Module *M, string_view optArgs) {
     if (auto Err = PB.parsePassPipeline(MPM, optArgs))
       return toString(std::move(Err));
   }
-  MPM.run(*M, MAM);
+  MPM.run(M, MAM);
   return {};
 }
 
