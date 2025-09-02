@@ -1,7 +1,6 @@
 // Copyright (c) 2018-present The Alive2 Authors.
 // Distributed under the MIT license that can be found in the LICENSE file.
 
-#include "backend_tv/lifter.h"
 #include "cache/cache.h"
 #include "llvm_util/compare.h"
 #include "llvm_util/llvm2alive.h"
@@ -65,11 +64,6 @@ cl::opt<bool>
                    cl::desc("Generate IR but then don't invoke Alive"),
                    cl::cat(alive_cmdargs), cl::init(false));
 
-cl::opt<bool> opt_backend_tv(
-    LLVM_ARGS_PREFIX "backend-tv",
-    cl::desc("Instead of testing the middle end, test the AArch64 backend"),
-    cl::cat(alive_cmdargs), cl::init(false));
-
 cl::opt<bool> opt_run_sroa(
     LLVM_ARGS_PREFIX "run-sroa",
     cl::desc("Run SROA before llvm2alive, this reduces timeouts by reducing "
@@ -94,21 +88,12 @@ cl::opt<string>
                         "(default=value)"),
                cl::cat(alive_cmdargs), cl::init("value"));
 
-llvm::cl::opt<string>
-    opt_backend(LLVM_ARGS_PREFIX "backend",
-                llvm::cl::desc("Backend to validate (default=aarch64)"),
-                llvm::cl::cat(alive_cmdargs), llvm::cl::init("aarch64"));
-
 cl::opt<string>
     optPass(LLVM_ARGS_PREFIX "passes", cl::value_desc("optimization passes"),
             cl::desc("Specify which LLVM passes to run (default=O2). "
                      "The syntax is described at "
                      "https://llvm.org/docs/NewPassManager.html#invoking-opt"),
             cl::cat(alive_cmdargs), cl::init("O2"));
-
-Triple DefaultTT;
-  const char *DefaultCPU;
-  const char *DefaultFeatures;
 
 class Chooser {
   mt19937_64 Rand;
@@ -233,10 +218,9 @@ public:
       auto NarrowWidth = ilog2_ceil(Ty->getIntegerBitWidth() - 1, true);
       auto *NarrowTy = Type::getIntNTy(BB->getContext(), NarrowWidth);
       auto *Mask = ConstantInt::get(Ty, (1UL << NarrowWidth) - 1);
-      auto *AltRHS = C.flip()
-                         ? adapt(adapt(RHS, NarrowTy, "maskA"), Ty, "maskB")
-                         : BinaryOperator::Create(BinaryOperator::And, RHS,
-                                                  Mask, "maskC", BB);
+      auto *AltRHS = C.flip() ? adapt(adapt(RHS, NarrowTy, "mask"), Ty, "mask")
+                              : BinaryOperator::Create(BinaryOperator::And, RHS,
+                                                       Mask, "mask", BB);
       BinaryOperator *BinOp = randomBinop(LHS, PoisonValue::get(Ty));
       Val = BinOp;
       auto Op = BinOp->getOpcode();
@@ -553,8 +537,6 @@ private:
       Op = Intrinsic::bswap;
       break;
     case 3:
-      if (opt_backend_tv)
-        goto again;
       Op = Intrinsic::ctpop;
       break;
     case 4:
@@ -570,6 +552,7 @@ private:
     vector<Value *> Args = {Arg};
     if (Op == Intrinsic::abs || Op == Intrinsic::ctlz || Op == Intrinsic::cttz)
       Args.push_back(ConstantInt::get(Type::getInt1Ty(Ctx), C.flip() ? 1 : 0));
+
     auto Decl = Intrinsic::getOrInsertDeclaration(M, Op, Ty);
     auto *I = CallInst::Create(Decl, Args, "", BB);
     return I;
@@ -657,8 +640,7 @@ private:
     bool force_32bits_imm = false;
     Intrinsic::ID Op;
 
-    switch (C.choose(2)) {
-    // switch (C.choose(6)) {
+    switch (C.choose(6)) {
     case 0:
       Op = Intrinsic::fshl;
       break;
@@ -704,7 +686,7 @@ public:
 class ValueFuzzer : public Fuzzer {
   const int MaxIntWidth = 64;
   const int MaxIntParams = 5;
-  const int MaxInsts = 100;
+  const int MaxInsts = 15;
   Module &M;
   LLVMContext &Ctx;
   Chooser C;
@@ -712,8 +694,8 @@ class ValueFuzzer : public Fuzzer {
   bool gone = false;
 
 public:
-  ValueFuzzer(Module &_M, long seed)
-      : M(_M), Ctx(M.getContext()), C(seed), VG(C, MaxIntWidth, Ctx) {}
+  ValueFuzzer(Module &_M, long seed) : M(_M), Ctx(M.getContext()), C(seed),
+    VG(C, MaxIntWidth, Ctx) {}
 
   void go() override;
 };
@@ -727,7 +709,8 @@ void ValueFuzzer::go() {
   vector<Type *> ParamsTy, ParamsRealTy;
   for (int i = 0; i < NumIntParams; ++i) {
     auto *origTy = Type::getIntNTy(Ctx, VG.getWidth());
-    auto *realTy = true ? (Type *)origTy : (Type *)PointerType::get(Ctx, 0);
+    auto *realTy =
+        C.flip() ? (Type *)origTy : (Type *)PointerType::get(Ctx, 0);
     ParamsRealTy.push_back(origTy);
     ParamsTy.push_back(realTy);
   }
@@ -782,8 +765,8 @@ class BBFuzzer : public Fuzzer {
   bool gone = false;
 
 public:
-  BBFuzzer(Module &_M, long seed)
-      : M(_M), Ctx(M.getContext()), C(seed), VG(C, MaxWidth, Ctx) {}
+  BBFuzzer(Module &_M, long seed) : M(_M), Ctx(M.getContext()), C(seed),
+    VG(C, MaxWidth, Ctx) {}
 
   void go() override;
 };
@@ -901,46 +884,6 @@ void BBFuzzer::go() {
   }
 }
 
-void doit(llvm::Module *M1, llvm::Function *srcFn, Verifier &verifier) {
-  string Error;
-  const auto *Targ = llvm::TargetRegistry::lookupTarget(DefaultTT, Error);
-  if (!Targ) {
-    *out << "Can't lookup target\n";
-    *out << Error;
-    exit(-1);
-  }
-
-  std::unique_ptr<llvm::Module> M2 =
-      std::make_unique<llvm::Module>("M2", M1->getContext());
-  M2->setDataLayout(M1->getDataLayout());
-  M2->setTargetTriple(M1->getTargetTriple());
-
-  auto AsmBuffer = lifter::generateAsm(*M1, Targ, DefaultTT,
-				       	  DefaultCPU,
-	 DefaultFeatures);
-
-  cout << "\n\nAArch64 Assembly:\n\n";
-  for (auto it = AsmBuffer->getBuffer().begin();
-       it != AsmBuffer->getBuffer().end(); ++it) {
-    cout << *it;
-  }
-  cout << "-------------\n";
-
-  std::unordered_map<unsigned, llvm::Instruction *> lineMap;
-  auto [F1, F2] = lifter::liftFunc(srcFn, std::move(AsmBuffer), lineMap, "Oz", out, Targ, DefaultTT,
-				   	 DefaultCPU,
-				  DefaultFeatures);
-
-  verifier.compareFunctions(*F1, *F2);
-
-  F1->eraseFromParent();
-  vector<Function *> Funcs;
-  for (auto &F : *M1)
-    Funcs.push_back(&F);
-  for (auto F : Funcs)
-    F->eraseFromParent();
-}
-
 } // namespace
 
 int main(int argc, char **argv) {
@@ -978,24 +921,12 @@ reduced using llvm-reduce.
 #define ARGS_MODULE_VAR MDummy
 #include "llvm_util/cmd_args_def.h"
 
-  auto M1 = make_unique<Module>("M1", Context);
+  Module M1("fuzz", Context);
+  auto &DL = M1.getDataLayout();
+  Triple targetTriple(M1.getTargetTriple());
+  TargetLibraryInfoWrapperPass TLI(targetTriple);
 
-  optional<DataLayout> DL;
-  optional<Triple> TT;
-  if (opt_backend_tv) {
-    const string DLStr{"e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128"};
-    const string TTStr{"aarch64-linux-gnu"};
-    DL.emplace(DLStr);
-    TT.emplace(TTStr);
-    M1->setDataLayout(DLStr);
-    M1->setTargetTriple(llvm::Triple(TTStr));
-  } else {
-    DL.emplace(M1->getDataLayout());
-    TT.emplace(M1->getTargetTriple());
-  }
-  TargetLibraryInfoWrapperPass TLI(TT.value());
-
-  llvm_util::initializer llvm_util_init(*out, DL.value());
+  llvm_util::initializer llvm_util_init(*out, DL);
   smt::smt_initializer smt_init;
   Verifier verifier(TLI, smt_init, *out);
   verifier.always_verify = opt_always_verify;
@@ -1016,28 +947,24 @@ reduced using llvm-reduce.
     exit(-1);
   }
 
-  auto seed = (opt_rand_seed == 0) ? random_device{}() : opt_rand_seed;
-  *out << "random seed = " << seed << "\n\n";
-  mt19937_64 Rand(seed);
+  mt19937_64 Rand((opt_rand_seed == 0) ? random_device{}() : opt_rand_seed);
   uniform_int_distribution<unsigned long> Dist(
       0, numeric_limits<unsigned long>::max());
 
   for (int rep = 0; rep < opt_num_reps; ++rep) {
-    auto F = makeFuzzer(*M1.get(), Dist(Rand));
+    auto F = makeFuzzer(M1, Dist(Rand));
     F->go();
 
-    if (verifyModule(*M1.get(), &errs()))
+    if (verifyModule(M1, &errs()))
       report_fatal_error("Broken module found, this should not happen");
 
-    // optimize_module(M1.get(), "Oz");
-
     if (opt_run_sroa) {
-      auto err = optimize_module(*M1.get(), "mem2reg");
+      auto err = optimize_module(M1, "sroa,dse");
       assert(err.empty());
     }
 
     if (opt_run_dce) {
-      auto err = optimize_module(*M1.get(), "adce");
+      auto err = optimize_module(M1, "adce");
       assert(err.empty());
     }
 
@@ -1049,13 +976,13 @@ reduced using llvm-reduce.
       raw_fd_ostream output_file(output_fn.str(), EC);
       if (EC)
         report_fatal_error("Couldn't open output file, exiting");
-      WriteBitcodeToFile(*M1.get(), output_file);
+      WriteBitcodeToFile(M1, output_file);
     }
 
-    if (opt_print_ir || opt_backend_tv) {
+    if (opt_print_ir) {
       out->flush();
       outs() << "------------------------------------------------------\n\n";
-      M1.get()->print(outs(), nullptr);
+      M1.print(outs(), nullptr);
       outs() << "------------------------------------------------------\n\n";
       outs().flush();
     }
@@ -1063,45 +990,34 @@ reduced using llvm-reduce.
     if (opt_skip_alive)
       continue;
 
-    if (opt_backend_tv) {
-      llvm::Function *srcFn = nullptr;
-      for (auto &F : *M1.get()) {
-        if (F.isDeclaration())
-          continue;
-        srcFn = &F;
-      }
-      assert(srcFn != nullptr);
-      doit(M1.get(), srcFn, verifier);
-    } else {
-      unique_ptr<Module> M2 = CloneModule(*M1.get());
-      auto err = optimize_module(*M2.get(), optPass);
-      if (!err.empty()) {
-        *out << "Error parsing list of LLVM passes: " << err << '\n';
-        return -1;
-      }
-
-      auto *F1 = M1->getFunction("f");
-      auto *F2 = M2->getFunction("f");
-      assert(F1 && F2);
-
-      // this is a hack but a useful one. attribute inference sets these
-      // and then we always fail Alive's syntactic equality check. so we
-      // just go ahead and (soundly) drop them by hand.
-      F2->removeFnAttr(Attribute::NoFree);
-      F2->removeFnAttr(Attribute::Memory);
-      F2->removeFnAttr(Attribute::WillReturn);
-
-      if (!verifier.compareFunctions(*F1, *F2))
-        if (opt_error_fatal)
-          goto end;
-
-      F1->eraseFromParent();
-      vector<Function *> Funcs;
-      for (auto &F : *M1)
-        Funcs.push_back(&F);
-      for (auto F : Funcs)
-        F->eraseFromParent();
+    auto M2 = CloneModule(M1);
+    auto err = optimize_module(*M2.get(), optPass);
+    if (!err.empty()) {
+      *out << "Error parsing list of LLVM passes: " << err << '\n';
+      return -1;
     }
+
+    auto *F1 = M1.getFunction("f");
+    auto *F2 = M2->getFunction("f");
+    assert(F1 && F2);
+
+    // this is a hack but a useful one. attribute inference sets these
+    // and then we always fail Alive's syntactic equality check. so we
+    // just go ahead and (soundly) drop them by hand.
+    F2->removeFnAttr(Attribute::NoFree);
+    F2->removeFnAttr(Attribute::Memory);
+    F2->removeFnAttr(Attribute::WillReturn);
+
+    if (!verifier.compareFunctions(*F1, *F2))
+      if (opt_error_fatal)
+        goto end;
+
+    F1->eraseFromParent();
+    vector<Function *> Funcs;
+    for (auto &F : M1)
+      Funcs.push_back(&F);
+    for (auto F : Funcs)
+      F->eraseFromParent();
   }
 
   *out << "Summary:\n"
@@ -1121,5 +1037,5 @@ end:
   if (opt_smt_stats)
     smt::solver_print_stats(*out);
 
-  return 0;
+  return verifier.num_errors > 0;
 }

@@ -234,8 +234,6 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
   set(ALIVE_LIBS_LLVM backend_tv llvm_util ${ALIVE_LIBS})
   set(ALIVE_EXEC_LIBS_LLVM llvm_util backend_tv ${ALIVE_EXEC_LIBS})
 
-  set(LLVM_LINK_COMPONENTS ${LLVM_LINK_COMPONENTS} TargetParser)
-
   add_llvm_executable(alive-tv
     "tools/alive-tv.cpp"
   )
@@ -298,12 +296,13 @@ install(TARGETS alive alive-jobserver)
 #add_library(alive2 SHARED ${IR_SRCS} ${SMT_SRCS} ${TOOLS_SRCS} ${UTIL_SRCS} ${LLVM_UTIL_SRCS})
 
 if (BUILD_LLVM_UTILS OR BUILD_TV)
-  llvm_map_components_to_libnames(llvm_libs support core irreader bitwriter analysis passes transformutils ipo asmparser asmprinter target mc mcparser mcdisassembler aarch64asmparser aarch64codegen aarch64desc aarch64disassembler aarch64info aarch64utils riscvasmparser riscvcodegen riscvdesc riscvdisassembler riscvinfo )
+  llvm_map_components_to_libnames(llvm_libs CodeGen TargetParser support core irreader bitwriter analysis passes transformutils ipo asmparser asmprinter target mc mcparser mcdisassembler aarch64asmparser aarch64codegen aarch64desc aarch64disassembler aarch64info aarch64utils riscvasmparser riscvcodegen riscvdesc riscvdisassembler riscvinfo AllTargetsCodeGens AllTargetsDescs AllTargetsInfos
+    )
 
   add_subdirectory(backend_tv/aslp)
   target_link_libraries(backend_tv PUBLIC bridge)
 
-  #target_link_libraries(alive2 PRIVATE ${llvm_libs})
+#  target_link_libraries(alive2 PRIVATE ${llvm_libs})
   target_link_libraries(alive-tv PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
   target_link_libraries(backend-tv PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
   target_link_libraries(quick-fuzz PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})

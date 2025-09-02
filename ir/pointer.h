@@ -39,7 +39,8 @@ class Pointer {
 public:
   Pointer(const Memory &m, const smt::expr &bid, const smt::expr &offset,
           const smt::expr &attr);
-  Pointer(const Memory &m, const char *var_name, const ParamAttrs &attr);
+  Pointer(const Memory &m, const char *var_name, const ParamAttrs &attr,
+          const std::set<smt::expr> &fn_vars = {});
   Pointer(const Memory &m, smt::expr p);
   Pointer(const Memory &m, unsigned bid, bool local, smt::expr attr = {});
   Pointer(const Memory &m, const smt::expr &bid, const smt::expr &offset,
@@ -90,6 +91,8 @@ public:
   smt::expr blockSizeOffsetT() const; // to compare with offsets
   smt::expr blockSizeAligned() const;
   smt::expr blockSizeAlignedOffsetT() const; // to compare with offsets
+
+  smt::expr leftoverSize() const;
 
   const smt::expr& operator()() const { return p; }
   smt::expr release() && { return std::move(p); }

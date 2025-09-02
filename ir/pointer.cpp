@@ -78,9 +78,11 @@ Pointer::Pointer(const Memory &m, const expr &bid, const expr &offset,
 }
 
 Pointer::Pointer(const Memory &m, const char *var_name,
-                 const ParamAttrs &attr) : m(const_cast<Memory&>(m)) {
-  unsigned bits = bitsShortBid() + bits_for_offset;
-  p = expr::mkVar(var_name, bits, false)
+                 const ParamAttrs &attr, const std::set<smt::expr> &fn_vars)
+  : m(const_cast<Memory&>(m)) {
+  auto ty = expr::mkUInt(0, bitsShortBid() + bits_for_offset);
+  vector<expr> vars(fn_vars.begin(), fn_vars.end());
+  p = expr::mkUF(var_name, vars, ty)
         .zext(hasLocalBit() + (1 + padding_logical()) * hasLogicalBit());
   if (bits_for_ptrattrs)
     p = p.concat(attr_to_bitvec(attr));
@@ -333,16 +335,18 @@ expr Pointer::blockSizeOffsetT() const {
 }
 
 expr Pointer::blockSizeAligned() const {
-  auto size = blockSize();
-  // programs can't observe whether the size was increased up to alignment
-  if (!has_globals_diff_align)
-    return size;
-  return size.round_up_bits(blockAlignment().zextOrTrunc(bits_size_t));
+  return blockSize().round_up_bits(blockAlignment().zextOrTrunc(bits_size_t));
 }
 
 expr Pointer::blockSizeAlignedOffsetT() const {
   expr sz = blockSizeAligned();
   return bits_for_offset > bits_size_t ? sz.zextOrTrunc(bits_for_offset) : sz;
+}
+
+expr Pointer::leftoverSize() const {
+  auto off = getOffsetSizet();
+  auto sz  = blockSizeOffsetT();
+  return expr::mkIf(off.ule(sz), sz - off, expr::mkUInt(0, sz));
 }
 
 expr Pointer::reprWithoutAttrs() const {
