@@ -877,43 +877,153 @@ void riscv2llvm::lift(MCInst &I) {
      * Floating point instructions (F, D, Q, and Zfh extensions)
      */
 
-  case RISCV::FCVT_S_W: {
+  case RISCV::FCVT_H_W:
+  case RISCV::FCVT_S_W:
+  case RISCV::FCVT_D_W:
+  case RISCV::FCVT_Q_W: {
+    auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+    auto operandTy = getFPType(operandSize);
     auto a = readFromRegOperand(1, i64ty);
     auto a32 = createTrunc(a, i32ty);
-    auto f = createSIToFP(a32, getFPType(32));
+    auto f = createSIToFP(a32, operandTy);
     updateOutputReg(f);
     break;
   }
 
-  case RISCV::FCVT_D_W: {
+  case RISCV::FCVT_H_L:
+  case RISCV::FCVT_S_L:
+  case RISCV::FCVT_D_L:
+  case RISCV::FCVT_Q_L: {
+    auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+    auto operandTy = getFPType(operandSize);
     auto a = readFromRegOperand(1, i64ty);
-    auto a32 = createTrunc(a, i32ty);
-    auto f = createSIToFP(a32, getFPType(64));
+    auto f = createSIToFP(a, operandTy);
     updateOutputReg(f);
     break;
   }
 
-  case RISCV::FCVT_W_S: {
+  case RISCV::FCVT_H_WU:
+  case RISCV::FCVT_S_WU:
+  case RISCV::FCVT_D_WU:
+  case RISCV::FCVT_Q_WU: {
+    auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+    auto operandTy = getFPType(operandSize);
+    auto a = readFromRegOperand(1, i64ty);
+    auto a32 = createTrunc(a, i32ty);
+    auto f = createUIToFP(a32, operandTy);
+    updateOutputReg(f);
+    break;
+  }
+
+  case RISCV::FCVT_H_LU:
+  case RISCV::FCVT_S_LU:
+  case RISCV::FCVT_D_LU:
+  case RISCV::FCVT_Q_LU: {
+    auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+    auto operandTy = getFPType(operandSize);
+    auto a = readFromRegOperand(1, i64ty);
+    auto f = createUIToFP(a, operandTy);
+    updateOutputReg(f);
+    break;
+  }
+
+  case RISCV::FCVT_W_H:
+  case RISCV::FCVT_W_S:
+  case RISCV::FCVT_W_D:
+  case RISCV::FCVT_W_Q: {
+    auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
+    auto operandTy = getFPType(operandSize);
     // TODO: Make sure semantics math up for NaN inputs
-    auto f = readFromFPRegOperand(1, getFPType(32));
+    auto f = readFromFPRegOperand(1, operandTy);
     auto a = createFPToSI_sat(f, i32ty);
     updateOutputReg(a, true);
     break;
   }
 
-  case RISCV::FCVT_W_D: {
+  case RISCV::FCVT_WU_H:
+  case RISCV::FCVT_WU_S:
+  case RISCV::FCVT_WU_D:
+  case RISCV::FCVT_WU_Q: {
+    auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
+    auto operandTy = getFPType(operandSize);
     // TODO: Make sure semantics math up for NaN inputs
-    auto f = readFromFPRegOperand(1, getFPType(64));
-    auto a = createFPToSI_sat(f, i32ty);
+    auto f = readFromFPRegOperand(1, operandTy);
+    auto a = createFPToUI_sat(f, i32ty);
     updateOutputReg(a, true);
     break;
   }
 
-  case RISCV::FMV_W_X: {
+  case RISCV::FCVT_L_H:
+  case RISCV::FCVT_L_S:
+  case RISCV::FCVT_L_D:
+  case RISCV::FCVT_L_Q: {
+    auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
+    auto operandTy = getFPType(operandSize);
+    // TODO: Make sure semantics math up for NaN inputs
+    auto f = readFromFPRegOperand(1, operandTy);
+    auto a = createFPToSI_sat(f, i64ty);
+    updateOutputReg(a);
+    break;
+  }
+
+  case RISCV::FCVT_LU_H:
+  case RISCV::FCVT_LU_S:
+  case RISCV::FCVT_LU_D:
+  case RISCV::FCVT_LU_Q: {
+    auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
+    auto operandTy = getFPType(operandSize);
+    // TODO: Make sure semantics math up for NaN inputs
+    auto f = readFromFPRegOperand(1, operandTy);
+    auto a = createFPToUI_sat(f, i64ty);
+    updateOutputReg(a);
+    break;
+  }
+
+  case RISCV::FCVT_H_S:
+  case RISCV::FCVT_H_D:
+  case RISCV::FCVT_S_H:
+  case RISCV::FCVT_S_D:
+  case RISCV::FCVT_S_Q:
+  case RISCV::FCVT_D_H:
+  case RISCV::FCVT_D_S:
+  case RISCV::FCVT_D_Q:
+  case RISCV::FCVT_Q_S:
+  case RISCV::FCVT_Q_D: {
+    auto srcSize = getRegSize(CurInst->getOperand(1).getReg());
+    auto srcTy = getFPType(srcSize);
+    auto tgtSize = getRegSize(CurInst->getOperand(0).getReg());
+    auto tgtTy = getFPType(tgtSize);
+    auto src = readFromFPRegOperand(1, srcTy);
+    auto tgt =
+        srcSize > tgtSize ? createFPTrunc(src, tgtTy) : createFPExt(src, tgtTy);
+    updateOutputReg(tgt);
+    break;
+  }
+
+  case RISCV::FMV_H_X:
+  case RISCV::FMV_W_X:
+  case RISCV::FMV_D_X: {
+    auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
+    auto operandTy = getFPType(operandSize);
     auto a = readFromRegOperand(1, i64ty);
-    auto a32 = createTrunc(a, i32ty);
-    auto f = createBitCast(a32, getFPType(32));
+    if (operandSize != 64)
+      a = createTrunc(a, i64ty->getWithNewBitWidth(operandSize));
+    auto f = createBitCast(a, operandTy);
     updateOutputReg(f);
+    break;
+  }
+
+  case RISCV::FMV_X_H:
+  case RISCV::FMV_X_W:
+  case RISCV::FMV_X_D: {
+    auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
+    auto operandTy = getFPType(operandSize);
+    auto a = readFromFPRegOperand(1, operandTy);
+    auto f = createBitCast(
+        a, IntegerType::getIntNTy(a->getContext(),
+                                  a->getType()->getScalarSizeInBits()));
+    // Upper bits are filled with the fp number's sign bit.
+    updateOutputReg(f, true);
     break;
   }
 
@@ -1059,6 +1169,30 @@ void riscv2llvm::lift(MCInst &I) {
     }
 
 #undef CASE_FP_OPCODES
+
+  case RISCV::FLH:
+  case RISCV::FLW:
+  case RISCV::FLD:
+  case RISCV::FLQ: {
+    auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+    auto operandTy = getFPType(operandSize);
+    Value *ptr = getPointerOperand();
+    Value *loaded = createLoad(operandTy, ptr);
+    updateOutputReg(loaded);
+    break;
+  }
+
+  case RISCV::FSH:
+  case RISCV::FSW:
+  case RISCV::FSD:
+  case RISCV::FSQ: {
+    auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+    auto operandTy = getFPType(operandSize);
+    auto value = readFromFPRegOperand(0, operandTy);
+    auto ptr = getPointerOperand();
+    createStore(value, ptr);
+    break;
+  }
 
   default:
     visitError();
