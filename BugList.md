@@ -132,7 +132,7 @@ Please contact us or submit a PR if something is missing or inaccurate.
 23. fp.roundToIntegral gives invalid zero_extend application (https://github.com/Z3Prover/z3/issues/7056)
 24. Crash with conversion of a signed 1-bit BV to FP (https://github.com/Z3Prover/z3/commit/322e4441b3a170c9c30c747f10b1d3b0c04e2a0b)
 
-### Miscompilation bugs found in ARM64 Backend
+### Miscompilation bugs found using arm-tv / riscv-tv
 1. GlobalIsel miscompiles an llvm.fshl instruction (https://github.com/llvm/llvm-project/issues/55003)
 2. GlobalIsel miscompiles a zero-extended logical shift right (https://github.com/llvm/llvm-project/issues/55129)
 3. Incorrect optimization of sitofp/fptosi roundtrip (https://github.com/llvm/llvm-project/issues/55150)
@@ -175,4 +175,7 @@ Please contact us or submit a PR if something is missing or inaccurate.
 40. miscompile from AArch64 backend (https://github.com/llvm/llvm-project/issues/133928)
 41. fshr-related miscompile by AArch64 backend (https://github.com/llvm/llvm-project/issues/136746)
 42. integer math miscompile from AArch64 global isel backend (https://github.com/llvm/llvm-project/issues/137254)
-43. AArch64 backend folds fcmp nnan nsz + select to fminnm, causing confusion between +0.0 and -0.0 (https://github.com/llvm/llvm-project/issues/137998#issuecomment-2842824393)
+43. AArch64 backend folds fcmp nnan nsz + select to fminnm, causing confusion between +0.0 and -0.0 (https://github.com/llvm/llvm-project/issues/137998)
+44. rem/div-related miscompile from riscv64 and aarch64 backends (https://github.com/llvm/llvm-project/issues/145360)
+45. riscv64 and aarch64 backends propagating range metadata too aggressively (https://github.com/llvm/llvm-project/issues/145363)
+46. risc-v backend miscompile of cttz-related optimization (https://github.com/llvm/llvm-project/issues/155014)
