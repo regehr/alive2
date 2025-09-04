@@ -36,6 +36,7 @@ unique_ptr<MemoryBuffer> lifter::generateAsm(Module &M, const Target *Targ,
                                              const char *DefaultFeatures) {
   assert(DefaultFeatures && "[generateAsm] DefaultFeatures must be set");
   TargetOptions Opt;
+  Opt.FloatABIType = llvm::FloatABI::Hard;
   auto RM = optional<Reloc::Model>();
   unique_ptr<TargetMachine> TM(Targ->createTargetMachine(
       DefaultTT, DefaultCPU, DefaultFeatures, Opt, RM));
