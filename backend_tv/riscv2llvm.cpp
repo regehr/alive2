@@ -131,14 +131,16 @@ void riscv2llvm::updateFPReg(Value *V, uint64_t Reg) {
 unsigned riscv2llvm::getRegSize(unsigned Reg) {
   if (Reg >= RISCV::X0 && Reg <= RISCV::X31)
     return /*XLen=*/64;
-  if (Reg >= RISCV::F0_F && Reg <= RISCV::F31_F)
-    return 32;
   if (Reg >= RISCV::F0_D && Reg <= RISCV::F31_D)
     return 64;
+  if (Reg >= RISCV::F0_F && Reg <= RISCV::F31_F)
+    return 32;
   if (Reg >= RISCV::F0_H && Reg <= RISCV::F31_H)
     return 16;
   if (Reg >= RISCV::F0_Q && Reg <= RISCV::F31_Q)
     return 128;
+  if (Reg == RISCV::FCSR)
+    return 32;
   assert(false && "unhandled register");
 }
 
@@ -386,9 +388,11 @@ void riscv2llvm::doReturn() {
   auto *retTyp = srcFn->getReturnType();
   if (retTyp->isVoidTy()) {
     createReturn(nullptr);
+  } else if (retTyp->isFloatingPointTy()) {
+    createReturn(readFromFPReg(RISCV::F10_Q, retTyp));
   } else {
     Value *retVal{nullptr};
-    // FIXME handle vectors and FP
+    // FIXME handle vectors
     retVal = readFromReg(RISCV::X10, i64ty);
     if (retTyp->isPointerTy()) {
       retVal = new IntToPtrInst(retVal, PointerType::get(Ctx, 0), "", LLVMBB);
@@ -406,10 +410,6 @@ void riscv2llvm::doReturn() {
         auto trunc = createTrunc(retVal, i32ty);
         retVal = createZExt(trunc, i64ty);
       }
-
-      if ((retTyp->isVectorTy() || retTyp->isFloatingPointTy()) &&
-          !has_ret_attr)
-        retVal = createBitCast(retVal, retTyp);
     }
     createReturn(retVal);
   }
@@ -457,6 +457,7 @@ void riscv2llvm::platformInit() {
   // significant generalization to handle large parameters
   unsigned vecArgNum = 0;
   unsigned scalarArgNum = 0;
+  unsigned floatArgNum = 0;
   unsigned stackSlot = 0;
 
   for (Function::arg_iterator arg = liftedFn->arg_begin(),
@@ -480,6 +481,14 @@ void riscv2llvm::platformInit() {
       auto Reg = RISCV::X10 + scalarArgNum;
       createStore(val, RegFile[Reg]);
       ++scalarArgNum;
+      goto end;
+    }
+
+    // TODO: support args > 64 bits (possibly just remove check in mc2llvm.cpp)
+    if (argTy->isFloatingPointTy() && floatArgNum < 8) {
+      auto Reg = RISCV::F10_Q + floatArgNum;
+      createStore(val, lookupFPReg(Reg));
+      ++floatArgNum;
       goto end;
     }
 
