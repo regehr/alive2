@@ -1295,7 +1295,8 @@ void Memory::store(const Pointer &ptr,
 void Memory::storeLambda(const Pointer &ptr, const expr &offset,
                          const expr &bytes,
                          const vector<pair<unsigned, expr>> &data,
-                         const set<expr> &undef, uint64_t align) {
+                         const set<expr> &undef, uint64_t align,
+                         bool full_write) {
   assert(!state->isInitializationPhase());
 
   bool val_no_offset = data.size() == 1 && !data[0].second.vars().count(offset);
@@ -1312,7 +1313,7 @@ void Memory::storeLambda(const Pointer &ptr, const expr &offset,
     auto orig_val = ::raw_load(blk.val, offset);
 
     // optimization: full rewrite
-    if (bytes.eq(ptr.blockSizeAligned())) {
+    if (full_write || bytes.eq(ptr.blockSizeAligned())) {
       blk.val = val_no_offset
         ? mk_block_if(cond, val, std::move(blk.val))
         : expr::mkLambda(offset, "#offset",
@@ -2417,7 +2418,7 @@ Byte Memory::raw_load(const Pointer &p) {
 
 void Memory::memset(const expr &p, const StateValue &val, const expr &bytesize,
                     uint64_t align, const set<expr> &undef_vars,
-                    bool deref_check) {
+                    bool deref_check, bool full_write) {
   assert(!memory_unused());
   assert(!val.isValid() || val.bits() == 8);
   unsigned bytesz = bits_byte / 8;
@@ -2436,7 +2437,7 @@ void Memory::memset(const expr &p, const StateValue &val, const expr &bytesize,
   expr raw_byte = std::move(bytes[0])();
 
   uint64_t n;
-  if (bytesize.isUInt(n) && (n / bytesz) <= 4) {
+  if (!full_write && bytesize.isUInt(n) && (n / bytesz) <= 4) {
     vector<pair<unsigned, expr>> to_store;
     for (unsigned i = 0; i < n; i += bytesz) {
       to_store.emplace_back(i, raw_byte);
@@ -2444,7 +2445,8 @@ void Memory::memset(const expr &p, const StateValue &val, const expr &bytesize,
     store(ptr, to_store, undef_vars, align);
   } else {
     expr offset = expr::mkQVar(0, Pointer::bitsShortOffset());
-    storeLambda(ptr, offset, bytesize, {{0, raw_byte}}, undef_vars, align);
+    storeLambda(ptr, offset, bytesize, {{0, raw_byte}}, undef_vars, align,
+                full_write);
   }
 }
 
@@ -2649,7 +2651,7 @@ expr Memory::blockValRefined(const Pointer &src, const Memory &tgt,
   expr ptr_offset = src.getShortOffset();
   uint64_t bytes;
   if (full_check &&
-      src.blockSize().isUInt(bytes) && (bytes / bytes_per_byte) <= 8) {
+      src.blockSizeAligned().isUInt(bytes) && (bytes / bytes_per_byte) <= 8) {
     expr val_refines = true;
     for (unsigned off = 0; off < (bytes / bytes_per_byte); ++off) {
       expr off_expr = expr::mkUInt(off, ptr_offset);
@@ -2660,7 +2662,8 @@ expr Memory::blockValRefined(const Pointer &src, const Memory &tgt,
     expr cnstr = refined(ptr_offset);
     if (!full_check)
       return cnstr;
-    return src.getOffsetSizet().ult(src.blockSizeOffsetT()).implies(cnstr);
+    return
+      src.getOffsetSizet().ult(src.blockSizeAlignedOffsetT()).implies(cnstr);
   }
 }
 
@@ -2737,7 +2740,8 @@ Memory::refined(const Memory &other, bool fncall,
         !stored_tgt.second && stored_tgt.first.empty()) {
       // block not stored; no need to verify
     }
-    else if (p.blockSize().isUInt(bytes) && (bytes / (bits_byte / 8)) <= 8) {
+    else if (p.blockSizeAligned().isUInt(bytes) &&
+             (bytes / (bits_byte / 8)) <= 8) {
       // this is a small block; just check it thoroughly
       val_refined = blockValRefined(p, other, bid, undef_vars, true);
     }
