@@ -86,6 +86,10 @@ public:
 
   virtual expr_t createUMax(expr_t a, expr_t b) = 0;
 
+  virtual expr_t createMinimumNum(expr_t a, expr_t b) = 0;
+
+  virtual expr_t createMaximumNum(expr_t a, expr_t b) = 0;
+
   virtual expr_t createFNeg(expr_t v) = 0;
 
   virtual expr_t createFAbs(expr_t v) = 0;
