@@ -385,6 +385,18 @@ public:
     return llvm::CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
   }
 
+  llvm::Value *createMinimumNum(llvm::Value *a, llvm::Value *b) override {
+    auto decl = llvm::Intrinsic::getOrInsertDeclaration(
+        LiftedModule, llvm::Intrinsic::minnum, a->getType());
+    return llvm::CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
+  }
+
+  llvm::Value *createMaximumNum(llvm::Value *a, llvm::Value *b) override {
+    auto decl = llvm::Intrinsic::getOrInsertDeclaration(
+        LiftedModule, llvm::Intrinsic::maxnum, a->getType());
+    return llvm::CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
+  }
+
   llvm::Value *createFNeg(llvm::Value *v) override {
     return llvm::UnaryOperator::CreateFNeg(v, nextName(), LLVMBB);
   }
