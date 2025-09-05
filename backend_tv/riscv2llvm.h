@@ -54,6 +54,7 @@ class riscv2llvm final : public mc2llvm {
               const std::string &calleeName) override;
 
   void lift(llvm::MCInst &I) override;
+  llvm::Value *liftRoundingToInt(llvm::Value *src, int64_t mode);
 
   void checkCallingConv(llvm::Function *fn) override;
 

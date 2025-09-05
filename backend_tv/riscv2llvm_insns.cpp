@@ -28,6 +28,55 @@ using namespace llvm;
 #define GEN_UNCOMPRESS_INSTR
 #include "Target/RISCV/RISCVGenCompressInstEmitter.inc"
 
+// Copied from MCTargetDesc/RISCVBaseInfo.h
+enum RISCVFPRndMode {
+  RNE = 0,
+  RTZ = 1,
+  RDN = 2,
+  RUP = 3,
+  RMM = 4,
+  DYN = 7,
+  Invalid
+};
+
+static bool isDefaultRoundingMode(int64_t mode) {
+  // We assume that the dynamic rounding mode is RNE.
+  return mode == RISCVFPRndMode::RNE || mode == RISCVFPRndMode::DYN;
+}
+
+/// See also the helper function matchRoundingOp in
+/// llvm/lib/Target/RISCV/RISCVISelLowering.cpp.
+llvm::Value *riscv2llvm::liftRoundingToInt(llvm::Value *src, int64_t mode) {
+  Intrinsic::ID IID;
+  switch (mode) {
+  case RISCVFPRndMode::DYN:
+    IID = Intrinsic::rint;
+    break;
+  case RISCVFPRndMode::RMM:
+    IID = Intrinsic::round;
+    break;
+  case RISCVFPRndMode::RNE:
+    IID = Intrinsic::roundeven;
+    break;
+  case RISCVFPRndMode::RDN:
+    IID = Intrinsic::floor;
+    break;
+  case RISCVFPRndMode::RUP:
+    IID = Intrinsic::ceil;
+    break;
+  case RISCVFPRndMode::RTZ:
+    IID = Intrinsic::trunc;
+    break;
+  default:
+    llvm_unreachable("todo");
+    break;
+  }
+
+  Function *decl =
+      Intrinsic::getOrInsertDeclaration(LiftedModule, IID, src->getType());
+  return CallInst::Create(decl, src, nextName(), LLVMBB);
+}
+
 void riscv2llvm::lift(MCInst &I) {
   MCInst uncompressedInst;
   if (uncompressInst(uncompressedInst, I, *STI)) {
@@ -885,6 +934,7 @@ void riscv2llvm::lift(MCInst &I) {
     auto operandTy = getFPType(operandSize);
     auto a = readFromRegOperand(1, i64ty);
     auto a32 = createTrunc(a, i32ty);
+    // Ignore the rounding mode. Always use RNE.
     auto f = createSIToFP(a32, operandTy);
     updateOutputReg(f);
     break;
@@ -897,6 +947,7 @@ void riscv2llvm::lift(MCInst &I) {
     auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
     auto operandTy = getFPType(operandSize);
     auto a = readFromRegOperand(1, i64ty);
+    // Ignore the rounding mode. Always use RNE.
     auto f = createSIToFP(a, operandTy);
     updateOutputReg(f);
     break;
@@ -910,6 +961,7 @@ void riscv2llvm::lift(MCInst &I) {
     auto operandTy = getFPType(operandSize);
     auto a = readFromRegOperand(1, i64ty);
     auto a32 = createTrunc(a, i32ty);
+    // Ignore the rounding mode. Always use RNE.
     auto f = createUIToFP(a32, operandTy);
     updateOutputReg(f);
     break;
@@ -922,6 +974,7 @@ void riscv2llvm::lift(MCInst &I) {
     auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
     auto operandTy = getFPType(operandSize);
     auto a = readFromRegOperand(1, i64ty);
+    // Ignore the rounding mode. Always use RNE.
     auto f = createUIToFP(a, operandTy);
     updateOutputReg(f);
     break;
@@ -935,7 +988,8 @@ void riscv2llvm::lift(MCInst &I) {
     auto operandTy = getFPType(operandSize);
     // TODO: Make sure semantics math up for NaN inputs
     auto f = readFromFPRegOperand(1, operandTy);
-    auto a = createFPToSI_sat(f, i32ty);
+    auto f_round = liftRoundingToInt(f, CurInst->getOperand(2).getImm());
+    auto a = createFPToSI_sat(f_round, i32ty);
     updateOutputReg(a, true);
     break;
   }
@@ -948,7 +1002,8 @@ void riscv2llvm::lift(MCInst &I) {
     auto operandTy = getFPType(operandSize);
     // TODO: Make sure semantics math up for NaN inputs
     auto f = readFromFPRegOperand(1, operandTy);
-    auto a = createFPToUI_sat(f, i32ty);
+    auto f_round = liftRoundingToInt(f, CurInst->getOperand(2).getImm());
+    auto a = createFPToUI_sat(f_round, i32ty);
     updateOutputReg(a, true);
     break;
   }
@@ -961,7 +1016,8 @@ void riscv2llvm::lift(MCInst &I) {
     auto operandTy = getFPType(operandSize);
     // TODO: Make sure semantics math up for NaN inputs
     auto f = readFromFPRegOperand(1, operandTy);
-    auto a = createFPToSI_sat(f, i64ty);
+    auto f_round = liftRoundingToInt(f, CurInst->getOperand(2).getImm());
+    auto a = createFPToSI_sat(f_round, i64ty);
     updateOutputReg(a);
     break;
   }
@@ -974,7 +1030,8 @@ void riscv2llvm::lift(MCInst &I) {
     auto operandTy = getFPType(operandSize);
     // TODO: Make sure semantics math up for NaN inputs
     auto f = readFromFPRegOperand(1, operandTy);
-    auto a = createFPToUI_sat(f, i64ty);
+    auto f_round = liftRoundingToInt(f, CurInst->getOperand(2).getImm());
+    auto a = createFPToUI_sat(f_round, i64ty);
     updateOutputReg(a);
     break;
   }
@@ -989,6 +1046,8 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::FCVT_D_Q:
   case RISCV::FCVT_Q_S:
   case RISCV::FCVT_Q_D: {
+    assert(isDefaultRoundingMode(CurInst->getOperand(2).getImm()) &&
+           "Unsupported rounding mode.");
     auto srcSize = getRegSize(CurInst->getOperand(1).getReg());
     auto srcTy = getFPType(srcSize);
     auto tgtSize = getRegSize(CurInst->getOperand(0).getReg());
@@ -1035,6 +1094,8 @@ void riscv2llvm::lift(MCInst &I) {
 
 #define HANDLE_FP_BINARY_OP(OPCODE, INST)                                      \
   CASE_FP_OPCODES(OPCODE) : {                                                  \
+    assert(isDefaultRoundingMode(CurInst->getOperand(3).getImm()) &&           \
+           "Unsupported rounding mode.");                                      \
     auto operandSize = getRegSize(CurInst->getOperand(0).getReg());            \
     auto operandTy = getFPType(operandSize);                                   \
     auto a = readFromFPRegOperand(1, operandTy);                               \
@@ -1105,6 +1166,8 @@ void riscv2llvm::lift(MCInst &I) {
 #undef HANDLE_FP_CMP_OP
 
     CASE_FP_OPCODES(FMADD) : {
+      assert(isDefaultRoundingMode(CurInst->getOperand(4).getImm()) &&
+             "Unsupported rounding mode.");
       auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
       auto operandTy = getFPType(operandSize);
       auto a = readFromFPRegOperand(1, operandTy);
@@ -1116,6 +1179,8 @@ void riscv2llvm::lift(MCInst &I) {
     }
 
     CASE_FP_OPCODES(FMSUB) : {
+      assert(isDefaultRoundingMode(CurInst->getOperand(4).getImm()) &&
+             "Unsupported rounding mode.");
       auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
       auto operandTy = getFPType(operandSize);
       auto a = readFromFPRegOperand(1, operandTy);
@@ -1127,6 +1192,8 @@ void riscv2llvm::lift(MCInst &I) {
     }
 
     CASE_FP_OPCODES(FNMADD) : {
+      assert(isDefaultRoundingMode(CurInst->getOperand(4).getImm()) &&
+             "Unsupported rounding mode.");
       auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
       auto operandTy = getFPType(operandSize);
       auto a = readFromFPRegOperand(1, operandTy);
@@ -1138,6 +1205,8 @@ void riscv2llvm::lift(MCInst &I) {
     }
 
     CASE_FP_OPCODES(FNMSUB) : {
+      assert(isDefaultRoundingMode(CurInst->getOperand(4).getImm()) &&
+             "Unsupported rounding mode.");
       auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
       auto operandTy = getFPType(operandSize);
       auto a = readFromFPRegOperand(1, operandTy);
