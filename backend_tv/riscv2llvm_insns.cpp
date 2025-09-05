@@ -998,8 +998,6 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::FCVT_WU_S:
   case RISCV::FCVT_WU_D:
   case RISCV::FCVT_WU_Q: {
-    assert(CurInst->getOperand(2).getImm() == RISCVFPRndMode::RTZ &&
-           "Unsupported rounding mode.");
     auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
     auto operandTy = getFPType(operandSize);
     // TODO: Make sure semantics math up for NaN inputs
