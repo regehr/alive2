@@ -92,7 +92,7 @@ void riscv2llvm::lift(MCInst &I) {
     createBranch(newbb);
   LLVMBB = newbb;
 
-  // auto i1ty = getIntTy(1);
+  auto i1ty = getIntTy(1);
   auto i8ty = getIntTy(8);
   auto i16ty = getIntTy(16);
   auto i32ty = getIntTy(32);
@@ -1092,10 +1092,12 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::OPCODE##_D:                                                      \
   case RISCV::OPCODE##_Q
 
-#define HANDLE_FP_BINARY_OP(OPCODE, INST)                                      \
+#define HANDLE_FP_BINARY_OP(OPCODE, INST, CHECKRM)			       \
   CASE_FP_OPCODES(OPCODE) : {                                                  \
-    assert(isDefaultRoundingMode(CurInst->getOperand(3).getImm()) &&           \
-           "Unsupported rounding mode.");                                      \
+    if (CHECKRM) {                                                             \
+      assert(isDefaultRoundingMode(CurInst->getOperand(3).getImm()) &&         \
+             "Unsupported rounding mode.");                                    \
+    }                                                                          \
     auto operandSize = getRegSize(CurInst->getOperand(0).getReg());            \
     auto operandTy = getFPType(operandSize);                                   \
     auto a = readFromFPRegOperand(1, operandTy);                               \
@@ -1105,11 +1107,11 @@ void riscv2llvm::lift(MCInst &I) {
     break;                                                                     \
   }
 
-    HANDLE_FP_BINARY_OP(FADD, FAdd);
-    HANDLE_FP_BINARY_OP(FSUB, FSub);
-    HANDLE_FP_BINARY_OP(FMUL, FMul);
-    HANDLE_FP_BINARY_OP(FMIN, MinimumNum);
-    HANDLE_FP_BINARY_OP(FMAX, MaximumNum);
+    HANDLE_FP_BINARY_OP(FADD, FAdd, true);
+    HANDLE_FP_BINARY_OP(FSUB, FSub, true);
+    HANDLE_FP_BINARY_OP(FMUL, FMul, true);
+    HANDLE_FP_BINARY_OP(FMIN, MinimumNum, false);
+    HANDLE_FP_BINARY_OP(FMAX, MaximumNum, false);
 
 #undef HANDLE_FP_BINARY_OP
 
@@ -1129,12 +1131,17 @@ void riscv2llvm::lift(MCInst &I) {
       auto a = readFromFPRegOperand(1, operandTy);
       auto b = readFromFPRegOperand(2, operandTy);
       auto bitsTy = getIntTy(operandSize);
-      // XOR the sign bit of a.
-      auto bits = createBitCast(b, bitsTy);
-      auto signbit =
-          createICmp(ICmpInst::ICMP_SGT, bits, Constant::getNullValue(bitsTy));
-      auto res = createSelect(signbit, a, createFNeg(b));
-      updateOutputReg(res);
+      auto abits = createBitCast(a, bitsTy);
+      auto bbits = createBitCast(b, bitsTy);
+      auto amt = getUnsignedIntConst(operandSize - 1, operandSize);
+      auto asign = createTrunc(createRawLShr(abits, amt), i1ty);
+      auto bsign = createTrunc(createRawLShr(bbits, amt), i1ty);
+      auto ressign = createXor(asign, bsign);
+      auto resbit = createRawShl(createZExt(ressign, bitsTy), amt);
+      auto one = getUnsignedIntConst(1, operandSize);
+      auto nosign = createRawLShr(createRawShl(abits, one), one);
+      auto res = createOr(nosign, resbit);
+      updateOutputReg(createBitCast(res, operandTy));
       break;
     }
 
