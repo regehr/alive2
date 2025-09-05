@@ -2,8 +2,6 @@
 
 #include "Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.h"
 
-#define AARCH64_MAP_IMPL
-#include "aslp/aarch64_map.h"
 #include "aslp/aslp_bridge.h"
 
 using namespace std;
@@ -54,12 +52,12 @@ void arm2llvm::lift(MCInst &I) {
     }
   } else {
     *out << "... arm opnum failed: "
-         << InstPrinter->getOpcodeName(I.getOpcode()).str() << '\n';
+         << instStr.str() << '\n';
     // arm opcode translation failed, possibly SentinelNOP. continue with
     // classic.
   }
 
-  std::string encoding{"classic_" + aslp::aarch64_revmap().at(opcode)};
+  std::string encoding{"classic_" + instStr.str()};
   encodingCounts[encoding]++;
 
   // always create new bb per instruction, to match aslp

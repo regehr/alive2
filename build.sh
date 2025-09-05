@@ -9,15 +9,15 @@ cd "$(dirname "$0")"
 
 mkdir -p build && cd build
 if ! [[ -f antlr-jar ]]; then
-  nix build 'nixpkgs/655a58a72a6601292512670343087c2d75d859c1#antlr.src' -o antlr-jar
+  nix build 'nixpkgs#antlr.src' -o antlr-jar
 fi
 if ! [[ -d antlr-dev ]]; then
-  nix build 'nixpkgs/655a58a72a6601292512670343087c2d75d859c1#antlr.runtime.cpp^dev' -o antlr
+  nix build 'nixpkgs#antlr.runtime.cpp^dev' -o antlr
 fi
 if [[ -n "$LLVM_ROOT" ]]; then
   ln -s "$LLVM_ROOT" ./llvm-dev
 elif ! [[ -d llvm-dev ]]; then
-  nix build 'github:katrinafyi/pac-nix/ac6bd13f242a782e1c69da6cdab2fe1322871bd3#llvm-custom-git.libllvm^dev' -o llvm
+  nix build 'github:katrinafyi/pac-nix#llvm-custom-git.libllvm^dev' -o llvm
 fi
 
 if [[ -d aslp ]]; then :
@@ -28,7 +28,7 @@ else
 fi
 
 if ! [[ -d varnish ]]; then
-  nix build 'nixpkgs/655a58a72a6601292512670343087c2d75d859c1#varnish' -o varnish
+  nix build 'nixpkgs#varnish' -o varnish
 fi
 
 cd ..
