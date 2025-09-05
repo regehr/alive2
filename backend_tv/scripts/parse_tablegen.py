@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# vim: ts=2 sts=2 et sw=2
 
 import sys
 
@@ -7,13 +8,15 @@ def main():
   with open(sys.argv[1], 'r') as f:
     inc = f.readlines()
 
-  # redirect output to second command line argument 
+  # redirect output to second command line argument
   if len(sys.argv) >= 3:
     sys.stdout = open(sys.argv[2], 'w')
 
   split = inc.index('#endif // GET_INSTRINFO_ENUM\n')
   assert split >= 0
-  instructions = [(s[0].strip(), s[1].strip().strip(',')) for s in map(lambda x: x.split('='), inc[:split]) if len(s) == 2]
+  aarch64_enum_def = inc[:split]
+  clean_rhs = lambda rhs: rhs.split(",", 1)[0].strip()
+  instructions = [(s[0].strip(), clean_rhs(s[1])) for s in map(lambda x: x.split('='), aarch64_enum_def) if len(s) == 2]
 
   # generate reverse mapping
   print('#pragma once\n')
@@ -34,6 +37,7 @@ def main():
   print('  static std::map<std::string, unsigned int> map;')
   print('  if (map.size() == 0) {')
   for name, code in instructions:
+    assert code.isdigit(), f"instruction {name!r} has non-numeric code {code!r}. did the .inc format change?"
     print(f'    map.emplace("{name}", {code}u);')
   print('  }')
   print('  return map;')
