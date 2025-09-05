@@ -15,11 +15,13 @@
 #include "SemanticsParser.h"
 #include "SemanticsLexer.h"
 
-#include <aslp/aarch64_map.h>
 #include "interface.h"
 #include "aslt_visitor.h"
 #include "aslp_bridge.h"
 #include <aslp-cpp/aslp-cpp.hpp>
+
+#define GET_INSTRINFO_ENUM
+#include "Target/AArch64/AArch64GenInstrInfo.inc"
 
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Module.h"
@@ -145,8 +147,8 @@ std::variant<err_t, result_t> bridge::run_special(const llvm::MCInst& inst, cons
   llvm::BasicBlock* bb{nullptr};
   std::string name{"special_unknown"};
 
-  auto& opname = aarch64_revmap().at(inst.getOpcode());
-  if (opname == "ADR" || opname == "ADRP") { // ADRP
+  auto opcode = inst.getOpcode();
+  if (opcode == llvm::AArch64::ADR || opcode == llvm::AArch64::ADRP) { // ADRP
       assert(inst.getOperand(0).isReg());
 
       name = "special_adrp";
@@ -179,18 +181,17 @@ std::variant<err_t, result_t> bridge::run_special(const llvm::MCInst& inst, cons
 std::variant<err_t, result_t> bridge::run(const llvm::MCInst& inst, const opcode_t& bytes) {
   const auto& mcinst_banned = config().mcinst_banned;
   static const std::vector<unsigned int> mcinst_banned_opcodes{
-    aarch64_map().at("PRFMl"),
-    aarch64_map().at("PRFMroW"),
-    aarch64_map().at("PRFMroX"),
-    aarch64_map().at("PRFMui"),
-    aarch64_map().at("PRFUMi"),
-    aarch64_map().at("PACIASP"),
-    aarch64_map().at("PACIBSP"),
-    aarch64_map().at("AUTIASP"),
-    aarch64_map().at("AUTIBSP"),
-    aarch64_map().at("HINT"),
-    aarch64_map().at("BRK"),
-    // aarch64_map().at("FNEGSr"),
+    llvm::AArch64::PRFMl,
+    llvm::AArch64::PRFMroW,
+    llvm::AArch64::PRFMroX,
+    llvm::AArch64::PRFMui,
+    llvm::AArch64::PRFUMi,
+    llvm::AArch64::PACIASP,
+    llvm::AArch64::PACIBSP,
+    llvm::AArch64::AUTIASP,
+    llvm::AArch64::AUTIBSP,
+    llvm::AArch64::HINT,
+    llvm::AArch64::BRK,
   };
 
   bool banned = !config().enable
