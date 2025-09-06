@@ -1092,7 +1092,7 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::OPCODE##_D:                                                      \
   case RISCV::OPCODE##_Q
 
-#define HANDLE_FP_BINARY_OP(OPCODE, INST, CHECKRM)			       \
+#define HANDLE_FP_BINARY_OP(OPCODE, INST, CHECKRM)                             \
   CASE_FP_OPCODES(OPCODE) : {                                                  \
     if (CHECKRM) {                                                             \
       assert(isDefaultRoundingMode(CurInst->getOperand(3).getImm()) &&         \

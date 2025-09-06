@@ -51,8 +51,7 @@ void arm2llvm::lift(MCInst &I) {
       }
     }
   } else {
-    *out << "... arm opnum failed: "
-         << instStr.str() << '\n';
+    *out << "... arm opnum failed: " << instStr.str() << '\n';
     // arm opcode translation failed, possibly SentinelNOP. continue with
     // classic.
   }
