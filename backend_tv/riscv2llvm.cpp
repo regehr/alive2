@@ -113,7 +113,7 @@ Value *riscv2llvm::lookupFPReg(unsigned Reg) {
     Reg = Reg - RISCV::F0_F + RISCV::F0_Q;
   } else if (Reg >= RISCV::F0_H && Reg <= RISCV::F31_H) {
     Reg = Reg - RISCV::F0_H + RISCV::F0_Q;
-  } 
+  }
   return RegFile[Reg];
 }
 
@@ -150,7 +150,7 @@ void riscv2llvm::updateOutputReg(Value *V, bool SExt) {
   if (V->getType()->isFloatingPointTy()) {
     if (W == 128) {
       updateFPReg(V, outputReg);
-     } else {
+    } else {
       // NaN-box smaller FP types
       auto bits = createBitCast(V, getIntTy(W));
       auto extended = createZExt(bits, getIntTy(128));
@@ -485,11 +485,29 @@ void riscv2llvm::platformInit() {
     }
 
     // TODO: support args > 64 bits (possibly just remove check in mc2llvm.cpp)
-    if (argTy->isFloatingPointTy() && floatArgNum < 8) {
-      auto Reg = RISCV::F10_Q + floatArgNum;
-      createStore(val, lookupFPReg(Reg));
-      ++floatArgNum;
-      goto end;
+    if (argTy->isFloatingPointTy()) {
+      if (floatArgNum < 8) {
+        auto Reg = RISCV::F10_Q + floatArgNum;
+        createStore(val, lookupFPReg(Reg));
+        ++floatArgNum;
+        goto end;
+      }
+      // Otherwise pass the argument by GPR.
+      if (scalarArgNum < 8) {
+        auto Reg = RISCV::X10 + scalarArgNum;
+        unsigned bitWidth = getBitWidth(val);
+        Value *intVal = createBitCast(val, getIntTy(bitWidth));
+        // 1-extended (NaN-boxed) to FLEN bits.
+        if (bitWidth < 64) {
+          intVal = createOr(
+              createZExt(intVal, getIntTy(64)),
+              ConstantInt::get(getIntTy(64),
+                               APInt::getHighBitsSet(64, 64 - bitWidth)));
+        }
+        createStore(intVal, RegFile[Reg]);
+        ++scalarArgNum;
+        goto end;
+      }
     }
 
 #if 0
