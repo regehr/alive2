@@ -387,13 +387,13 @@ public:
 
   llvm::Value *createMinimumNum(llvm::Value *a, llvm::Value *b) override {
     auto decl = llvm::Intrinsic::getOrInsertDeclaration(
-        LiftedModule, llvm::Intrinsic::minnum, a->getType());
+        LiftedModule, llvm::Intrinsic::minimumnum, a->getType());
     return llvm::CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
   }
 
   llvm::Value *createMaximumNum(llvm::Value *a, llvm::Value *b) override {
     auto decl = llvm::Intrinsic::getOrInsertDeclaration(
-        LiftedModule, llvm::Intrinsic::maxnum, a->getType());
+        LiftedModule, llvm::Intrinsic::maximumnum, a->getType());
     return llvm::CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
   }
 
