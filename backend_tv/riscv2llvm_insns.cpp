@@ -1110,6 +1110,7 @@ void riscv2llvm::lift(MCInst &I) {
     HANDLE_FP_BINARY_OP(FADD, FAdd, true);
     HANDLE_FP_BINARY_OP(FSUB, FSub, true);
     HANDLE_FP_BINARY_OP(FMUL, FMul, true);
+    HANDLE_FP_BINARY_OP(FDIV, FDiv, true);
     HANDLE_FP_BINARY_OP(FMIN, MinimumNum, false);
     HANDLE_FP_BINARY_OP(FMAX, MaximumNum, false);
 

@@ -690,6 +690,11 @@ public:
                                         nextName(), LLVMBB);
   }
 
+  llvm::BinaryOperator *createFDiv(llvm::Value *a, llvm::Value *b) override {
+    return llvm::BinaryOperator::Create(llvm::Instruction::FDiv, a, b,
+                                        nextName(), LLVMBB);
+  }
+
   llvm::BinaryOperator *createURem(llvm::Value *a, llvm::Value *b) override {
     return llvm::BinaryOperator::Create(llvm::Instruction::URem, a, b,
                                         nextName(), LLVMBB);
