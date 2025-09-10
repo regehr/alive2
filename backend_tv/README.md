@@ -1,16 +1,4 @@
-# aslp-bridge
-
-([compare ahead](https://github.com/regehr/alive2/compare/arm-tv...katrinafyi:alive2:aslp))
-
-This is the [Aslp](https://github.com/UQ-PAC/aslp) semantics provider for the arm-tv tool.
-Given an LLVM MCInst, it consults Aslp for partially-evaluated semantics then translates
-its Aslt format into LLVM IR compatible with the existing lifter.
-
-Requirements:
-- very recent LLVM (tested with 20.0.0git at https://github.com/llvm/llvm-project/commit/35710ab392b50c815765f03c12409147502dfb86), built with RTTI+EH.
-- ANTLR4 parser framework.
-- [aslp-cpp](https://github.com/UQ-PAC/aslp/tree/partial_eval/aslp-cpp), which should be fetched automatically.
-- [aslp-server](https://github.com/UQ-PAC/aslp), running alongside the backend-tv tool, see below.
+# arm-tv
 
 ## building
 
@@ -97,7 +85,21 @@ between aslp and classic, one can use:
 python3 -c '[print(x) for x in open("/dev/stdin").read().split("\n\n") if "\n" not in x]' < tests.txt
 ```
 
-## structure
+## aslp-bridge
+
+([compare ahead](https://github.com/regehr/alive2/compare/arm-tv...katrinafyi:alive2:aslp))
+
+This is the [Aslp](https://github.com/UQ-PAC/aslp) semantics provider for the arm-tv tool.
+Given an LLVM MCInst, it consults Aslp for partially-evaluated semantics then translates
+its Aslt format into LLVM IR compatible with the existing lifter.
+
+Requirements:
+- very recent LLVM (tested with 20.0.0git at https://github.com/llvm/llvm-project/commit/35710ab392b50c815765f03c12409147502dfb86), built with RTTI+EH.
+- ANTLR4 parser framework.
+- [aslp-cpp](https://github.com/UQ-PAC/aslp/tree/partial_eval/aslp-cpp), which should be fetched automatically.
+- [aslp-server](https://github.com/UQ-PAC/aslp), running alongside the backend-tv tool, see below.
+
+### structure
 
 The Aslp-specific files are placed in this folder. In a roughly bottom-up order,
 - The ANTLR grammar in *Semantics.g4* describes the Aslt textual semantics format. This is processed by ANTLR into a lexer, parser, and stubs for visitors.
@@ -114,7 +116,8 @@ The Aslp-specific files are placed in this folder. In a roughly bottom-up order,
 - The *arm2llvm* class is used from within the aslt\_visitor to manage the basic blocks and create LLVM instructions.
   This is done by implementing an abstract interface, declared in interface.h.
 
-## state
+### state
+
 Currently (2024-02-19), the Aslp-based lifter has fairly good outcomes with the arm-tv test suite (on i5-13600H).
 >  Expected Passes    : 6661 <br/>
 >  Unsupported Tests  : 9<br/>
@@ -152,7 +155,7 @@ Analogously, to test only the non-ASLP lifter:
 ../tests/lit/lit.py ../tests/arm-tv/  --filter '\(classic\)'
 ```
 
-## details
+### details
 
 The Aslp approach, while promising, is complicated to implement due to the differences in abstraction between LLVM MCInst and the ARM opcode
 which Aslp uses.
