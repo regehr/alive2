@@ -1091,6 +1091,14 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::OPCODE##_S:                                                      \
   case RISCV::OPCODE##_D:                                                      \
   case RISCV::OPCODE##_Q
+  CASE_FP_OPCODES(FSQRT) : {
+    assert(isDefaultRoundingMode(CurInst->getOperand(2).getImm()) && "Unsupported rounding mode."); 
+    auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+    auto a = readFromFPRegOperand(1, getFPType(operandSize));
+    auto res = createSQRT(a);
+    updateOutputReg(res);
+    break;
+  }
 
 #define HANDLE_FP_BINARY_OP(OPCODE, INST, CHECKRM)                             \
   CASE_FP_OPCODES(OPCODE) : {                                                  \
