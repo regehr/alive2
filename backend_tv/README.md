@@ -185,3 +185,71 @@ Floating-point operations are also limited, specifically by ignoring the FPSR an
 
 Edit 2024-12-17: During this year, improvements have been made to both ASLp (by adding specialised vector operations and floating-point intrinsics)
 and arm-tv (by memory model improvements) which make address these shortcomings.
+
+## emulating RISC-V functions
+
+To check whether Alive2's interpretation of a function matches the actual result of the function on hardware, we can emulate. These intructions are for RISC-V, but should work with most targets with minor tweaks.
+
+### Prerequisites
+  - **[qemu-riscv](https://github.com/qemu/qemu)**, for emulating the test.
+  - recent build of **clang** (tested with 22.0.0git).
+  - **riscv64-linux-gnu-gcc** toolchain.
+
+### Generate objects
+
+For example, let's say we have a file `test.ll`:
+```llvm
+define float @myTest() {
+  ret float 1.0
+}
+```
+First, generate the assembly with something like:
+```bash
+$LLVM_DIR/bin/llc -mattr=+c,+m,+b,+f,+d,+q,+Zfh -mtriple=riscv64 test.ll
+```
+Then the object with the following (or similar, the location of sysroot may vary):
+```bash
+$LLVM_DIR/bin/clang -c -target riscv64-linux-gnu \
+                    --sysroot=/usr/riscv64-linux-gnu \
+                    test.s -o test.o
+```
+Now we need a driver to extract the function output from the emulator. Here is an example `driver.c` that works with `test.ll`:
+```c
+#include <stdio.h>
+
+extern float myTest(void);
+
+int main(void) {
+    float result = myTest();
+    printf("%f\n", result);
+    return 0;
+}
+```
+Similarly, the driver object can be generated wih:
+```bash
+$LLVM_DIR/bin/clang -c -target riscv64-linux-gnu \
+                    --sysroot=/usr/riscv64-linux-gnu \
+                    driver.c -o driver.o
+```
+### Link
+
+Now link `test.o` and `driver.o` using:
+```bash
+$LLVM_DIR/bin/clang -target riscv64-linux-gnu \
+                    --sysroot=/usr/riscv64-linux-gnu \
+                    -B /usr/lib/gcc/riscv64-linux-gnu/$(riscv64-linux-gnu-gcc -dumpversion) \
+                    -L /usr/lib/gcc/riscv64-linux-gnu/$(riscv64-linux-gnu-gcc -dumpversion) \
+                    -static driver.o test.o -o test
+```
+Again, depending on how the toolchain is installed, the paths may vary.
+
+### Run
+
+Now we can simply use qemu:
+```bash
+qemu-riscv64 test
+```
+And compare the output to Alive's with `alive-exec`:
+```bash
+$ALIVE2/build/alive-exec test.ll
+```
