@@ -922,9 +922,15 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
-    /*
-     * Floating point instructions (F, D, Q, and Zfh extensions)
-     */
+  /*
+   * Floating point instructions (F, D, Q, and Zfh extensions)
+   */
+
+#define CASE_FP_OPCODES(OPCODE)                                                \
+  case RISCV::OPCODE##_H:                                                      \
+  case RISCV::OPCODE##_S:                                                      \
+  case RISCV::OPCODE##_D:                                                      \
+  case RISCV::OPCODE##_Q
 
   case RISCV::FCVT_H_W:
   case RISCV::FCVT_S_W:
@@ -980,61 +986,49 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
-  case RISCV::FCVT_W_H:
-  case RISCV::FCVT_W_S:
-  case RISCV::FCVT_W_D:
-  case RISCV::FCVT_W_Q: {
-    auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
-    auto operandTy = getFPType(operandSize);
-    // TODO: Make sure semantics math up for NaN inputs
-    auto f = readFromFPRegOperand(1, operandTy);
-    auto f_round = liftRoundingToInt(f, CurInst->getOperand(2).getImm());
-    auto a = createFPToSI_sat(f_round, i32ty);
-    updateOutputReg(a, true);
-    break;
-  }
+    CASE_FP_OPCODES(FCVT_W) : {
+      auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
+      auto operandTy = getFPType(operandSize);
+      // TODO: Make sure semantics math up for NaN inputs
+      auto f = readFromFPRegOperand(1, operandTy);
+      auto f_round = liftRoundingToInt(f, CurInst->getOperand(2).getImm());
+      auto a = createFPToSI_sat(f_round, i32ty);
+      updateOutputReg(a, true);
+      break;
+    }
 
-  case RISCV::FCVT_WU_H:
-  case RISCV::FCVT_WU_S:
-  case RISCV::FCVT_WU_D:
-  case RISCV::FCVT_WU_Q: {
-    auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
-    auto operandTy = getFPType(operandSize);
-    // TODO: Make sure semantics math up for NaN inputs
-    auto f = readFromFPRegOperand(1, operandTy);
-    auto f_round = liftRoundingToInt(f, CurInst->getOperand(2).getImm());
-    auto a = createFPToUI_sat(f_round, i32ty);
-    updateOutputReg(a, true);
-    break;
-  }
+    CASE_FP_OPCODES(FCVT_WU) : {
+      auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
+      auto operandTy = getFPType(operandSize);
+      // TODO: Make sure semantics math up for NaN inputs
+      auto f = readFromFPRegOperand(1, operandTy);
+      auto f_round = liftRoundingToInt(f, CurInst->getOperand(2).getImm());
+      auto a = createFPToUI_sat(f_round, i32ty);
+      updateOutputReg(a, true);
+      break;
+    }
 
-  case RISCV::FCVT_L_H:
-  case RISCV::FCVT_L_S:
-  case RISCV::FCVT_L_D:
-  case RISCV::FCVT_L_Q: {
-    auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
-    auto operandTy = getFPType(operandSize);
-    // TODO: Make sure semantics math up for NaN inputs
-    auto f = readFromFPRegOperand(1, operandTy);
-    auto f_round = liftRoundingToInt(f, CurInst->getOperand(2).getImm());
-    auto a = createFPToSI_sat(f_round, i64ty);
-    updateOutputReg(a);
-    break;
-  }
+    CASE_FP_OPCODES(FCVT_L) : {
+      auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
+      auto operandTy = getFPType(operandSize);
+      // TODO: Make sure semantics math up for NaN inputs
+      auto f = readFromFPRegOperand(1, operandTy);
+      auto f_round = liftRoundingToInt(f, CurInst->getOperand(2).getImm());
+      auto a = createFPToSI_sat(f_round, i64ty);
+      updateOutputReg(a);
+      break;
+    }
 
-  case RISCV::FCVT_LU_H:
-  case RISCV::FCVT_LU_S:
-  case RISCV::FCVT_LU_D:
-  case RISCV::FCVT_LU_Q: {
-    auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
-    auto operandTy = getFPType(operandSize);
-    // TODO: Make sure semantics math up for NaN inputs
-    auto f = readFromFPRegOperand(1, operandTy);
-    auto f_round = liftRoundingToInt(f, CurInst->getOperand(2).getImm());
-    auto a = createFPToUI_sat(f_round, i64ty);
-    updateOutputReg(a);
-    break;
-  }
+    CASE_FP_OPCODES(FCVT_LU) : {
+      auto operandSize = getRegSize(CurInst->getOperand(1).getReg());
+      auto operandTy = getFPType(operandSize);
+      // TODO: Make sure semantics math up for NaN inputs
+      auto f = readFromFPRegOperand(1, operandTy);
+      auto f_round = liftRoundingToInt(f, CurInst->getOperand(2).getImm());
+      auto a = createFPToUI_sat(f_round, i64ty);
+      updateOutputReg(a);
+      break;
+    }
 
   case RISCV::FCVT_H_S:
   case RISCV::FCVT_H_D:
@@ -1086,11 +1080,15 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
-#define CASE_FP_OPCODES(OPCODE)                                                \
-  case RISCV::OPCODE##_H:                                                      \
-  case RISCV::OPCODE##_S:                                                      \
-  case RISCV::OPCODE##_D:                                                      \
-  case RISCV::OPCODE##_Q
+    CASE_FP_OPCODES(FSQRT) : {
+      assert(isDefaultRoundingMode(CurInst->getOperand(2).getImm()) &&
+             "Unsupported rounding mode.");
+      auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+      auto a = readFromFPRegOperand(1, getFPType(operandSize));
+      auto res = createSQRT(a);
+      updateOutputReg(res);
+      break;
+    }
 
 #define HANDLE_FP_BINARY_OP(OPCODE, INST, CHECKRM)                             \
   CASE_FP_OPCODES(OPCODE) : {                                                  \
