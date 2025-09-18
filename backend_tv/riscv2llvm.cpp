@@ -125,7 +125,17 @@ void riscv2llvm::updateReg(Value *V, uint64_t Reg) {
 }
 
 void riscv2llvm::updateFPReg(Value *V, uint64_t Reg) {
-  createStore(V, lookupFPReg(Reg));
+  auto W = getBitWidth(V);
+  if (W == 128)
+    createStore(V, lookupFPReg(Reg));
+
+  // NaN-box smaller FP types
+  auto bits = createBitCast(V, getIntTy(W));
+  auto extended = createZExt(bits, getIntTy(128));
+  auto maskAP = llvm::APInt::getHighBitsSet(128, 128 - W);
+  auto mask = llvm::ConstantInt::get(Ctx, maskAP);
+  auto nanBoxed = createOr(mask, extended);
+  createStore(nanBoxed, lookupFPReg(Reg));
 }
 
 unsigned riscv2llvm::getRegSize(unsigned Reg) {
@@ -148,17 +158,7 @@ void riscv2llvm::updateOutputReg(Value *V, bool SExt) {
   auto W = getBitWidth(V);
   auto outputReg = CurInst->getOperand(0).getReg();
   if (V->getType()->isFloatingPointTy()) {
-    if (W == 128) {
-      updateFPReg(V, outputReg);
-    } else {
-      // NaN-box smaller FP types
-      auto bits = createBitCast(V, getIntTy(W));
-      auto extended = createZExt(bits, getIntTy(128));
-      auto maskAP = llvm::APInt::getHighBitsSet(128, 128 - W);
-      auto mask = llvm::ConstantInt::get(Ctx, maskAP);
-      auto nanBoxed = createOr(mask, extended);
-      updateFPReg(nanBoxed, outputReg);
-    }
+    updateFPReg(V, outputReg);
   } else {
     if (SExt) {
       if (W < 64)
@@ -194,6 +194,7 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy) {
   }
   unsigned vecArgNum = 0;
   unsigned scalarArgNum = 0;
+  unsigned floatArgNum = 0;
   // unsigned stackSlot = 0;
   vector<Value *> args;
   for (auto arg = fTy->param_begin(); arg != fTy->param_end(); ++arg) {
@@ -210,8 +211,8 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy) {
       exit(-1);
     }
     Value *param{nullptr};
-    if (argTy->isFloatingPointTy() || argTy->isVectorTy()) {
-      assert(false);
+    if (argTy->isVectorTy()) {
+      assert(false && "Error: calling function with vector args is not supported yet\n\n");
 #if 0
       if (vecArgNum < 8) {
         param = readFromReg(AArch64::Q0 + vecArgNum, argTy);
@@ -253,6 +254,13 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy) {
         assert(argTy->getIntegerBitWidth() <= 64);
         if (argTy->getIntegerBitWidth() < 64)
           param = createTrunc(param, getIntTy(argTy->getIntegerBitWidth()));
+      }
+    } else if (argTy->isFloatingPointTy()) {
+      if (floatArgNum < 8) {
+        param = readFromFPReg(RISCV::F10_Q + floatArgNum, argTy);
+        ++floatArgNum;
+      } else {
+        assert(false);
       }
     } else {
       assert(false && "unknown arg type\n");
@@ -329,7 +337,9 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   auto retTy = FC.getFunctionType()->getReturnType();
   if (retTy->isIntegerTy() || retTy->isPointerTy()) {
     updateReg(RV, RISCV::X10);
-  } else if (retTy->isFloatingPointTy() || retTy->isVectorTy()) {
+  } else if (retTy->isFloatingPointTy()) {
+    updateFPReg(RV, RISCV::F10_Q);
+  } else if (retTy->isVectorTy()) {
     assert(false);
     // updateReg(RV, AArch64::Q0);
   } else {
