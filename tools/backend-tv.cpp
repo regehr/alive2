@@ -191,6 +191,14 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
     exit(-1);
   }
 
+  for (auto &global : srcModule->globals()) {
+    *out << global.getName().str();
+    if (global.isThreadLocal()) {
+      *out << "\nERROR: thread_local not supported\n\n";
+      exit(-1);
+    }
+  }
+  
   {
     // let's not even bother if Alive2 can't process our function
 
