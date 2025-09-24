@@ -372,6 +372,7 @@ version )EOF";
   // general
   config::tgt_is_asm = true;
 
+#if 0
   // undef is going away, we don't want to see bugs about it
   config::disable_undef_input = true;
 
@@ -379,6 +380,7 @@ version )EOF";
   // separately, this flag means that memory passed to us will be
   // frozen
   config::disable_poison_input = true;
+#endif
 
   // FIXME: we should avoid hard-coding these
   if (opt_backend == "aarch64") {
