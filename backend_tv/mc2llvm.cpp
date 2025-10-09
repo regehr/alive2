@@ -707,6 +707,7 @@ pair<Function *, Function *> mc2llvm::run() {
       FunctionType::get(PointerType::get(Ctx, 0), {i64, i64}, false);
   myAlloc = Function::Create(allocTy, GlobalValue::ExternalLinkage, 0,
                              "myalloc", LiftedModule);
+  myAllocVH = WeakTrackingVH(myAlloc);
   myAlloc->addRetAttr(Attribute::NonNull);
   AttrBuilder B1(Ctx);
   B1.addAllocKindAttr(AllocFnKind::Alloc);
@@ -1171,6 +1172,11 @@ void mc2llvm::fixupOptimizedTgt(Function *tgt) {
    * want to see the custom allocator. so, here, before passing target
    * to Alive, we replace it with a regular old alloc
    */
+  if (!myAllocVH) {
+    return; // myalloc was optimized out
+  }
+
+  myAlloc = dyn_cast<Function>(myAllocVH);
   Instruction *myAllocCall{nullptr};
   for (auto &bb : *tgt) {
     for (auto &i : bb) {
