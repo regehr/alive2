@@ -7,6 +7,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
@@ -68,6 +69,7 @@ public:
   bool has_ret_attr = false;
   std::ostream *out;
   llvm::Function *myAlloc{nullptr};
+  llvm::WeakTrackingVH myAllocVH{nullptr};
   llvm::Constant *stackSize{nullptr};
 
   const uint16_t NO_SPECIFIER = 0xfff;
