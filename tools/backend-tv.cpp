@@ -87,7 +87,7 @@ llvm::cl::opt<bool> opt_internalize(
     llvm::cl::desc(
         "Internalize the module before performing TV, to allow removing more "
         "clutter. WARNING: this sometimes changes the generated code, which "
-        "can invalidate TV results, generally do not use (default=false"),
+        "can invalidate TV results, generally do not use (default=false)"),
     llvm::cl::cat(alive_cmdargs), llvm::cl::init(false));
 
 // FIXME support opt_asm_only and opt_asm_input
@@ -121,7 +121,7 @@ llvm::cl::opt<bool> test_replace_ptrtoint(
 
 llvm::cl::opt<string> opt_asm_input(
     "asm-input",
-    llvm::cl::desc("Use the provied file as lifted assembly, instead of "
+    llvm::cl::desc("Use the provided file as lifted assembly, instead of "
                    "lifting the LLVM IR. This is only for testing. "
                    "(default=no asm input)"),
     llvm::cl::cat(alive_cmdargs));
