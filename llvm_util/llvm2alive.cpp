@@ -908,6 +908,24 @@ public:
       ret = make_unique<UnaryReductionOp>(*ty, value_name(i), *val, op);
       break;
     }
+    case llvm::Intrinsic::vector_reduce_fmin:
+    case llvm::Intrinsic::vector_reduce_fmax:
+    case llvm::Intrinsic::vector_reduce_fminimum:
+    case llvm::Intrinsic::vector_reduce_fmaximum: {
+    PARSE_UNOP();
+    FpUnaryReductionOp::Op op;
+      switch (i.getIntrinsicID()) {
+      case llvm::Intrinsic::vector_reduce_fmin:     op = FpUnaryReductionOp::FMin; break;
+      case llvm::Intrinsic::vector_reduce_fmax:     op = FpUnaryReductionOp::FMax; break;
+      case llvm::Intrinsic::vector_reduce_fminimum: op = FpUnaryReductionOp::FMinimum; break;
+      case llvm::Intrinsic::vector_reduce_fmaximum: op = FpUnaryReductionOp::FMaximum; break;
+      default: UNREACHABLE();
+      }
+      ret = make_unique<FpUnaryReductionOp>(*ty, value_name(i), *val, op,
+                                            parse_fmath(i), parse_rounding(i),
+                                            parse_exceptions(i));
+      break;
+    }
     case llvm::Intrinsic::fshl:
     case llvm::Intrinsic::fshr:
     case llvm::Intrinsic::smul_fix:
