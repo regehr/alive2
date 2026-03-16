@@ -205,6 +205,11 @@ and "tgt5" will unused.
     return -1;
   }
 
+  if (M1.get()->getDataLayoutStr() != M2.get()->getDataLayoutStr()) {
+    *out << "Modules have different data layouts\n";
+    return -1;
+  }
+
   if (llvm::verifyModule(*M2.get(), &llvm::errs())) {
     *out << "Target file is broken\n";
     return -1;
