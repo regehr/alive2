@@ -1660,6 +1660,13 @@ static void remove_unreachable_bbs(Function &f) {
     if (!reachable.count(bb)) {
       unreachable.emplace_back(bb->getName());
       for (auto &i : bb->instrs()) {
+        if (!i.isVoid()) {
+          auto poison
+            = make_unique<PoisonValue>(const_cast<Type&>(i.getType()));
+          auto *poison_ptr = poison.get();
+          f.addConstant(std::move(poison));
+          f.rauw(i, *poison_ptr);
+        }
         removed_instrs.emplace_back(&i);
       }
       f.removeBB(*bb);

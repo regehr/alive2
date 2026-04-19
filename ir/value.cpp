@@ -159,6 +159,8 @@ void AggregateValue::rauw(const Value &what, Value &with) {
   for (auto &val : vals) {
     if (val == &what)
       val = &with;
+    else if (auto *agg = dynamic_cast<AggregateValue*>(val))
+      agg->rauw(what, with);
   }
   setName(agg_str(getType(), vals));
 }

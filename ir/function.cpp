@@ -174,6 +174,12 @@ expr Function::getTypeConstraints() const {
 void Function::rauw(const Value &what, Value &with) {
   for (auto bb : getBBs())
     bb->rauw(what, with);
+  for (auto &agg : aggregates)
+    agg->rauw(what, with);
+  for (auto &c : constants) {
+    if (auto *agg = dynamic_cast<AggregateValue*>(c.get()))
+      agg->rauw(what, with);
+  }
 }
 
 void Function::fixupTypes(const Model &m) {
