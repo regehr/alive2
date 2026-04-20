@@ -28,7 +28,7 @@ else
 fi
 
 if ! [[ -d varnish ]]; then
-  nix build 'nixpkgs#varnish' -o varnish
+    NIXPKGS_ALLOW_INSECURE=1 nix build --impure 'nixpkgs/nixos-25.11#varnish' -o varnish
 fi
 
 cd ..
