@@ -88,7 +88,7 @@ void riscv2llvm::lift(MCInst &I) {
   auto opcode = I.getOpcode();
   // StringRef instStr = InstPrinter->getOpcodeName(opcode);
   auto newbb = BasicBlock::Create(Ctx, "lifter_" + nextName(), liftedFn);
-  if (!LLVMBB->getTerminator())
+  if (!LLVMBB->hasTerminator())
     createBranch(newbb);
   LLVMBB = newbb;
 

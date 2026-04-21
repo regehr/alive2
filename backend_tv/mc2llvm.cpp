@@ -743,7 +743,7 @@ pair<Function *, Function *> mc2llvm::run() {
     }
 
     // machine code falls through but LLVM isn't allowed to
-    if (!LLVMBB->getTerminator()) {
+    if (!LLVMBB->hasTerminator()) {
       auto succs = MCBB->getSuccs().size();
       if (succs == 0) {
         // this should only happen when we have a function with a
