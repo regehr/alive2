@@ -168,7 +168,7 @@ llvm::Value* safe_sdiv(aslt_visitor& vis, llvm::Value* numerator, llvm::Value* d
   auto overflow_stmt = vis.new_stmt("sdiv_is_overflow");
   auto continuation = vis.new_stmt("sdiv_continuation");
 
-  llvm::BranchInst::Create(overflow_stmt.first, safe_stmt.first, any_overflowing, oldbb);
+  llvm::CondBrInst::Create(any_overflowing, overflow_stmt.first, safe_stmt.first, oldbb);
 
   // if overflowing, replace numerator with int_min and denominator with 1 to force a int_min result.
   iface.set_bb(overflow_stmt.second);
@@ -1186,15 +1186,15 @@ std::any aslt_visitor::visitExprSlices(SemanticsParser::ExprSlicesContext *ctx) 
 
     // a slice is done by right shifting by the "low" value,
     // then, truncating to the "width" value
-    auto lo = llvm::ConstantInt::get(base->getType(), sl.lo);
     auto wdty = llvm::Type::getIntNTy(context, sl.wd);
-    if (lo->isZeroValue()) {
+    if (sl.lo == 0) {
       // Just trunc
       auto trunced = iface.createTrunc(base, wdty);
       return static_cast<expr_t>(trunced);
     } else {
       // raw shift ok, since slice must be within bounds.
-      auto shifted = !lo->isZeroValue() ? iface.createRawLShr(base, lo) : base;
+      auto lo = llvm::ConstantInt::get(base->getType(), sl.lo);
+      auto shifted = iface.createRawLShr(base, lo);
       auto trunced = iface.createTrunc(shifted, wdty);
       return static_cast<expr_t>(trunced);
     }

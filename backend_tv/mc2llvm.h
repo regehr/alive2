@@ -328,7 +328,7 @@ public:
   }
 
   void createBranch(llvm::Value *c, llvm::BasicBlock *t, llvm::BasicBlock *f) {
-    llvm::BranchInst::Create(t, f, c, LLVMBB);
+    llvm::CondBrInst::Create(c, t, f, LLVMBB);
   }
 
   void createBranch(llvm::Value *c, stmt_t t, stmt_t f) override {
@@ -336,7 +336,7 @@ public:
   }
 
   void createBranch(llvm::BasicBlock *dst) {
-    llvm::BranchInst::Create(dst, LLVMBB);
+    llvm::UncondBrInst::Create(dst, LLVMBB);
   }
 
   void createBranch(stmt_t dst) override {
@@ -470,11 +470,11 @@ public:
   }
 
   // first argument is an i16
-  llvm::CallInst *createConvertFromFP16(llvm::Value *v,
-                                        llvm::Type *ty) override {
-    auto cvt_decl = llvm::Intrinsic::getOrInsertDeclaration(
-        LiftedModule, llvm::Intrinsic::convert_from_fp16, ty);
-    return llvm::CallInst::Create(cvt_decl, {v}, nextName(), LLVMBB);
+  llvm::Value *createConvertFromFP16(llvm::Value *v,
+                                     llvm::Type *ty) override {
+    auto half_ty = llvm::Type::getHalfTy(LiftedModule->getContext());
+    auto bitcast = new llvm::BitCastInst(v, half_ty, nextName(), LLVMBB);
+    return new llvm::FPExtInst(bitcast, ty, nextName(), LLVMBB);
   }
 
   llvm::CastInst *createConvertFPToSI(llvm::Value *v, llvm::Type *ty) override {

@@ -205,7 +205,7 @@ public:
   }
 
   stmt_t link(stmt_t head, stmt_t tail) {
-    llvm::BranchInst::Create(tail.first, head.second);
+    llvm::UncondBrInst::Create(tail.first, head.second);
     auto bb = tail.second;
     assert(bb);
     iface.set_bb(bb);
