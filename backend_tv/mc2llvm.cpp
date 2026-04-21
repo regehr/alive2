@@ -82,7 +82,7 @@ Constant *mc2llvm::lazyAddGlobal(string newGlobal) {
       auto &data = g.data[i];
       if (holds_alternative<char>(data)) {
         tys.push_back(getIntTy(8));
-        vals.push_back(ConstantInt::get(getIntTy(8), get<char>(data)));
+        vals.push_back(ConstantInt::get(getIntTy(8), (uint8_t)get<char>(data)));
       } else if (holds_alternative<OffsetSym>(data)) {
         auto s = get<OffsetSym>(data);
         *out << "  it's a symbol named " << s.sym << "\n";
