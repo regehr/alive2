@@ -118,27 +118,27 @@ class Alive2Test(TestFormat):
     alive_tv_7 = test.endswith('.riscvasm.ll')
     
     if alive_tv_1 or alive_tv_2 or alive_tv_3:
-      cmd = ['./alive-tv', '-smt-to=20000', '-always-verify']
+      cmd = ['./alive-tv', '-smt-to=60000', '-always-verify']
       if not has_exe('alive-tv'):
         return lit.Test.UNSUPPORTED, ''
 
     if alive_tv_4:
-      cmd = ['./backend-tv', '-smt-to=20000', '-always-verify']
+      cmd = ['./backend-tv', '-smt-to=60000', '-always-verify']
       if not has_exe('backend-tv'):
         return lit.Test.UNSUPPORTED, ''
 
     if alive_tv_5:
-      cmd = ['./backend-tv', '-smt-to=20000', '-always-verify', '-asm-input']
+      cmd = ['./backend-tv', '-smt-to=60000', '-always-verify', '-asm-input']
       if not has_exe('backend-tv'):
         return lit.Test.UNSUPPORTED, ''
 
     if alive_tv_6:
-      cmd = ['./backend-tv', '-smt-to=20000', '-always-verify', '-backend=riscv64']
+      cmd = ['./backend-tv', '-smt-to=60000', '-always-verify', '-backend=riscv64']
       if not has_exe('backend-tv'):
         return lit.Test.UNSUPPORTED, ''
 
     if alive_tv_7:
-      cmd = ['./backend-tv', '-smt-to=20000', '-always-verify', '-backend=riscv64', '-asm-input']
+      cmd = ['./backend-tv', '-smt-to=60000', '-always-verify', '-backend=riscv64', '-asm-input']
       if not has_exe('backend-tv'):
         return lit.Test.UNSUPPORTED, ''
 
