@@ -301,9 +301,12 @@ State::VarArgsData::mkIf(const expr &cond, VarArgsData &&then,
 State::State(const Function &f, bool source)
   : f(f), source(source), memory(*this),
     fp_rounding_mode(expr::mkVar("fp_rounding_mode", 3)),
-    fp_denormal_mode(expr::mkVar("fp_denormal_mode", 2)),
+    fp_denormal_input_mode(expr::mkVar("fp_denormal_input_mode", 2)),
+    fp_denormal_output_mode(expr::mkVar("fp_denormal_output_mode", 2)),
     return_val(DisjointExpr(f.getType().getDummyValue(false))) {
   predecessor_data.reserve(f.getNumBBs());
+  addAxiom(fp_denormal_input_mode != FPDenormalAttrs::Dynamic);
+  addAxiom(fp_denormal_output_mode != FPDenormalAttrs::Dynamic);
 }
 
 void State::resetGlobals() {

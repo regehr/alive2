@@ -696,35 +696,70 @@ static expr any_fp_zero(State &s, expr v) {
   return expr::mkIf(var && is_zero, v.fneg(), v);
 }
 
+static expr zero_subnormal(FPDenormalAttrs::Type attr, const expr &v) {
+  switch (attr) {
+  case FPDenormalAttrs::IEEE:
+    return v;
+  case FPDenormalAttrs::PositiveZero:
+    return expr::mkNumber("0", v);
+  case FPDenormalAttrs::PreserveSign:
+    return expr::mkIf(v.isFPNegative(),
+                      expr::mkNumber("-0", v),
+                      expr::mkNumber("0", v));
+  case FPDenormalAttrs::Dynamic:
+    UNREACHABLE();
+  }
+}
+
+static expr zero_subnormal(const expr &mode, const expr &v) {
+  return expr::mkIf(mode == FPDenormalAttrs::PreserveSign &&
+                      v.isFPNegative(),
+                    expr::mkNumber("-0", v),
+                    expr::mkNumber("0", v));
+}
+
 static expr handle_subnormal(State &s, FPDenormalAttrs::Type attr, expr &&v) {
-  auto nondet = [&]() { return s.getFreshNondetVar("subnormal", true); };
-  expr subnormal = v.isFPSubNormal();
+  auto maybe_flush_subnormal = [&](auto mode) {
+    return expr::mkIf(v.isFPSubNormal() &&
+                        s.getFreshNondetVar("subnormal", true),
+                      zero_subnormal(mode, v),
+                      v);
+  };
 
   switch (attr) {
   case FPDenormalAttrs::IEEE:
-    break;
+    return std::move(v);
   case FPDenormalAttrs::PositiveZero:
-    v = expr::mkIf(subnormal && nondet(), expr::mkNumber("0", v), v);
-    break;
+    return maybe_flush_subnormal(FPDenormalAttrs::PositiveZero);
   case FPDenormalAttrs::PreserveSign:
-    v = expr::mkIf(subnormal && nondet(),
-                   expr::mkIf(v.isFPNegative(),
-                              expr::mkNumber("-0", v),
-                              expr::mkNumber("0", v)),
-                   v);
-    break;
+    return maybe_flush_subnormal(FPDenormalAttrs::PreserveSign);
   case FPDenormalAttrs::Dynamic: {
-    auto &mode = s.getFpDenormalMode();
-    v = expr::mkIf(mode == FPDenormalAttrs::IEEE || nondet() || !subnormal,
-                   v,
-                   expr::mkIf(mode == FPDenormalAttrs::PreserveSign &&
-                                v.isFPNegative(),
-                              expr::mkNumber("-0", v),
-                              expr::mkNumber("0", v)));
-    break;
+    auto &mode = s.getFpDenormalOutputMode();
+    return expr::mkIf(mode == FPDenormalAttrs::IEEE,
+                      v,
+                      maybe_flush_subnormal(mode));
   }
   }
-  return std::move(v);
+  UNREACHABLE();
+}
+
+static expr handle_subnormal_input(State &s, FPDenormalAttrs::Type attr,
+                                   expr &&v) {
+  switch (attr) {
+  case FPDenormalAttrs::IEEE:
+    return std::move(v);
+  case FPDenormalAttrs::PositiveZero:
+    return expr::mkIf(v.isFPSubNormal(), zero_subnormal(attr, v), v);
+  case FPDenormalAttrs::PreserveSign:
+    return expr::mkIf(v.isFPSubNormal(), zero_subnormal(attr, v), v);
+  case FPDenormalAttrs::Dynamic: {
+    auto &mode = s.getFpDenormalInputMode();
+    return expr::mkIf(v.isFPSubNormal() && mode != FPDenormalAttrs::IEEE,
+                      zero_subnormal(mode, v),
+                      v);
+  }
+  }
+  UNREACHABLE();
 }
 
 template <typename T>
@@ -781,9 +816,9 @@ static StateValue fm_poison(State &s, expr a, const expr &ap, expr b,
 
   if (!bitwise) {
     auto fpdenormal = s.getFn().getFnAttrs().getFPDenormal(from_ty).input;
-    fp_a = handle_subnormal(s, fpdenormal, std::move(fp_a));
-    fp_b = handle_subnormal(s, fpdenormal, std::move(fp_b));
-    fp_c = handle_subnormal(s, fpdenormal, std::move(fp_c));
+    fp_a = handle_subnormal_input(s, fpdenormal, std::move(fp_a));
+    fp_b = handle_subnormal_input(s, fpdenormal, std::move(fp_b));
+    fp_c = handle_subnormal_input(s, fpdenormal, std::move(fp_c));
   }
 
   function<expr(const expr&)> fn_rm
