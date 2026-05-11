@@ -95,7 +95,7 @@ public:
         MCOptions{llvm::mc::InitMCTargetOptionsFromFlags()},
         MAI{Targ->createMCAsmInfo(*MRI, DefaultTT, MCOptions)},
         MCCtx{std::make_unique<llvm::MCContext>(
-            DefaultTT, MAI.get(), MRI.get(), STI.get(), &SrcMgr, &MCOptions)},
+            DefaultTT, *MAI, MRI.get(), STI.get(), &SrcMgr)},
         MCE{Targ->createMCCodeEmitter(*MCII.get(), *MCCtx.get())},
         MB{std::move(MB)}, lineMap{lineMap}, out{out} {}
 

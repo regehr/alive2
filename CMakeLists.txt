@@ -208,6 +208,7 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
 
   set(BACKEND_TV_SRCS
     "backend_tv/lifter.cpp"
+    "backend_tv/inline_asm_lift.cpp"
     "backend_tv/mc2llvm.cpp"
     "backend_tv/run_backend.cpp"
     "backend_tv/streamerwrapper.cpp"
@@ -332,6 +333,19 @@ add_custom_target("check"
 
 if (BUILD_TV)
   add_dependencies("check" "alive-tv" "backend-tv" "quick-fuzz" "tv")
+
+  # Run only the inline-asm lifting tests. Standalone target -- doesn't need
+  # aslp-server because every inline-asm test uses ; SKIP-IDENTITY and the
+  # main verification path explicitly sets ASLP=0.
+  add_custom_target("check-inline-asm"
+                    COMMAND "python3"
+                            "${PROJECT_SOURCE_DIR}/tests/lit/lit.py"
+                            "-s"
+                            "${PROJECT_SOURCE_DIR}/tests/inline-asm"
+                            "-j${TEST_NTHREADS}"
+                    DEPENDS "alive-tv"
+                    USES_TERMINAL
+                   )
 endif()
 
 # EXTERNAL_PROJECTS option that works analogous to LLVM's LLVM_EXTERNAL_PROJECTS option
