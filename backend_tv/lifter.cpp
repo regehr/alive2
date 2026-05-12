@@ -71,6 +71,60 @@ void addDebugInfo(Function *srcFn,
   verifyModule(M);
 }
 
+static void initAArch64Backend() {
+  LLVMInitializeAArch64TargetInfo();
+  LLVMInitializeAArch64Target();
+  LLVMInitializeAArch64TargetMC();
+  LLVMInitializeAArch64AsmParser();
+  LLVMInitializeAArch64AsmPrinter();
+}
+
+static void initRISCVBackend() {
+  LLVMInitializeRISCVTargetInfo();
+  LLVMInitializeRISCVTarget();
+  LLVMInitializeRISCVTargetMC();
+  LLVMInitializeRISCVAsmParser();
+  LLVMInitializeRISCVAsmPrinter();
+}
+
+TargetCtx initTargetFromTriple(const Triple &TT, const char *DL,
+                               std::ostream *out) {
+  TargetCtx ctx{};
+  ctx.TT = TT;
+  ctx.CPU = "generic";
+
+  switch (TT.getArch()) {
+  case Triple::aarch64:
+  case Triple::aarch64_be:
+    ctx.DL = DL ? DL
+                : "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32";
+    ctx.Features = "";
+    initAArch64Backend();
+    break;
+  case Triple::riscv64:
+    ctx.DL = DL ? DL : "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128";
+    ctx.Features = "+c,+m,+b,+f,+d,+q,+zfh";
+    initRISCVBackend();
+    break;
+  default:
+    if (out)
+      *out << "ERROR: unsupported target triple arch for inline asm lifting: "
+           << TT.getArchName().str() << "\n";
+    exit(-1);
+  }
+
+  std::string Error;
+  ctx.Targ = TargetRegistry::lookupTarget(ctx.TT, Error);
+  if (!ctx.Targ) {
+    if (out) {
+      *out << "Can't lookup target\n";
+      *out << Error;
+    }
+    exit(-1);
+  }
+  return ctx;
+}
+
 pair<Function *, Function *>
 liftFunc(Function *srcFn, unique_ptr<MemoryBuffer> MB,
          std::unordered_map<unsigned, llvm::Instruction *> &lineMap,

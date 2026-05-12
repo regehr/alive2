@@ -660,7 +660,7 @@ pair<Function *, Function *> mc2llvm::run() {
   assert(Parser);
 
   unique_ptr<MCTargetAsmParser> TAP(
-      Targ->createMCAsmParser(*STI.get(), *Parser, *MCII.get(), MCOptions));
+      Targ->createMCAsmParser(*STI.get(), *Parser, *MCII.get()));
   assert(TAP);
   Parser->setTargetParser(*TAP);
 

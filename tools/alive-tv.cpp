@@ -1,6 +1,7 @@
 // Copyright (c) 2018-present The Alive2 Authors.
 // Distributed under the MIT license that can be found in the LICENSE file.
 
+#include "backend_tv/inline_asm_lift.h"
 #include "cache/cache.h"
 #include "llvm_util/compare.h"
 #include "llvm_util/llvm2alive.h"
@@ -175,6 +176,10 @@ and "tgt5" will unused.
       auto TGT = findFunction(*M1, DstFName);
       if (SRC && TGT) {
         ++Cnt;
+        if (!lifter::tryLiftInlineAsm(*SRC, out))
+          goto end;
+        if (!lifter::tryLiftInlineAsm(*TGT, out))
+          goto end;
         if (!verifier.compareFunctions(*SRC, *TGT))
           if (opt_error_fatal)
             goto end;
@@ -227,6 +232,10 @@ and "tgt5" will unused.
         M2_anon_count++;
       if ((F1.getName().empty() && (M1_anon_count == M2_anon_count)) ||
           (F1.getName() == F2.getName())) {
+        if (!lifter::tryLiftInlineAsm(F1, out))
+          goto end;
+        if (!lifter::tryLiftInlineAsm(F2, out))
+          goto end;
         if (!verifier.compareFunctions(F1, F2))
           if (opt_error_fatal)
             goto end;

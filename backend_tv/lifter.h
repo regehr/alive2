@@ -6,6 +6,7 @@
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/TargetParser/Triple.h"
 
 namespace llvm {
 class Constant;
@@ -14,6 +15,19 @@ class VectorType;
 } // namespace llvm
 
 namespace lifter {
+
+struct TargetCtx {
+  llvm::Triple TT;
+  const char *DL;
+  const char *CPU;
+  const char *Features;
+  const llvm::Target *Targ;
+};
+
+// Init target backend (aarch64/riscv64) from `TT`. `DL` may be nullptr to use
+// the per-arch default datalayout. Calls exit(-1) on unsupported arch.
+TargetCtx initTargetFromTriple(const llvm::Triple &TT, const char *DL,
+                               std::ostream *out);
 
 /*
  * add debug into to an IR file that will help the lifter figure out
