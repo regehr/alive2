@@ -1,0 +1,39 @@
+Name: clmul constant1
+%r = clmul i4 1, i4 2
+  =>
+%r = 2
+
+Name: clmul constant2
+%r = clmul i4 5, i4 6
+  =>
+%r = 14
+
+Name: clmul constant3
+%r = clmul i4 -4, i4 2
+  =>
+%r = -8
+
+Name: clmul constant4
+%r = clmul i4 -4, i4 -5
+  =>
+%r = 4
+
+Name: clmul constant5
+%r = clmul i8 0, i8 255
+  =>
+%r = 0
+
+Name: clmul constant6
+%r = clmul i8 15, i8 15
+  =>
+%r = 85
+
+Name: clmul constant7
+%r = clmul i8 1, i8 2
+  =>
+%r = 2
+
+Name: clmul constant8
+%r = clmul i16 -1, i16 -2
+  =>
+%r = -21846

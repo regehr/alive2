@@ -840,7 +840,8 @@ public:
     case llvm::Intrinsic::smax:
     case llvm::Intrinsic::abs:
     case llvm::Intrinsic::ucmp:
-    case llvm::Intrinsic::scmp: {
+    case llvm::Intrinsic::scmp:
+    case llvm::Intrinsic::clmul: {
       PARSE_BINOP();
       addNoundefAssumes(i, {a, b});
       BinOp::Op op;
@@ -866,6 +867,7 @@ public:
       case llvm::Intrinsic::abs:      op = BinOp::Abs; break;
       case llvm::Intrinsic::ucmp:     op = BinOp::UCmp; break;
       case llvm::Intrinsic::scmp:     op = BinOp::SCmp; break;
+      case llvm::Intrinsic::clmul:    op = BinOp::Clmul; break;
       default: UNREACHABLE();
       }
       ret = make_unique<BinOp>(*ty, value_name(i), *a, *b, op);

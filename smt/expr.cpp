@@ -1124,6 +1124,18 @@ expr expr::ctpop() const {
   return res;
 }
 
+expr expr::clmul(const expr &rhs) const {
+  C(rhs);
+  auto nbits = bits();
+
+  auto res = mkUInt(0, sort());
+  for (unsigned i = 0; i < nbits; ++i) {
+    res = res ^ (extract(i, i).sext(nbits - 1) & (rhs << mkUInt(i, sort())));
+  }
+
+  return res;
+}
+
 expr expr::umin(const expr &rhs) const {
   return mkIf(ule(rhs), *this, rhs);
 }

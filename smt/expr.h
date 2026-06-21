@@ -217,6 +217,7 @@ public:
   expr cttz(const expr &val_zero) const;
   expr ctlz() const;
   expr ctpop() const;
+  expr clmul(const expr &rhs) const;
 
   expr umin(const expr &rhs) const;
   expr umax(const expr &rhs) const;

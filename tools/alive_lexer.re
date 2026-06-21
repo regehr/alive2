@@ -286,6 +286,7 @@ space+ {
 "abs" { return ABS; }
 "ucmp" { return UCMP; }
 "scmp" { return SCMP; }
+"clmul" { return CLMUL; }
 "oeq" { return OEQ; }
 "ogt" { return OGT; }
 "oge" { return OGE; }
