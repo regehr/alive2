@@ -187,6 +187,8 @@ void BinOp::print(ostream &os) const {
   case UCmp:          str = "ucmp "; break;
   case SCmp:          str = "scmp "; break;
   case Clmul:         str = "clmul "; break;
+  case PExt:          str = "pext "; break;
+  case PDep:          str = "pdep "; break;
   }
 
   os << getName() << " = " << str;
@@ -477,6 +479,16 @@ StateValue BinOp::toSMT(State &s) const {
   case Clmul:
     fn = [&](auto &a, auto &ap, auto &b, auto &bp) -> StateValue {
       return {a.clmul(b), ap && bp};
+    };
+    break;
+  case PExt:
+    fn = [&](auto &a, auto &ap, auto &b, auto &bp) -> StateValue {
+      return {a.pext(b), ap && bp};
+    };
+    break;
+  case PDep:
+    fn = [&](auto &a, auto &ap, auto &b, auto &bp) -> StateValue {
+      return {a.pdep(b), ap && bp};
     };
     break;
   }

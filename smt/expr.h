@@ -218,6 +218,8 @@ public:
   expr ctlz() const;
   expr ctpop() const;
   expr clmul(const expr &rhs) const;
+  expr pext(const expr &mask) const;
+  expr pdep(const expr &mask) const;
 
   expr umin(const expr &rhs) const;
   expr umax(const expr &rhs) const;

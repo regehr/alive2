@@ -287,6 +287,8 @@ space+ {
 "ucmp" { return UCMP; }
 "scmp" { return SCMP; }
 "clmul" { return CLMUL; }
+"pext" { return PEXT; }
+"pdep" { return PDEP; }
 "oeq" { return OEQ; }
 "ogt" { return OGT; }
 "oge" { return OGE; }

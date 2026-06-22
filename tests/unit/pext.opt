@@ -1,0 +1,19 @@
+Name: pext constant1
+%r = pext i8 170, i8 204
+  =>
+%r = 10
+
+Name: pext constant2
+%r = pext i8 255, i8 170
+  =>
+%r = 15
+
+Name: pext simplify1
+%r = pext i8 %x, i8 0
+  =>
+%r = 0
+
+Name: pext simplify2
+%r = pext i8 %x, i8 255
+  =>
+%r = %x
