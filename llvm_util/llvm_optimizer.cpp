@@ -26,10 +26,10 @@ namespace llvm_util {
 string optimize_module(llvm::Module &M, string_view optArgs) {
   init_llvm_targets();
 
-  Triple ModuleTriple(M.getTargetTriple());
+  const Triple &ModuleTriple{M.getTargetTriple()};
   unique_ptr<llvm::TargetMachine> TM;
   if (ModuleTriple.getArch()) {
-    auto ETM = codegen::createTargetMachineForTriple(ModuleTriple);
+    auto ETM = codegen::createTargetMachineForTriple(ModuleTriple.str());
     if (auto E = ETM.takeError())
       return toString(std::move(E));
     TM = std::move(*ETM);
