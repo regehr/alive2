@@ -2,18 +2,22 @@
 
 #include "Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.h"
 
+#ifndef ALIVE_NO_ASLP
 #include "aslp/aslp_bridge.h"
+#endif
 
 using namespace std;
 using namespace lifter;
 using namespace llvm;
 
 void arm2llvm::lift(MCInst &I) {
-  auto entrybb = LLVMBB;
-  aslp::bridge bridge{*this, *MCE.get(), *STI.get(), *IA.get()};
   auto opcode = I.getOpcode();
 
   StringRef instStr = InstPrinter->getOpcodeName(I.getOpcode());
+
+#ifndef ALIVE_NO_ASLP
+  auto entrybb = LLVMBB;
+  aslp::bridge bridge{*this, *MCE.get(), *STI.get(), *IA.get()};
   if (auto a64Opcode = getArmOpcode(I)) {
     auto aslpResult = bridge.run(I, a64Opcode.value());
 
@@ -55,6 +59,7 @@ void arm2llvm::lift(MCInst &I) {
     // arm opcode translation failed, possibly SentinelNOP. continue with
     // classic.
   }
+#endif
 
   std::string encoding{"classic_" + instStr.str()};
   encodingCounts[encoding]++;

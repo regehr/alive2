@@ -17,8 +17,8 @@
 
 namespace aslp {
 
-// an opcode for ASLP is four bytes (= 32 bits), in Arm's conventional little-endian order.
-using opcode_t = std::array<uint8_t, 4>;
+// opcode_t lives in interface.h so that it is available to lifters built
+// without ASLP support
 
 // encoding name + semantics
 using result_t = std::tuple<std::string, stmt_t>;

@@ -6,6 +6,8 @@ include(ProcessorCount)
 
 project(Alive2)
 
+option(ENABLE_ASLP "Lift AArch64 using ASLP semantics, in addition to our own. Requires ANTLR, aslp-cpp, and a running aslp-server" ON)
+
 if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
@@ -300,8 +302,14 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
   llvm_map_components_to_libnames(llvm_libs CodeGen TargetParser support core irreader bitwriter analysis passes transformutils ipo asmparser asmprinter target mc mcparser mcdisassembler aarch64asmparser aarch64codegen aarch64desc aarch64disassembler aarch64info aarch64utils riscvasmparser riscvcodegen riscvdesc riscvdisassembler riscvinfo AllTargetsCodeGens AllTargetsDescs AllTargetsInfos
     )
 
-  add_subdirectory(backend_tv/aslp)
-  target_link_libraries(backend_tv PUBLIC bridge)
+  if (ENABLE_ASLP)
+    add_subdirectory(backend_tv/aslp)
+    target_link_libraries(backend_tv PUBLIC bridge)
+  else()
+    # cuts out ANTLR, aslp-cpp, and the aslp-server dependency; the AArch64
+    # lifter falls back to its own semantics for every instruction
+    target_compile_definitions(backend_tv PUBLIC ALIVE_NO_ASLP)
+  endif()
 
 #  target_link_libraries(alive2 PRIVATE ${llvm_libs})
   target_link_libraries(alive-tv PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})

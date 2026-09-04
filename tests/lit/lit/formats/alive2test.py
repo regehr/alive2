@@ -15,6 +15,9 @@ _searchfiles = [p for p in [Path('./alive'), Path('build/alive')] if p.is_file()
 assert _searchfiles, "arm-tv's lit.py should be run from either the repo root or the build directory."
 builddir = _searchfiles[0].parent
 
+# build_no_aslp.sh drops this marker; without ASLP there is only one lifter
+has_aslp = not (builddir / '.no-aslp').is_file()
+
 def executeCommand(command, extra_env=None):
   env = {**os.environ, **(extra_env or {})}
   p = subprocess.Popen(command,
@@ -99,7 +102,13 @@ class Alive2Test(TestFormat):
            filename.endswith('.riscvasm.ll') or filename.endswith('.ll')):
 
         # XXX: hack to identify arm-tv-specific test cases
-        aslp_options = [False, True] if 'arm-tv' in filepath else [None]
+        if 'arm-tv' in filepath and not has_aslp:
+          # both variants would run identical code, so only run one
+          aslp_options = [False]
+        elif 'arm-tv' in filepath:
+          aslp_options = [False, True]
+        else:
+          aslp_options = [None]
         for aslp in aslp_options:
           yield Alive2TestCase(testSuite, path_in_suite + (filename,), localConfig, aslp)
 

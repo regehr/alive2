@@ -36,7 +36,9 @@ unique_ptr<MemoryBuffer> lifter::generateAsm(Module &M, const Target *Targ,
                                              const char *DefaultFeatures) {
   assert(DefaultFeatures && "[generateAsm] DefaultFeatures must be set");
   TargetOptions Opt;
-  Opt.FloatABIType = llvm::FloatABI::Hard;
+  // TargetOptions::FloatABIType is gone; the float ABI now comes from the
+  // triple, and Triple::getDefaultFloatABI() is Hard for both aarch64-linux
+  // and riscv64-linux, so this matches the previous behavior
   auto RM = optional<Reloc::Model>();
   unique_ptr<TargetMachine> TM(Targ->createTargetMachine(
       DefaultTT, DefaultCPU, DefaultFeatures, Opt, RM));

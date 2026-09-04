@@ -10,8 +10,13 @@
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstPrinter.h"
+#include "llvm/MC/MCInstrAnalysis.h"
+#include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCParser/MCTargetAsmParser.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCTargetOptions.h"
@@ -24,7 +29,13 @@
 #include "backend_tv/lifter.h"
 #include "backend_tv/streamerwrapper.h"
 
+#ifdef ALIVE_NO_ASLP
+// the lifter interface that mc2llvm implements depends only on LLVM; the
+// ASLP bridge itself pulls in ANTLR and aslp-cpp, which we don't have here
+#include "aslp/interface.h"
+#else
 #include "aslp/aslp_bridge.h"
+#endif
 
 namespace lifter {
 
