@@ -840,7 +840,10 @@ public:
     case llvm::Intrinsic::smax:
     case llvm::Intrinsic::abs:
     case llvm::Intrinsic::ucmp:
-    case llvm::Intrinsic::scmp: {
+    case llvm::Intrinsic::scmp:
+    case llvm::Intrinsic::clmul:
+    case llvm::Intrinsic::pext:
+    case llvm::Intrinsic::pdep: {
       PARSE_BINOP();
       addNoundefAssumes(i, {a, b});
       BinOp::Op op;
@@ -866,6 +869,9 @@ public:
       case llvm::Intrinsic::abs:      op = BinOp::Abs; break;
       case llvm::Intrinsic::ucmp:     op = BinOp::UCmp; break;
       case llvm::Intrinsic::scmp:     op = BinOp::SCmp; break;
+      case llvm::Intrinsic::clmul:    op = BinOp::Clmul; break;
+      case llvm::Intrinsic::pext:     op = BinOp::PExt; break;
+      case llvm::Intrinsic::pdep:     op = BinOp::PDep; break;
       default: UNREACHABLE();
       }
       ret = make_unique<BinOp>(*ty, value_name(i), *a, *b, op);
@@ -1688,6 +1694,14 @@ public:
           attrs.initializes.emplace_back(*l, *h);
         }
         ranges::sort(attrs.initializes);
+        break;
+
+      case llvm::Attribute::NoFree:
+        attrs.set(ParamAttrs::NoFree);
+        break;
+
+      case llvm::Attribute::NoFreeObj:
+        attrs.set(ParamAttrs::NoFreeObj);
         break;
 
       default:

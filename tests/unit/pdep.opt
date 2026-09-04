@@ -1,0 +1,19 @@
+Name: pdep constant1
+%r = pdep i8 10, i8 204
+  =>
+%r = 136
+
+Name: pdep constant2
+%r = pdep i8 15, i8 170
+  =>
+%r = 170
+
+Name: pdep simplify1
+%r = pdep i8 %x, i8 0
+  =>
+%r = 0
+
+Name: pdep simplify2
+%r = pdep i8 %x, i8 255
+  =>
+%r = %x

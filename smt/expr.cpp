@@ -1124,6 +1124,48 @@ expr expr::ctpop() const {
   return res;
 }
 
+expr expr::clmul(const expr &rhs) const {
+  C(rhs);
+  auto nbits = bits();
+
+  auto res = mkUInt(0, sort());
+  for (unsigned i = 0; i < nbits; ++i) {
+    res = res ^ (extract(i, i).sext(nbits - 1) & (rhs << mkUInt(i, sort())));
+  }
+
+  return res;
+}
+
+expr expr::pext(const expr &mask) const {
+  C(mask);
+  auto nbits = bits();
+
+  auto res = mkUInt(0, sort());
+  auto shamt = mkUInt(0, sort());
+  for (unsigned i = 0; i < nbits; ++i) {
+    auto active = mask.extract(i, i).zext(nbits - 1);
+    res = res | ((active & extract(i, i).zext(nbits - 1)) << shamt);
+    shamt = shamt + active;
+  }
+
+  return res;
+}
+
+expr expr::pdep(const expr &mask) const {
+  C(mask);
+  auto nbits = bits();
+
+  auto res = mkUInt(0, sort());
+  auto shamt = mkUInt(0, sort());
+  for (unsigned i = 0; i < nbits; ++i) {
+    auto active = mask.extract(i, i).zext(nbits - 1);
+    res = res | ((active & lshr(shamt)) << mkUInt(i, sort()));
+    shamt = shamt + active;
+  }
+
+  return res;
+}
+
 expr expr::umin(const expr &rhs) const {
   return mkIf(ule(rhs), *this, rhs);
 }
