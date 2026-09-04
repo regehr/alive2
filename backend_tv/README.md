@@ -205,7 +205,7 @@ define float @myTest() {
 ```
 First, generate the assembly with something like:
 ```bash
-$LLVM_DIR/bin/llc -mattr=+c,+m,+b,+f,+d,+q,+Zfh -mtriple=riscv64 test.ll
+$LLVM_DIR/bin/llc -mattr=+rva23u64 -mtriple=riscv64 test.ll
 ```
 Then the object with the following (or similar, the location of sysroot may vary):
 ```bash

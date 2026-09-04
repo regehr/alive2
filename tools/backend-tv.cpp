@@ -397,9 +397,14 @@ version )EOF";
     DefaultTT = llvm::Triple("riscv64-unknown-linux-gnu");
     DefaultDL = "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128";
     DefaultCPU = "generic";
-    // +m includes zmmul
-    // +b = +zba,+zbb,+zbs
-    DefaultFeatures = "+c,+m,+b,+f,+d,+q,+zfh";
+    // the RVA23U64 profile, rather than fine-grained flags, so we track
+    // what real application processors implement. this is RVA22U64
+    // (RV64IMAFDC + B + Zfhmin + Zicbo* + the Zicc*/Za64rs/Zic64b/Zkt
+    // architectural guarantees) plus V, Zicond, Zfa, Zcb, Zvbb, Zvfhmin,
+    // Zvkt, Zimop, Zcmop, Zihintntl, Zawrs and Supm. note that no RVA
+    // profile includes Q, and that RVA23 mandates only Zfhmin, so f16
+    // arithmetic is promoted to f32.
+    DefaultFeatures = "+rva23u64";
     LLVMInitializeRISCVTargetInfo();
     LLVMInitializeRISCVTarget();
     LLVMInitializeRISCVTargetMC();
