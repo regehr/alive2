@@ -514,6 +514,23 @@ void riscv2llvm::lift(MCInst &I) {
   }
 
     /*
+     * Zicond extension instructions
+     */
+
+  case RISCV::CZERO_EQZ:
+  case RISCV::CZERO_NEZ: {
+    auto value = readFromRegOperand(1, i64ty);
+    auto condition = readFromRegOperand(2, i64ty);
+    auto zero = getUnsignedIntConst(0, 64);
+    auto isZero = createICmp(ICmpInst::Predicate::ICMP_EQ, condition, zero);
+    if (opcode == RISCV::CZERO_EQZ)
+      updateOutputReg(createSelect(isZero, zero, value));
+    else
+      updateOutputReg(createSelect(isZero, value, zero));
+    break;
+  }
+
+    /*
      * M extension instructions
      */
 
