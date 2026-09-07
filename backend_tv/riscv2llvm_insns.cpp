@@ -2,6 +2,8 @@
 #include "backend_tv/riscv2llvm.h"
 
 #include "Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.h"
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/IR/Value.h"
@@ -42,6 +44,37 @@ enum RISCVFPRndMode {
 static bool isDefaultRoundingMode(int64_t mode) {
   // We assume that the dynamic rounding mode is RNE.
   return mode == RISCVFPRndMode::RNE || mode == RISCVFPRndMode::DYN;
+}
+
+static APFloat getFLIValue(unsigned imm, const fltSemantics &semantics) {
+  assert(imm < 32 && "FLI immediate must be five bits");
+
+  // RISC-V Unprivileged ISA, Zfa "Load-Immediate Instructions":
+  // https://docs.riscv.org/reference/isa/unpriv/zfa.html#_load_immediate_instructions
+  // These are the binary32 encodings from the FLI table. Entries 1, 30, and
+  // 31 depend on the destination format and are handled separately.
+  static constexpr uint32_t encodings[] = {
+      0xbf800000, 0,          0x37800000, 0x38000000, 0x3b800000, 0x3c000000,
+      0x3d800000, 0x3e000000, 0x3e800000, 0x3ea00000, 0x3ec00000, 0x3ee00000,
+      0x3f000000, 0x3f200000, 0x3f400000, 0x3f600000, 0x3f800000, 0x3fa00000,
+      0x3fc00000, 0x3fe00000, 0x40000000, 0x40200000, 0x40400000, 0x40800000,
+      0x41000000, 0x41800000, 0x43000000, 0x43800000, 0x47000000, 0x47800000,
+      0,          0,
+  };
+
+  if (imm == 1)
+    return APFloat::getSmallestNormalized(semantics);
+  if (imm == 30)
+    return APFloat::getInf(semantics);
+  if (imm == 31)
+    return APFloat::getQNaN(semantics);
+
+  APFloat value(APFloat::IEEEsingle(), APInt(32, encodings[imm]));
+  if (&semantics != &APFloat::IEEEsingle()) {
+    bool losesInfo;
+    value.convert(semantics, APFloat::rmNearestTiesToEven, &losesInfo);
+  }
+  return value;
 }
 
 /// See also the helper function matchRoundingOp in
@@ -948,6 +981,14 @@ void riscv2llvm::lift(MCInst &I) {
   case RISCV::OPCODE##_S:                                                      \
   case RISCV::OPCODE##_D:                                                      \
   case RISCV::OPCODE##_Q
+
+    CASE_FP_OPCODES(FLI) : {
+      auto operandTy = getFPType(getRegSize(CurInst->getOperand(0).getReg()));
+      auto imm = CurInst->getOperand(1).getImm();
+      updateOutputReg(
+          ConstantFP::get(Ctx, getFLIValue(imm, operandTy->getFltSemantics())));
+      break;
+    }
 
   case RISCV::FCVT_H_W:
   case RISCV::FCVT_S_W:
