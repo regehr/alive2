@@ -12,8 +12,7 @@
 #   LLVM_ROOT=/path/to/llvm  ./build_no_aslp.sh
 #   LOCAL_LLVM=/path/to/llvm ./build_no_aslp.sh   # same thing, matches build.sh
 # If neither is set and Nix is available, we fall back to the same LLVM that
-# build.sh uses. Extra arguments are passed through to cmake, e.g.
-#   ./build_no_aslp.sh -DCMAKE_BUILD_TYPE=Release
+# build.sh uses. Extra arguments are passed through to cmake
 #
 # The build lands in ./build-no-aslp so it doesn't fight with build.sh over
 # ./build. To run the tests against it:
@@ -57,6 +56,7 @@ fi
 
 cmake -B "$BUILD_DIR" -DBUILD_TV=1 \
   -DENABLE_ASLP=OFF \
+  -DCMAKE_BUILD_TYPE=Release \    
   -DLLVM_DIR="$LLVM_CMAKE_DIR" \
   "$@"
 
