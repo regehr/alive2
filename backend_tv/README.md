@@ -32,6 +32,28 @@ These instructions will install all of the required dependencies and build the b
    ./build/backend-tv ./tests/arm-tv/cmp/sgt.aarch64.ll
    ```
 
+### building without ASLP
+
+ASLP is optional. It gives the AArch64 lifter a second, formally-derived source
+of semantics. Without it, all you need is LLVM (with RTTI and EH), Z3, and re2c:
+```bash
+LLVM_ROOT=~/llvm/build ./build_no_aslp.sh
+```
+If you leave `LLVM_ROOT` unset, the script uses `llvm-config` from your `PATH`,
+or failing that, Nix. The build lands in ./build-no-aslp so it doesn't fight
+with build.sh over ./build, and there is no aslp-server to start:
+```bash
+./build-no-aslp/backend-tv ./tests/arm-tv/cmp/sgt.aarch64.ll
+```
+To run the tests against it:
+```bash
+cd build-no-aslp && ../tests/lit/lit.py -s ../tests/arm-tv ../tests/riscv-tv
+```
+Each arm-tv test runs once rather than twice here, since without ASLP the
+"aslp" and "classic" variants would lift identically. The `ASLP*` environment
+variables below have no effect on such a build. To configure by hand instead of
+using the script, pass `-DENABLE_ASLP=OFF` to cmake.
+
 If desired, the tool can also be built manually by adapting the following cmake command.
 This might be useful to use local versions of particular dependencies.
 ```bash

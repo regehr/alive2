@@ -11,12 +11,9 @@
 # Point this at an LLVM build or install tree with either:
 #   LLVM_ROOT=/path/to/llvm  ./build_no_aslp.sh
 #   LOCAL_LLVM=/path/to/llvm ./build_no_aslp.sh   # same thing, matches build.sh
-# If neither is set and Nix is available, we fall back to the same LLVM that
-# build.sh uses. Extra arguments are passed through to cmake
-#
-# The build lands in ./build-no-aslp so it doesn't fight with build.sh over
-# ./build. To run the tests against it:
-#   cd build-no-aslp && ../tests/lit/lit.py ../tests/arm-tv ../tests/riscv-tv
+# If neither is set we use llvm-config from your PATH, or failing that, Nix to
+# fetch the same LLVM that build.sh uses. Extra arguments are passed through to
+# cmake, which builds Release unless you ask for something else.
 
 set -e -o pipefail
 
@@ -24,7 +21,7 @@ export CXXFLAGS
 export CFLAGS
 cd "$(dirname "$0")"
 
-BUILD_DIR="${BUILD_DIR:-build-no-aslp}"
+BUILD_DIR="${BUILD_DIR:-build}"
 
 # accept either spelling; LLVM_ROOT wins so it can override a stale LOCAL_LLVM
 # inherited from a shell profile
@@ -38,13 +35,16 @@ if [[ -n "$LLVM" ]]; then
   LLVM_CMAKE_DIR="$(cd "$LLVM/lib/cmake/llvm" && pwd)"
 elif [[ -d "$BUILD_DIR/llvm-dev" ]]; then
   LLVM_CMAKE_DIR="$(cd "$BUILD_DIR/llvm-dev/lib/cmake/llvm" && pwd)"
+elif command -v llvm-config &>/dev/null; then
+  LLVM_CMAKE_DIR="$(llvm-config --cmakedir)"
 elif command -v nix &>/dev/null; then
   mkdir -p "$BUILD_DIR"
   ( cd "$BUILD_DIR" && nix build 'github:katrinafyi/pac-nix#llvm-custom-git.libllvm^dev' -o llvm-dev )
   LLVM_CMAKE_DIR="$(cd "$BUILD_DIR/llvm-dev/lib/cmake/llvm" && pwd)"
 else
   echo "$0: don't know where to find LLVM." >&2
-  echo "  set LLVM_ROOT (or LOCAL_LLVM) to an LLVM build or install tree, or install Nix." >&2
+  echo "  set LLVM_ROOT (or LOCAL_LLVM) to an LLVM build or install tree, or put" >&2
+  echo "  llvm-config on your PATH, or install Nix." >&2
   exit 1
 fi
 
@@ -56,15 +56,10 @@ fi
 
 cmake -B "$BUILD_DIR" -DBUILD_TV=1 \
   -DENABLE_ASLP=OFF \
-  -DCMAKE_BUILD_TYPE=Release \    
   -DLLVM_DIR="$LLVM_CMAKE_DIR" \
   "$@"
 
 cmake --build "$BUILD_DIR" -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
-
-# tells the lit test format not to run each arm-tv test twice; without ASLP the
-# 'classic' and 'aslp' variants would execute identical code
-touch "$BUILD_DIR/.no-aslp"
 
 # HACK: inherited from build.sh -- when building against an LLVM whose clang
 # lives elsewhere, alivecc/alive++ come out non-functional. Remove them rather

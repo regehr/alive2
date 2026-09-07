@@ -9,7 +9,7 @@ project(Alive2)
 option(ENABLE_ASLP "Lift AArch64 using ASLP semantics, in addition to our own. Requires ANTLR, aslp-cpp, and a running aslp-server" ON)
 
 if (NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Debug)
+  set(CMAKE_BUILD_TYPE Release)
 endif()
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")

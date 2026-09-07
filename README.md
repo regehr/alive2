@@ -4,6 +4,8 @@ Alive2
 NOTES:
 - **This is the arm-tv branch of Alive2.** Specific instructions for building and using this branch can be found at: https://github.com/regehr/alive2/tree/arm-tv/backend_tv/aslp
 - Don't forget to start aslp-server if you want to use this code in ASLP mode!
+- ASLP is optional: `./build_no_aslp.sh` (or `-DENABLE_ASLP=OFF` if you
+  configure by hand) builds against our own AArch64 semantics only.
 
 ![Alive2 logo](imgs/alive2.png)
 

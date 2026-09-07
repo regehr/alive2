@@ -15,8 +15,8 @@ _searchfiles = [p for p in [Path('./alive'), Path('build/alive')] if p.is_file()
 assert _searchfiles, "arm-tv's lit.py should be run from either the repo root or the build directory."
 builddir = _searchfiles[0].parent
 
-# build_no_aslp.sh drops this marker; without ASLP there is only one lifter
-has_aslp = not (builddir / '.no-aslp').is_file()
+# without ASLP there is only one lifter, so ask cmake how it was configured
+has_aslp = 'ENABLE_ASLP:BOOL=OFF' not in (builddir / 'CMakeCache.txt').read_text()
 
 def executeCommand(command, extra_env=None):
   env = {**os.environ, **(extra_env or {})}
