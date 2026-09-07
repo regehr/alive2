@@ -46,10 +46,11 @@ else
   if command -v clang++ &>/dev/null && [[ -z "$CXX" ]]; then
     export CXX=$(which clang++)
   fi
-  # -DCMAKE_BUILD_TYPE=Release \
   cmake -B build -DBUILD_TV=1 \
     -DCMAKE_PREFIX_PATH="$(realpath build/antlr-dev);$(realpath build/llvm-dev)" \
     -DANTLR4_JAR_LOCATION="$(realpath build/antlr-jar)" \
+    -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
     "$@"
     # -DLLVM_DIR=~/progs/llvm-regehr/build/lib/cmake/llvm/ \
     # -DFETCHCONTENT_SOURCE_DIR_ASLP-CPP=~/progs/aslp \
