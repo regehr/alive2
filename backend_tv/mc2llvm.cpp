@@ -1165,6 +1165,22 @@ void mc2llvm::fixupOptimizedTgt(Function *tgt) {
   }
 
   /*
+   * LLVM optimized this function while its stack lived in memory
+   * returned by myalloc(), so it was free to mark calls as "tail"
+   * even when they touch the stack. below, we turn that allocation
+   * back into an alloca, at which point a "tail" marker on any call
+   * reaching the stack means UB. dropping "tail" is always sound, so
+   * just get rid of all of them.
+   */
+  for (auto &bb : *tgt) {
+    for (auto &i : bb) {
+      if (auto *ci = dyn_cast<CallInst>(&i);
+          ci && ci->getTailCallKind() != CallInst::TCK_MustTail)
+        ci->setTailCallKind(CallInst::TCK_None);
+    }
+  }
+
+  /*
    * when we originally generated the target function, we allocated
    * its stack memory using a custom allocation function; this is to
    * keep LLVM from making unwarranted assumptions about that memory
