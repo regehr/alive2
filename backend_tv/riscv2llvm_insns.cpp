@@ -1097,6 +1097,20 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+    // Zfa round-to-integer. Rounds rs1 to an integral value using the
+    // rounding mode in the rm field, returning the result in the same FP
+    // format. Zeroes and infinities are returned unmodified, which is also
+    // what the LLVM rounding intrinsics do. FROUNDNX additionally raises the
+    // inexact flag; since we don't model fflags, it lifts identically.
+    CASE_FP_OPCODES(FROUND) :
+    CASE_FP_OPCODES(FROUNDNX) : {
+      auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
+      auto a = readFromFPRegOperand(1, getFPType(operandSize));
+      auto res = liftRoundingToInt(a, CurInst->getOperand(2).getImm());
+      updateOutputReg(res);
+      break;
+    }
+
     CASE_FP_OPCODES(FSQRT) : {
       assert(isDefaultRoundingMode(CurInst->getOperand(2).getImm()) &&
              "Unsupported rounding mode.");
