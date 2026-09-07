@@ -1,4 +1,4 @@
-; CHECK: 0 correct
+; CHECK: 1 correct
 
 define i32 @f1() {
   %1 = alloca [32 x i32], align 4
