@@ -93,11 +93,6 @@ Value *riscv2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
   return V;
 }
 
-llvm::AllocaInst *riscv2llvm::get_reg(aslp::reg_t regtype, uint64_t num) {
-  assert(false);
-  return nullptr;
-}
-
 Value *riscv2llvm::lookupReg(unsigned Reg) {
   assert(Reg >= RISCV::X0 && Reg <= RISCV::X31);
   return RegFile[Reg];

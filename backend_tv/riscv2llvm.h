@@ -40,8 +40,6 @@
 namespace lifter {
 
 class riscv2llvm final : public mc2llvm {
-  llvm::AllocaInst *get_reg(aslp::reg_t regtype, uint64_t num) override;
-
   void updateOutputReg(llvm::Value *V, bool SExt = false) override;
 
   llvm::Value *makeLoadWithOffset(llvm::Value *base, llvm::Value *offset,

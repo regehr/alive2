@@ -4,6 +4,8 @@
 
 #ifndef ALIVE_NO_ASLP
 #include "aslp/aslp_bridge.h"
+
+#include "backend_tv/aslp_adapter.h"
 #endif
 
 using namespace std;
@@ -17,7 +19,8 @@ void arm2llvm::lift(MCInst &I) {
 
 #ifndef ALIVE_NO_ASLP
   auto entrybb = LLVMBB;
-  aslp::bridge bridge{*this, *MCE.get(), *STI.get(), *IA.get()};
+  arm_aslp_adapter adapter{*this};
+  aslp::bridge bridge{adapter, *MCE.get(), *STI.get(), *IA.get()};
   if (auto a64Opcode = getArmOpcode(I)) {
     auto aslpResult = bridge.run(I, a64Opcode.value());
 
