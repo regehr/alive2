@@ -1,6 +1,7 @@
 #include "backend_tv/riscv2llvm.h"
 
 #include "Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/BinaryFormat/ELF.h"
 
@@ -136,6 +137,16 @@ void riscv2llvm::updateFPReg(Value *V, uint64_t Reg) {
   auto mask = llvm::ConstantInt::get(Ctx, maskAP);
   auto nanBoxed = createOr(mask, extended);
   createStore(nanBoxed, lookupFPReg(Reg));
+}
+
+Value *riscv2llvm::canonicalizeNaN(Value *V) {
+  assert(V->getType()->isFloatingPointTy());
+
+  // RISC-V computational FP instructions produce the canonical NaN. Keep this
+  // separate from updateFPReg: transfers and sign injection preserve payloads.
+  auto isNaN = createIsFPClass(V, fcNan);
+  auto canonical = APFloat::getQNaN(V->getType()->getFltSemantics());
+  return createSelect(isNaN, ConstantFP::get(Ctx, canonical), V);
 }
 
 unsigned riscv2llvm::getRegSize(unsigned Reg) {

@@ -89,6 +89,7 @@ class riscv2llvm final : public mc2llvm {
   llvm::Value *lookupFPReg(unsigned Reg);
   void updateReg(llvm::Value *V, uint64_t reg);
   void updateFPReg(llvm::Value *V, uint64_t reg);
+  llvm::Value *canonicalizeNaN(llvm::Value *V);
   llvm::Value *readFromImmOperand(int idx, unsigned immed_width,
                                   unsigned result_width);
   std::tuple<llvm::BasicBlock *, llvm::BasicBlock *>

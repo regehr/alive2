@@ -1107,7 +1107,7 @@ void riscv2llvm::lift(MCInst &I) {
     auto src = readFromFPRegOperand(1, srcTy);
     auto tgt =
         srcSize > tgtSize ? createFPTrunc(src, tgtTy) : createFPExt(src, tgtTy);
-    updateOutputReg(tgt);
+    updateOutputReg(canonicalizeNaN(tgt));
     break;
   }
 
@@ -1148,7 +1148,7 @@ void riscv2llvm::lift(MCInst &I) {
       auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
       auto a = readFromFPRegOperand(1, getFPType(operandSize));
       auto res = liftRoundingToInt(a, CurInst->getOperand(2).getImm());
-      updateOutputReg(res);
+      updateOutputReg(canonicalizeNaN(res));
       break;
     }
 
@@ -1158,7 +1158,7 @@ void riscv2llvm::lift(MCInst &I) {
       auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
       auto a = readFromFPRegOperand(1, getFPType(operandSize));
       auto res = createSQRT(a);
-      updateOutputReg(res);
+      updateOutputReg(canonicalizeNaN(res));
       break;
     }
 
@@ -1173,7 +1173,7 @@ void riscv2llvm::lift(MCInst &I) {
     auto a = readFromFPRegOperand(1, operandTy);                               \
     auto b = readFromFPRegOperand(2, operandTy);                               \
     auto res = create##INST(a, b);                                             \
-    updateOutputReg(res);                                                      \
+    updateOutputReg(canonicalizeNaN(res));                                     \
     break;                                                                     \
   }
 
@@ -1252,7 +1252,7 @@ void riscv2llvm::lift(MCInst &I) {
       auto b = readFromFPRegOperand(2, operandTy);
       auto c = readFromFPRegOperand(3, operandTy);
       auto res = createFusedMultiplyAdd(a, b, c);
-      updateOutputReg(res);
+      updateOutputReg(canonicalizeNaN(res));
       break;
     }
 
@@ -1265,7 +1265,7 @@ void riscv2llvm::lift(MCInst &I) {
       auto b = readFromFPRegOperand(2, operandTy);
       auto c = readFromFPRegOperand(3, operandTy);
       auto res = createFusedMultiplyAdd(a, b, createFNeg(c));
-      updateOutputReg(res);
+      updateOutputReg(canonicalizeNaN(res));
       break;
     }
 
@@ -1278,7 +1278,7 @@ void riscv2llvm::lift(MCInst &I) {
       auto b = readFromFPRegOperand(2, operandTy);
       auto c = readFromFPRegOperand(3, operandTy);
       auto res = createFNeg(createFusedMultiplyAdd(a, b, c));
-      updateOutputReg(res);
+      updateOutputReg(canonicalizeNaN(res));
       break;
     }
 
@@ -1291,7 +1291,7 @@ void riscv2llvm::lift(MCInst &I) {
       auto b = readFromFPRegOperand(2, operandTy);
       auto c = readFromFPRegOperand(3, operandTy);
       auto res = createFusedMultiplyAdd(createFNeg(a), b, c);
-      updateOutputReg(res);
+      updateOutputReg(canonicalizeNaN(res));
       break;
     }
 
