@@ -54,7 +54,7 @@ if command -v clang++ &>/dev/null && [[ -z "$CXX" ]]; then
   export CXX=$(which clang++)
 fi
 
-cmake -B "$BUILD_DIR" -DBUILD_TV=1 \
+cmake -G Ninja -B "$BUILD_DIR" -DBUILD_TV=1 \
   -DENABLE_ASLP=OFF \
   -DLLVM_DIR="$LLVM_CMAKE_DIR" \
   "$@"
