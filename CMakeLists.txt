@@ -302,9 +302,33 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
   llvm_map_components_to_libnames(llvm_libs CodeGen TargetParser support core irreader bitwriter analysis passes transformutils ipo asmparser asmprinter target mc mcparser mcdisassembler aarch64asmparser aarch64codegen aarch64desc aarch64disassembler aarch64info aarch64utils riscvasmparser riscvcodegen riscvdesc riscvdisassembler riscvinfo AllTargetsCodeGens AllTargetsDescs AllTargetsInfos
     )
 
+  # backend_tv used to pick these up by accident, through bridge's usage
+  # requirements; state them directly so they survive the ASLP-optional
+  # build below. -fexceptions matches the other targets here and guards
+  # against an LLVM configured with LLVM_ENABLE_EH=OFF.
+  target_compile_options(backend_tv PRIVATE -fexceptions -Wno-overloaded-virtual)
+
   if (ENABLE_ASLP)
     add_subdirectory(backend_tv/aslp)
-    target_link_libraries(backend_tv PUBLIC bridge)
+
+    # aslp_adapter.cpp is the one translation unit that talks to ASLP.
+    # isolating it in an object library keeps ANTLR and aslp-cpp headers,
+    # and -DASLP_CPP_STATIC_DEFINE, off the include path of every other
+    # backend_tv source -- the RISC-V lifter above all, which has nothing
+    # to do with ASLP.
+    add_library(backend_tv_aslp OBJECT "backend_tv/aslp_adapter.cpp")
+    target_link_libraries(backend_tv_aslp PRIVATE bridge)
+    target_compile_options(backend_tv_aslp PRIVATE -fexceptions)
+    target_sources(backend_tv PRIVATE $<TARGET_OBJECTS:backend_tv_aslp>)
+
+    # deliberately NOT target_link_libraries(backend_tv ... bridge): naming
+    # bridge as a dependency of backend_tv -- even under $<LINK_ONLY:> --
+    # hands bridge's include directories to backend_tv's own sources, which
+    # is exactly the leak we are closing. LINK_ONLY only suppresses what a
+    # target re-exports to its dependents, not what it consumes itself.
+    # So bridge goes straight onto the executables instead.
+    list(APPEND ALIVE_LIBS_LLVM bridge)
+    list(APPEND ALIVE_EXEC_LIBS_LLVM bridge)
   else()
     # cuts out ANTLR, aslp-cpp, and the aslp-server dependency; the AArch64
     # lifter falls back to its own semantics for every instruction

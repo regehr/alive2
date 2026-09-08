@@ -60,10 +60,13 @@ public:
   llvm::BasicBlock *LLVMBB{nullptr};
   llvm::MCInstPrinter *InstPrinter{nullptr};
   llvm::MCInst *CurInst{nullptr}, *PrevInst{nullptr};
-  unsigned armInstNum{0}, llvmInstNum{0};
+  unsigned asmInstNum{0}, llvmInstNum{0};
   std::map<unsigned, llvm::Value *> RegFile;
   llvm::Value *stackMem{nullptr};
   std::unordered_map<std::string, llvm::Constant *> LLVMglobals;
+  // register values on function entry, kept so we can check that
+  // callee-saved registers were restored; both supported backends have 32
+  // general-purpose registers
   llvm::Value *initialSP{nullptr}, *initialReg[32]{nullptr};
   llvm::Function *assertDecl{nullptr};
   std::unique_ptr<llvm::MCSubtargetInfo> STI;
@@ -158,8 +161,8 @@ public:
 
   std::map<std::string, unsigned> encodingCounts;
 
-  // Map of ADRP MCInsts to the string representations of the operand variable
-  // names
+  // maps each MCInst that referenced a global symbol to that symbol's name;
+  // populated by mapExprVar
   std::unordered_map<llvm::MCInst *, std::string> instExprVarMap;
 
   struct deferredGlobal {
@@ -313,11 +316,11 @@ public:
     exit(-1);
   }
 
-  // lifted instructions are named using the number of the ARM
+  // lifted instructions are named using the number of the assembly
   // instruction they come from
   std::string nextName() {
     std::stringstream ss;
-    ss << "a" << armInstNum << "_" << llvmInstNum++;
+    ss << "a" << asmInstNum << "_" << llvmInstNum++;
     return ss.str();
   }
 
@@ -987,7 +990,8 @@ public:
   void fixupOptimizedTgt(llvm::Function *tgt);
 
   /*
-   * shared with the aslp lifter
+   * resolve a symbol reference to the corresponding lifted global. used by
+   * the RISC-V lifter and, through the ASLP adapter, by ASLP's ADRP path
    *
    * FIXME -- this should take an MCSymbolRef, not a generic MCExpr
    */
@@ -1012,12 +1016,6 @@ public:
    * this argument type is not supported by this lifter
    */
   virtual void checkArgSupport(llvm::Argument &arg) = 0;
-  /*
-   * called once per function exit with an error message if something
-   * at the function level such as a function or return attribute or
-   * return type is not supported
-   */
-  virtual void checkFuncSupport(llvm::Function &func) = 0;
   /*
    * called once per Value type used in this function; exit with an
    * error message if we can't left operations on this type

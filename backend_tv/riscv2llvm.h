@@ -67,7 +67,6 @@ class riscv2llvm final : public mc2llvm {
   void doReturn() override;
 
   void checkArgSupport(llvm::Argument &arg) override;
-  void checkFuncSupport(llvm::Function &func) override;
   void checkTypeSupport(llvm::Type *ty) override;
 
   bool isGOT(uint16_t spec) override {

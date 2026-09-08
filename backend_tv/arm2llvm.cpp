@@ -3191,69 +3191,6 @@ Value *arm2llvm::regShift(Value *value, int encodedShift) {
   }
 }
 
-llvm::AllocaInst *arm2llvm::get_reg(aslp::reg_t regtype, uint64_t num) {
-  using reg_t = aslp::reg_t;
-  using pstate_t = aslp::pstate_t;
-
-  uint64_t reg = 0;
-  if (regtype == reg_t::X) {
-    if (num <= 28)
-      reg = llvm::AArch64::X0 + num;
-    else if (num == 29)
-      reg = llvm::AArch64::FP;
-    else if (num == 30)
-      reg = llvm::AArch64::LR;
-    else if (num == 31)
-      reg = llvm::AArch64::SP;
-    else
-      assert(false && "X register out of range");
-
-  } else if (regtype == reg_t::PSTATE) {
-
-    if (num == (int)pstate_t::N)
-      reg = llvm::AArch64::N;
-    else if (num == (int)pstate_t::Z)
-      reg = llvm::AArch64::Z;
-    else if (num == (int)pstate_t::C)
-      reg = llvm::AArch64::C;
-    else if (num == (int)pstate_t::V)
-      reg = llvm::AArch64::V;
-
-  } else if (regtype == reg_t::V) {
-    reg = llvm::AArch64::Q0 + num;
-  }
-
-  assert(reg && "register not mapped");
-  return llvm::cast<llvm::AllocaInst>(RegFile.at(reg));
-}
-
-optional<aslp::opcode_t> arm2llvm::getArmOpcode(const MCInst &I) {
-  SmallVector<MCFixup> Fixups{};
-  SmallVector<char> Code{};
-
-  if (I.getOpcode() == sentinelNOP())
-    return nullopt;
-
-  MCE->encodeInstruction(I, Code, Fixups, *STI.get());
-  for (auto x : Fixups) {
-    // std::cerr << "fixup: " << x.getKind() << ' ' << x.getTargetKind() << '
-    // ' << x.getOffset() << ' ' << std::flush; x.getValue()->dump();
-    // std::cout << std::endl;
-    (void)x;
-  }
-
-  // do not hand any instructions with relocation fixups to aslp
-  if (Fixups.size() != 0)
-    return nullopt;
-
-  aslp::opcode_t ret;
-  unsigned i = 0;
-  for (const char &x : Code) {
-    ret.at(i++) = x;
-  }
-  return ret;
-}
-
 void arm2llvm::platformInit() {
   auto i8 = getIntTy(8);
   auto i64 = getIntTy(64);
@@ -3377,7 +3314,6 @@ void arm2llvm::platformInit() {
 }
 
 void arm2llvm::checkArgSupport(Argument &arg) {}
-void arm2llvm::checkFuncSupport(Function &func) {}
 void arm2llvm::checkTypeSupport(Type *ty) {
   if (ty->isFloatingPointTy()) {
     if (!(ty->isFloatTy() || ty->isDoubleTy())) {

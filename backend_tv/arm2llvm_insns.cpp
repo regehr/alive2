@@ -1,12 +1,7 @@
 #include "backend_tv/arm2llvm.h"
+#include "backend_tv/aslp_lift.h"
 
 #include "Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.h"
-
-#ifndef ALIVE_NO_ASLP
-#include "aslp/aslp_bridge.h"
-
-#include "backend_tv/aslp_adapter.h"
-#endif
 
 using namespace std;
 using namespace lifter;
@@ -17,52 +12,8 @@ void arm2llvm::lift(MCInst &I) {
 
   StringRef instStr = InstPrinter->getOpcodeName(I.getOpcode());
 
-#ifndef ALIVE_NO_ASLP
-  auto entrybb = LLVMBB;
-  arm_aslp_adapter adapter{*this};
-  aslp::bridge bridge{adapter, *MCE.get(), *STI.get(), *IA.get()};
-  if (auto a64Opcode = getArmOpcode(I)) {
-    auto aslpResult = bridge.run(I, a64Opcode.value());
-
-    if (auto result = std::get_if<aslp::result_t>(&aslpResult)) {
-
-      // branch lifter's entry BB to entry BB in ASLP result,
-      // then set ASLP's exit BB to be the next BB.
-      LLVMBB = entrybb;
-      auto [encoding, stmts] = *result;
-      this->createBranch(stmts.first);
-      LLVMBB = stmts.second;
-      stmts.first->begin()->setMetadata(
-          "asm.aslp",
-          llvm::MDTuple::get(Ctx, {llvm::MDString::get(Ctx, instStr)}));
-
-      *out << "... lifted via aslp: " << encoding << " - " << instStr.str()
-           << std::endl;
-      encodingCounts[encoding]++;
-      return;
-
-    } else {
-      switch (std::get<aslp::err_t>(aslpResult)) {
-      case aslp::err_t::missing:
-        *out << "... aslp missing! "
-             << std::format("0x{:08x}", aslp::get_opnum(a64Opcode.value()))
-             << "  " << aslp::format_opcode(a64Opcode.value()) << std::endl;
-        if (aslp::bridge::config().fail_if_missing) {
-          throw std::runtime_error(
-              "missing aslp instruction in debug mode is not allowed!");
-        }
-        break;
-      case aslp::err_t::banned:
-        *out << "... aslp banned\n";
-        break; // continue with classic.
-      }
-    }
-  } else {
-    *out << "... arm opnum failed: " << instStr.str() << '\n';
-    // arm opcode translation failed, possibly SentinelNOP. continue with
-    // classic.
-  }
-#endif
+  if (tryLiftWithASLP(*this, I, instStr))
+    return;
 
   std::string encoding{"classic_" + instStr.str()};
   encodingCounts[encoding]++;

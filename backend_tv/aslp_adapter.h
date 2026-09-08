@@ -19,6 +19,8 @@
 
 #include "aslp/interface.h"
 
+#include <optional>
+
 namespace lifter {
 
 class arm_aslp_adapter final : public aslp::lifter_interface_llvm {
@@ -27,9 +29,13 @@ class arm_aslp_adapter final : public aslp::lifter_interface_llvm {
 public:
   explicit arm_aslp_adapter(arm2llvm &L) : L{L} {}
 
-  lexpr_t get_reg(aslp::reg_t regtype, uint64_t num) override {
-    return L.get_reg(regtype, num);
-  }
+  // maps an ASLP register reference onto the lifter's register file
+  lexpr_t get_reg(aslp::reg_t regtype, uint64_t num) override;
+
+  // encode I back to bytes for ASLP, which addresses semantics by opcode.
+  // returns nullopt for the sentinel NOP and for anything carrying a
+  // relocation fixup, neither of which ASLP can be asked about
+  std::optional<aslp::opcode_t> getArmOpcode(const llvm::MCInst &I);
 
   void set_bb(llvm::BasicBlock *a0) override {
     L.LLVMBB = a0;

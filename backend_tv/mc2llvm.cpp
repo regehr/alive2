@@ -280,7 +280,7 @@ std::string mc2llvm::mapExprVar(const MCExpr *expr) {
 
   if (!lookupGlobal(name)) {
     *out << "\ncan't find global '" << name << "'\n";
-    *out << "ERROR: Unknown global in ADRP\n\n";
+    *out << "ERROR: Unknown global in symbol reference\n\n";
     exit(-1);
   }
 
@@ -734,12 +734,12 @@ pair<Function *, Function *> mc2llvm::run() {
 
     for (auto &inst : mc_instrs) {
       llvmInstNum = 0;
-      *out << armInstNum << " : about to lift opcode " << inst.getOpcode()
+      *out << asmInstNum << " : about to lift opcode " << inst.getOpcode()
            << " " << (string)InstPrinter->getOpcodeName(inst.getOpcode())
            << "\n";
       liftInst(inst);
       *out << "    lifted\n";
-      ++armInstNum;
+      ++asmInstNum;
     }
 
     // machine code falls through but LLVM isn't allowed to
@@ -757,7 +757,7 @@ pair<Function *, Function *> mc2llvm::run() {
       }
     }
   }
-  *out << armInstNum << " assembly instructions\n";
+  *out << asmInstNum << " assembly instructions\n";
 
   *out << "encoding counts: ";
   for (auto &[enc, count] : encodingCounts) {
@@ -940,6 +940,9 @@ void mc2llvm::checkVectorTy(VectorType *Ty) {
     return;
   }
 vec_error:
+  // FIXME -- this is an AAPCS64 rule that we currently apply to every
+  // backend. it should move behind checkTypeSupport so each backend can
+  // state its own vector ABI constraints
   *out << "\nERROR: Only short vectors 8 and 16 bytes long are supported, "
           "in parameters and return values; please see Section 5.4 of "
           "AAPCS64 for more details\n\n";

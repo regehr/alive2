@@ -21,10 +21,6 @@
 #include "backend_tv/riscv2llvm.h"
 #include "backend_tv/streamerwrapper.h"
 
-// for reg_t and opcode_t; mc2llvm itself has no ASLP dependency, but the
-// AArch64 lifter is the one backend ASLP can accelerate
-#include "aslp/interface.h"
-
 #include <cmath>
 #include <vector>
 
@@ -232,19 +228,12 @@ public:
   // https://github.com/llvm/llvm-project/blob/93d1a623cecb6f732db7900baf230a13e6ac6c6a/llvm/lib/Target/AArch64/MCTargetDesc/AArch64AddressingModes.h#L74
   llvm::Value *regShift(llvm::Value *value, int encodedShift);
 
-  // maps an ASLP register reference onto our register file; used only by
-  // the ASLP adapter
-  llvm::AllocaInst *get_reg(aslp::reg_t regtype, uint64_t num);
-
   void platformInit() override;
 
   void checkArgSupport(llvm::Argument &arg) override;
-  void checkFuncSupport(llvm::Function &func) override;
   void checkTypeSupport(llvm::Type *ty) override;
 
   unsigned sentinelNOP() override;
-
-  std::optional<aslp::opcode_t> getArmOpcode(const llvm::MCInst &I);
 
   void lift(llvm::MCInst &I) override;
   void lift_add(unsigned opcode);
