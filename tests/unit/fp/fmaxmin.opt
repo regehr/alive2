@@ -48,42 +48,42 @@ Name: fmin, BOTH NaN
 %t = float %v
 
 Name: fmax, nondet
-%t = fmax float +0.0, float -0.0
+%t = fmax nsz float +0.0, float -0.0
   =>
 %t = float +0.0
 
 Name: fmax, nondet
-%t = fmax float +0.0, float -0.0
+%t = fmax nsz float +0.0, float -0.0
   =>
 %t = float -0.0
 
 Name: fmax, nondet
-%t = fmax float -0.0, float +0.0
+%t = fmax nsz float -0.0, float +0.0
   =>
 %t = float +0.0
 
 Name: fmax, nondet
-%t = fmax float -0.0, float +0.0
+%t = fmax nsz float -0.0, float +0.0
   =>
 %t = float -0.0
 
 Name: fmin, nondet
-%t = fmin float +0.0, float -0.0
+%t = fmin nsz float +0.0, float -0.0
   =>
 %t = float +0.0
 
 Name: fmin, nondet
-%t = fmin float +0.0, float -0.0
+%t = fmin nsz float +0.0, float -0.0
   =>
 %t = float -0.0
 
 Name: fmin, nondet
-%t = fmin float -0.0, float +0.0
+%t = fmin nsz float -0.0, float +0.0
   =>
 %t = float +0.0
 
 Name: fmin, nondet
-%t = fmin float -0.0, float +0.0
+%t = fmin nsz float -0.0, float +0.0
   =>
 %t = float -0.0
 

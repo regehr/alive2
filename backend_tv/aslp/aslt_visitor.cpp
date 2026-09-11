@@ -1,4 +1,5 @@
 #include "aslt_visitor.h"
+#include "backend_tv/arm_fp.h"
 #include "aslp/interface.h"
 #include "tree/TerminalNode.h"
 #include "llvm/Analysis/PostDominators.h"
@@ -1027,20 +1028,10 @@ std::any aslt_visitor::visitExprTApply(SemanticsParser::ExprTApplyContext *ctx) 
       x = coerce(x, iface.getFPType(x->getType()->getIntegerBitWidth()));
       y = coerce(y, iface.getFPType(y->getType()->getIntegerBitWidth()));
 
-      auto module = iface.ll_function().getParent();
-      auto op = llvm::Intrinsic::num_intrinsics;
-      if (name == "FPMax.0")
-        op = llvm::Intrinsic::maximum;
-      else if (name == "FPMin.0")
-        op = llvm::Intrinsic::minimum;
-      else if (name == "FPMaxNum.0")
-        op = llvm::Intrinsic::maxnum;
-      else if (name == "FPMinNum.0")
-        op = llvm::Intrinsic::minnum;
-
-      auto decl = llvm::Intrinsic::getOrInsertDeclaration(module, op, x->getType());
-      expr_t res = llvm::CallInst::Create(decl, {x, y}, iface.nextName(), iface.get_bb());
-      return res;
+      llvm::IRBuilder<> B(iface.get_bb());
+      return lifter::createArmFPMinMax(
+          B, x, y, name == "FPMin.0" || name == "FPMinNum.0",
+          name == "FPMinNum.0" || name == "FPMaxNum.0");
 
     } else if (name == "FPConvert.0") {
       // Convert floating point OP with N-bit precision to M-bit precision,

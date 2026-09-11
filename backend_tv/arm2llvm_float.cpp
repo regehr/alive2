@@ -1,4 +1,5 @@
 #include "backend_tv/arm2llvm.h"
+#include "backend_tv/arm_fp.h"
 
 #include "Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.h"
 
@@ -174,35 +175,28 @@ void arm2llvm::lift_fminmax(unsigned opcode) {
   auto a = readFromFPOperand(1, getRegSize(CurInst->getOperand(1).getReg()));
   auto b = readFromFPOperand(2, getRegSize(CurInst->getOperand(2).getReg()));
 
-  Function *decl{nullptr};
+  bool min = false, number = false;
   switch (opcode) {
   case AArch64::FMINSrr:
   case AArch64::FMINDrr:
-    decl = Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::minimum,
-                                             a->getType());
+    min = true;
     break;
   case AArch64::FMAXSrr:
   case AArch64::FMAXDrr:
-    decl = Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::maximum,
-                                             a->getType());
     break;
   case AArch64::FMINNMSrr:
   case AArch64::FMINNMDrr:
-    decl = Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::minnum,
-                                             a->getType());
+    min = number = true;
     break;
   case AArch64::FMAXNMSrr:
   case AArch64::FMAXNMDrr:
-    decl = Intrinsic::getOrInsertDeclaration(LiftedModule, Intrinsic::maxnum,
-                                             a->getType());
+    number = true;
     break;
   default:
     assert(false);
   }
-  assert(decl);
-
-  Value *res = CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
-  updateOutputReg(res);
+  IRBuilder<> B(LLVMBB);
+  updateOutputReg(createArmFPMinMax(B, a, b, min, number));
 }
 
 void arm2llvm::lift_fabs() {
