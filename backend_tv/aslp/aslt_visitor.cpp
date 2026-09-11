@@ -56,6 +56,34 @@ namespace {
    throw std::runtime_error(msg);
   }
 
+  // we are called in the middle of lifting, so the block we are inserting
+  // into -- and any block aslp has created but not yet linked up -- has no
+  // terminator yet. llvm's CFG iterators used to cope with that: a block
+  // whose getTerminator() returned null simply looked like it had zero
+  // successors, which is exactly what a dominator tree needs to treat an
+  // unfinished block as a leaf. llvm/llvm-project#186616 and #189416 took
+  // that tolerance away, and building a DominatorTree over a half-built
+  // function now asserts. cap every unterminated block with a throwaway
+  // unreachable for the lifetime of the trees to get the old CFG back.
+  class terminate_temporarily {
+    llvm::SmallVector<llvm::UnreachableInst*, 8> added;
+
+  public:
+    explicit terminate_temporarily(llvm::Function& f) {
+      for (auto& bb : f)
+        if (!bb.hasTerminator())
+          added.push_back(new llvm::UnreachableInst(f.getContext(), &bb));
+    }
+
+    ~terminate_temporarily() {
+      for (auto* u : added)
+        u->eraseFromParent();
+    }
+
+    terminate_temporarily(const terminate_temporarily&) = delete;
+    terminate_temporarily& operator=(const terminate_temporarily&) = delete;
+  };
+
   [[noreturn]] void die(const std::string_view& str, llvm::Value* val = nullptr) {
     require(false, str, val);
     assert(false && "unreachable");
@@ -221,47 +249,53 @@ expr_t aslt_visitor::ptr_expr(llvm::Value* x) {
       // alloc->dump();
       // std::cerr << "=";
 
-      llvm::DominatorTree dt{iface.ll_function()};
-      llvm::PostDominatorTree postdt{iface.ll_function()};
+      llvm::Value* uniqueStoredValue{nullptr};
+      {
+        terminate_temporarily fixup{iface.ll_function()};
+        llvm::DominatorTree dt{iface.ll_function()};
+        llvm::PostDominatorTree postdt{iface.ll_function()};
 
-      llvm::StoreInst* uniqueStore{nullptr};
-      for (const auto& x : alloc->uses()) {
-        auto user = x.getUser();
-        log() << "user: " << dump(user);
+        llvm::StoreInst* uniqueStore{nullptr};
+        for (const auto& x : alloc->uses()) {
+          auto user = x.getUser();
+          log() << "user: " << dump(user);
 
-        if (llvm::isa<llvm::LoadInst>(user)) continue;
+          if (llvm::isa<llvm::LoadInst>(user)) continue;
 
-        if (auto store = llvm::dyn_cast<llvm::StoreInst>(user); store) {
+          if (auto store = llvm::dyn_cast<llvm::StoreInst>(user); store) {
 
-          // NOTE: if this is a potential dominating store, record it
-          // if it post-dominates the existing recorded store.
-          if (dt.dominates(store, load)) {
-            if (uniqueStore != nullptr) {
-              if (postdt.dominates(store, uniqueStore)) {
-                uniqueStore = store;
-                continue;
-              } else if (postdt.dominates(uniqueStore, store)) {
-                continue;
+            // NOTE: if this is a potential dominating store, record it
+            // if it post-dominates the existing recorded store.
+            if (dt.dominates(store, load)) {
+              if (uniqueStore != nullptr) {
+                if (postdt.dominates(store, uniqueStore)) {
+                  uniqueStore = store;
+                  continue;
+                } else if (postdt.dominates(uniqueStore, store)) {
+                  continue;
+                }
+                uniqueStore = nullptr;
+                log() << "break, too many stores";
+                break;
               }
-              uniqueStore = nullptr;
-              log() << "break, too many stores";
-              break;
+              uniqueStore = store;
+              log() << "set";
+              continue;
             }
-            uniqueStore = store;
-            log() << "set";
-            continue;
+            // NOTE: if this store occurs after the load, disregard it.
+            if (dt.dominates(load, store)) {
+              continue;
+            }
+            log() << "not dominated";
           }
-          // NOTE: if this store occurs after the load, disregard it.
-          if (dt.dominates(load, store)) {
-            continue;
-          }
-          log() << "not dominated";
+          uniqueStore = nullptr;
+          break;
         }
-        uniqueStore = nullptr;
-        break;
-      }
 
-      auto uniqueStoredValue = uniqueStore ? uniqueStore->getValueOperand() : nullptr;
+        uniqueStoredValue = uniqueStore ? uniqueStore->getValueOperand() : nullptr;
+      }
+      // NOTE: the recursive call below may append to the current block, so it
+      // must happen after the throwaway terminators are gone.
       log() << '\n';
       log() << "unique stored value: " << dump(uniqueStoredValue) << std::endl;
       if (uniqueStoredValue) {
