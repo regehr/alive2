@@ -1150,6 +1150,42 @@ void riscv2llvm::lift(MCInst &I) {
       break;
     }
 
+  case RISCV::FCVTMOD_W_D: {
+    assert(CurInst->getOperand(2).getImm() == RISCVFPRndMode::RTZ);
+    auto src = readFromFPRegOperand(1, getFPType(64));
+    auto bits = createBitCast(src, i64ty);
+    auto exponent = createAnd(createRawLShr(bits, getUnsignedIntConst(52, 64)),
+                              getUnsignedIntConst(0x7ff, 64));
+    auto significand =
+        createOr(createAnd(bits, getUnsignedIntConst((1ULL << 52) - 1, 64)),
+                 getUnsignedIntConst(1ULL << 52, 64));
+
+    // A normal double has magnitude significand * 2^(exponent - 1023 - 52).
+    // Extract the low integer word directly; a saturating FP conversion would
+    // lose these bits for large finite inputs. Mask the shifts so both arms of
+    // the select are defined even for exponents outside the useful range.
+    auto shiftBias = getUnsignedIntConst(1023 + 52, 64);
+    auto right = createMaskedLShr(significand, createSub(shiftBias, exponent));
+    auto left = createMaskedShl(significand, createSub(exponent, shiftBias));
+    auto shiftRight = createICmp(ICmpInst::ICMP_ULT, exponent, shiftBias);
+    auto magnitude = createTrunc(createSelect(shiftRight, right, left), i32ty);
+    auto negative =
+        createICmp(ICmpInst::ICMP_SLT, bits, getUnsignedIntConst(0, 64));
+    auto zero = getUnsignedIntConst(0, 32);
+    auto result = createSelect(negative, createSub(zero, magnitude), magnitude);
+
+    // Values below 1 truncate to zero. At unbiased exponents >= 52+32, every
+    // finite value is a multiple of 2^32. The upper range also includes
+    // infinities and NaNs, for which FCVTMOD explicitly returns zero.
+    auto atLeastOne =
+        createICmp(ICmpInst::ICMP_UGE, exponent, getUnsignedIntConst(1023, 64));
+    auto hasLowBits = createICmp(ICmpInst::ICMP_ULT, exponent,
+                                 getUnsignedIntConst(1023 + 52 + 32, 64));
+    result = createSelect(createAnd(atLeastOne, hasLowBits), result, zero);
+    updateOutputReg(result, /*SExt=*/true);
+    break;
+  }
+
   case RISCV::FCVT_H_S:
   case RISCV::FCVT_H_D:
   case RISCV::FCVT_S_H:
@@ -1249,6 +1285,23 @@ void riscv2llvm::lift(MCInst &I) {
 
 #undef HANDLE_FP_BINARY_OP
 
+  case RISCV::FMINM_S:
+  case RISCV::FMINM_D:
+  case RISCV::FMAXM_S:
+  case RISCV::FMAXM_D: {
+    auto operandTy = getFPType(getRegSize(CurInst->getOperand(0).getReg()));
+    auto a = readFromFPRegOperand(1, operandTy);
+    auto b = readFromFPRegOperand(2, operandTy);
+    // Zfa uses IEEE minimum/maximum: either NaN input produces a canonical NaN.
+    auto id = opcode == RISCV::FMINM_S || opcode == RISCV::FMINM_D
+                  ? Intrinsic::minimum
+                  : Intrinsic::maximum;
+    auto decl = Intrinsic::getOrInsertDeclaration(LiftedModule, id, operandTy);
+    auto res = CallInst::Create(decl, {a, b}, nextName(), LLVMBB);
+    updateOutputReg(canonicalizeNaN(res));
+    break;
+  }
+
     CASE_FP_OPCODES(FSGNJN) : {
       auto operandSize = getRegSize(CurInst->getOperand(0).getReg());
       auto operandTy = getFPType(operandSize);
@@ -1300,7 +1353,12 @@ void riscv2llvm::lift(MCInst &I) {
     break;                                                                     \
   }
 
+    // Quiet comparisons differ only in exception flags, which we do not model.
+  case RISCV::FLTQ_S:
+  case RISCV::FLTQ_D:
     HANDLE_FP_CMP_OP(FLT, OLT);
+  case RISCV::FLEQ_S:
+  case RISCV::FLEQ_D:
     HANDLE_FP_CMP_OP(FLE, OLE);
     HANDLE_FP_CMP_OP(FEQ, OEQ);
 
