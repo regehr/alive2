@@ -53,6 +53,9 @@ class riscv2llvm final : public mc2llvm {
 
   void lift(llvm::MCInst &I) override;
   llvm::Value *liftRoundingToInt(llvm::Value *src, int64_t mode);
+  llvm::Value *liftRoundedFP(llvm::Intrinsic::ID id, llvm::Type *ty,
+                             llvm::ArrayRef<llvm::Value *> operands,
+                             int64_t mode);
 
   void checkCallingConv(llvm::Function *fn) override;
 
@@ -80,7 +83,8 @@ class riscv2llvm final : public mc2llvm {
   llvm::Value *readFromReg(unsigned Reg, llvm::Type *ty);
   llvm::Value *readFromFPReg(unsigned Reg, llvm::Type *ty);
   llvm::Value *readFromRegOperand(int idx, llvm::Type *ty);
-  llvm::Value *readFromFPRegOperand(int idx, llvm::Type *ty);
+  llvm::Value *readFromFPRegOperand(int idx, llvm::Type *ty,
+                                    bool checkNaNBox = true);
   llvm::Value *readPtrFromRegOperand(int idx);
   llvm::Value *lookupReg(unsigned Reg);
   llvm::Value *lookupFPReg(unsigned Reg);

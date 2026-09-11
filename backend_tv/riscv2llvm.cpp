@@ -359,10 +359,22 @@ Value *riscv2llvm::readFromRegOperand(int idx, Type *ty) {
   return readFromReg(op.getReg(), ty);
 }
 
-Value *riscv2llvm::readFromFPRegOperand(int idx, Type *ty) {
+Value *riscv2llvm::readFromFPRegOperand(int idx, Type *ty, bool checkNaNBox) {
   auto op = CurInst->getOperand(idx);
   assert(op.isReg());
-  return readFromFPReg(op.getReg(), ty);
+  auto value = readFromFPReg(op.getReg(), ty);
+  auto width = getBitWidth(value);
+  if (!checkNaNBox || width == 128)
+    return value;
+
+  // Non-transfer instructions treat improperly boxed inputs as canonical NaNs.
+  // updateFPReg boxes every narrower write to the 128-bit backing register,
+  // including the unused upper bits when the architectural FLEN is smaller.
+  auto bits = createLoad(getIntTy(128), lookupFPReg(op.getReg()));
+  auto mask = ConstantInt::get(Ctx, APInt::getHighBitsSet(128, 128 - width));
+  auto boxed = createICmp(ICmpInst::ICMP_EQ, createAnd(bits, mask), mask);
+  auto nan = ConstantFP::get(Ctx, APFloat::getQNaN(ty->getFltSemantics()));
+  return createSelect(boxed, value, nan);
 }
 
 Value *riscv2llvm::readPtrFromRegOperand(int idx) {
@@ -504,7 +516,7 @@ void riscv2llvm::platformInit() {
     if (argTy->isFloatingPointTy()) {
       if (floatArgNum < 8) {
         auto Reg = RISCV::F10_Q + floatArgNum;
-        createStore(val, lookupFPReg(Reg));
+        updateFPReg(val, Reg);
         ++floatArgNum;
         goto end;
       }
