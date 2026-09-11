@@ -670,19 +670,19 @@ void FpBinOp::print(ostream &os) const {
     os << ", exceptions=" << ex;
 }
 
-static expr fmin_fmax(State &s, const expr &a, const expr &b, const expr &rm,
-                      bool min) {
-  expr ndet = s.getFreshNondetVar("maxminnondet", true);
+static expr fmin_fmax(const expr &a, const expr &b, bool min) {
+  expr zpos = expr::mkNumber("0", a), zneg = expr::mkNumber("-0", a);
   expr cmp = min ? a.fole(b) : a.foge(b);
+  expr neg = min ? (a.isFPNegative() || b.isFPNegative())
+                 : (a.isFPNegative() && b.isFPNegative());
+  expr ordered = expr::mkIf(a.isFPZero() && b.isFPZero(),
+                            expr::mkIf(neg, zneg, zpos),
+                            expr::mkIf(cmp, a, b));
   return expr::mkIf(a.isNaN(), b,
-                    expr::mkIf(b.isNaN(), a,
-                               expr::mkIf(a.foeq(b),
-                                          expr::mkIf(ndet, a, b),
-                                          expr::mkIf(cmp, a, b))));
+                    expr::mkIf(b.isNaN(), a, ordered));
 }
 
-static expr fminimum_fmaximum(State &s, const expr &a, const expr &b,
-                              const expr &rm, bool min) {
+static expr fminimum_fmaximum(const expr &a, const expr &b, bool min) {
   expr zpos = expr::mkNumber("0", a), zneg = expr::mkNumber("-0", a);
   expr cmp = min ? a.fole(b) : a.foge(b);
   expr neg_cond = min ? (a.isFPNegative() || b.isFPNegative())
@@ -884,6 +884,37 @@ static StateValue fm_poison(State &s, expr a, const expr &ap,
                    ty, fmath, rm, bitwise, flags_in_only, to_ty, 1);
 }
 
+static StateValue fm_minmax(State &s, const StateValue &a, const StateValue &b,
+                            const Type &ty, FastMathFlags fmath,
+                            FpRoundingMode rm, bool min, bool number,
+                            bool snan_nondet) {
+  bool nsz = fmath.flags & FastMathFlags::NSZ;
+  // Min/max's nsz only relaxes mixed-sign zero ties. In particular, it must
+  // not change the sign when both operands are the same zero.
+  fmath.flags &= ~FastMathFlags::NSZ;
+  auto fn = [&](const expr &fa, const expr &fb, const expr &) {
+    expr result = number ? fmin_fmax(fa, fb, min)
+                         : fminimum_fmaximum(fa, fb, min);
+    if (snan_nondet) {
+      // SMT floating-point values do not distinguish signaling NaNs, so
+      // inspect the original bit patterns before applying LLVM's choice
+      // between propagating an sNaN and treating it as a qNaN.
+      auto &fp = *ty.getAsFloatType();
+      expr snan = fp.isNaN(a.value, true) || fp.isNaN(b.value, true);
+      if (!snan.isFalse())
+        result = expr::mkIf(snan && s.getFreshNondetVar("minmax.snan", true),
+                            expr::mkNaN(fa), result);
+    }
+    if (nsz)
+      result = expr::mkIf(fa.isFPZero() && fb.isFPZero(),
+                          expr::mkIf(s.getFreshNondetVar("minmax.zero", true),
+                                     fa, fb), result);
+    return result;
+  };
+  return fm_poison(s, a.value, a.non_poison, b.value, b.non_poison, fn,
+                   ty, fmath, rm, false);
+}
+
 StateValue FpBinOp::toSMT(State &s) const {
   function<expr(const expr&, const expr&, const expr&)> fn;
   bool bitwise = false;
@@ -929,31 +960,10 @@ StateValue FpBinOp::toSMT(State &s) const {
 
   case FMin:
   case FMax:
-    fn = [&](const expr &a, const expr &b, const expr &rm) {
-      return fmin_fmax(s, a, b, rm, op == FMin);
-    };
-    break;
-
   case FMinimum:
   case FMaximum:
-    fn = [&](const expr &a, const expr &b, const expr &rm) {
-      return fminimum_fmaximum(s, a, b, rm, op == FMinimum);
-    };
-    break;
-
   case FMinimumnum:
   case FMaximumnum:
-    fn = [&](const expr &a, const expr &b, const expr &rm) {
-      expr zpos = expr::mkNumber("0", a), zneg = expr::mkNumber("-0", a);
-      expr cmp = op == FMinimumnum ? a.fole(b) : a.foge(b);
-      expr neg_cond = op == FMinimumnum ? (a.isFPNegative() || b.isFPNegative())
-                                        : (a.isFPNegative() && b.isFPNegative());
-      expr e = expr::mkIf(a.isFPZero() && b.isFPZero(),
-                          expr::mkIf(neg_cond, zneg, zpos),
-                          expr::mkIf(cmp, a, b));
-
-      return expr::mkIf(a.isNaN(), b, expr::mkIf(b.isNaN(), a, e));
-    };
     break;
 
   case CopySign:
@@ -965,6 +975,12 @@ StateValue FpBinOp::toSMT(State &s) const {
   }
 
   auto scalar = [&](const auto &a, const auto &b, const Type &ty) {
+    if (op == FMin || op == FMax || op == FMinimum || op == FMaximum ||
+        op == FMinimumnum || op == FMaximumnum)
+      return fm_minmax(s, a, b, ty, fmath, rm,
+                        op == FMin || op == FMinimum || op == FMinimumnum,
+                        op != FMinimum && op != FMaximum,
+                        op == FMin || op == FMax);
     return fm_poison(s, a.value, a.non_poison, b.value, b.non_poison, fn,
                      ty, fmath, rm, bitwise);
   };
@@ -1450,37 +1466,20 @@ void FpUnaryReductionOp::print(ostream &os) const {
 }
 
 StateValue FpUnaryReductionOp::toSMT(State &s) const {
-  function<expr(const expr &, const expr &, const expr &)> fn;
-
-  switch (op) {
-  case FMin:
-  case FMax:
-    fn = [&](const expr &a, const expr &b, const expr &rm) {
-      return fmin_fmax(s, a, b, rm, op == FMin);
-    };
-    break;
-  case FMinimum:
-  case FMaximum:
-    fn = [&](const expr &a, const expr &b, const expr &rm) {
-      return fminimum_fmaximum(s, a, b, rm, op == FMinimum);
-    };
-    break;
-  default:
-    UNREACHABLE();
-  }
-
   auto &v = s[*val];
   auto vty = val->getType().getAsAggregateType();
   StateValue res;
 
+  // TODO: Model the unspecified reduction order for signaling NaNs.
   for (unsigned i = 0, e = vty->numElementsConst(); i != e; ++i) {
     auto ith = vty->extract(v, i);
     if (i == 0) {
       res = std::move(ith);
       continue;
     }
-    res = fm_poison(s, res.value, res.non_poison, ith.value, ith.non_poison, fn,
-                    getType(), fmath, rm, false);
+    res = fm_minmax(s, res, ith, getType(), fmath, rm,
+                    op == FMin || op == FMinimum,
+                    op == FMin || op == FMax, op == FMin || op == FMax);
   }
   return res;
 }
