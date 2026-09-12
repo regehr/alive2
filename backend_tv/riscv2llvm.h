@@ -41,6 +41,7 @@ namespace lifter {
 
 class riscv2llvm final : public mc2llvm {
   llvm::Value *initialFPReg[32]{nullptr};
+  std::map<unsigned, llvm::WeakTrackingVH> integerABICheckDecls;
 
   void updateOutputReg(llvm::Value *V, bool SExt = false) override;
 
@@ -66,10 +67,14 @@ class riscv2llvm final : public mc2llvm {
   unsigned branchInst() override;
 
   llvm::Value *enforceSExtZExt(llvm::Value *V, bool isSExt, bool isZExt);
+  llvm::Value *checkIntegerABI(llvm::Value *V, llvm::Type *ty, bool isSExt,
+                             bool isZExt);
+  void fixupOptimizedTgt(llvm::Function *tgt) override;
 
   unsigned sentinelNOP() override;
 
   void doReturn() override;
+  bool needsReturnTypeWidening() const override { return false; }
 
   void checkArgSupport(llvm::Argument &arg) override;
   void checkTypeSupport(llvm::Type *ty) override;
@@ -101,7 +106,8 @@ class riscv2llvm final : public mc2llvm {
   getBranchTargetsOperand(int op);
   llvm::Value *getPointerFromMCExpr();
   llvm::Value *getPointerOperand();
-  std::vector<llvm::Value *> marshallArgs(llvm::FunctionType *fTy);
+  std::vector<llvm::Value *> marshallArgs(llvm::FunctionType *fTy,
+                                        const llvm::CallInst &llvmCI);
 
 public:
   riscv2llvm(llvm::Function *srcFn, std::unique_ptr<llvm::MemoryBuffer> MB,

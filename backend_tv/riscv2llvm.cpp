@@ -99,6 +99,68 @@ Value *riscv2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
   return V;
 }
 
+Value *riscv2llvm::checkIntegerABI(Value *V, Type *ty, bool isSExt,
+                                 bool isZExt) {
+  assert(V->getType()->isIntegerTy(64));
+  assert(ty->isIntegerTy() && getBitWidth(ty) <= 64);
+  assert(!(isSExt && isZExt));
+  auto value = getBitWidth(ty) < 64 ? createTrunc(V, ty) : V;
+  // LLVM's RV64 signext/zeroext contracts extend to XLEN. In particular,
+  // signext i32 requires bits 63:32 as well as the low word to be correct.
+  // Unattributed integers leave their excess register bits unspecified.
+  if (!(isSExt || isZExt) || getBitWidth(ty) == 64)
+    return value;
+
+  auto valid = createICmp(ICmpInst::ICMP_EQ, V,
+                         enforceSExtZExt(value, isSExt, isZExt));
+
+  // Invalid representations become poison, rather than immediate UB: source
+  // poison may legally be returned or passed without satisfying the extension.
+  // Hide the select behind a helper until after optimization, which could
+  // otherwise refine away its poison arm and erase the ABI check.
+  auto &decl = integerABICheckDecls[getBitWidth(ty)];
+  if (!decl) {
+    string baseName = "__backend_tv_riscv_abi_i" + to_string(getBitWidth(ty));
+    string name = baseName;
+    for (unsigned suffix = 0; srcFn->getParent()->getNamedValue(name) ||
+                              LiftedModule->getNamedValue(name); ++suffix)
+      name = baseName + "." + to_string(suffix);
+    auto *fnTy = FunctionType::get(ty, {ty, getIntTy(1)}, false);
+    auto *fn = Function::Create(fnTy, GlobalValue::ExternalLinkage, name,
+                               LiftedModule);
+    fn->addFnAttr(Attribute::NoCallback);
+    fn->addFnAttr(Attribute::NoFree);
+    fn->addFnAttr(Attribute::NoSync);
+    fn->addFnAttr(Attribute::NoUnwind);
+    fn->addFnAttr(Attribute::WillReturn);
+    fn->setMemoryEffects(MemoryEffects::none());
+    decl = fn;
+  }
+  return CallInst::Create(cast<Function>(decl), {value, valid}, nextName(),
+                          LLVMBB);
+}
+
+void riscv2llvm::fixupOptimizedTgt(Function *tgt) {
+  mc2llvm::fixupOptimizedTgt(tgt);
+  for (auto &[width, decl] : integerABICheckDecls) {
+    if (!decl)
+      continue;
+    auto *fn = cast<Function>(decl);
+    while (!fn->use_empty()) {
+      auto *ci = cast<CallInst>(*fn->user_begin());
+      assert(ci->getCalledFunction() == fn && ci->getFunction() == tgt);
+      auto *value = SelectInst::Create(ci->getArgOperand(1), ci->getArgOperand(0),
+                                      PoisonValue::get(ci->getType()), "",
+                                      ci->getIterator());
+      value->takeName(ci);
+      ci->replaceAllUsesWith(value);
+      ci->eraseFromParent();
+    }
+    fn->eraseFromParent();
+  }
+  integerABICheckDecls.clear();
+}
+
 Value *riscv2llvm::lookupReg(unsigned Reg) {
   assert(Reg >= RISCV::X0 && Reg <= RISCV::X31);
   return RegFile[Reg];
@@ -193,7 +255,8 @@ Value *riscv2llvm::getIndexedElement(unsigned idx, unsigned eltSize,
   return nullptr;
 }
 
-vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy) {
+vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
+                                       const CallInst &llvmCI) {
   *out << "entering marshallArgs()\n";
   assert(fTy);
   if (fTy->getReturnType()->isStructTy()) {
@@ -246,7 +309,6 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy) {
       }
 #endif
     } else if (argTy->isIntegerTy() || argTy->isPointerTy()) {
-      // FIXME check signext and zeroext
       if (scalarArgNum < 8) {
         param = readFromReg(RISCV::X10 + scalarArgNum, getIntTy(64));
         ++scalarArgNum;
@@ -263,9 +325,12 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy) {
       if (argTy->isPointerTy()) {
         param = new IntToPtrInst(param, PointerType::get(Ctx, 0), "", LLVMBB);
       } else {
-        assert(argTy->getIntegerBitWidth() <= 64);
-        if (argTy->getIntegerBitWidth() < 64)
-          param = createTrunc(param, getIntTy(argTy->getIntegerBitWidth()));
+        // Use the parameter index, not its GPR index: FP arguments have their
+        // own register sequence. paramHasAttr checks both call and declaration.
+        unsigned argIdx = args.size();
+        param = checkIntegerABI(param, argTy,
+                                llvmCI.paramHasAttr(argIdx, Attribute::SExt),
+                                llvmCI.paramHasAttr(argIdx, Attribute::ZExt));
       }
     } else if (argTy->isFloatingPointTy()) {
       if (floatArgNum < 8) {
@@ -286,6 +351,7 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy) {
 void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
                         const string &calleeName) {
   *out << "entering doCall()\n";
+  assert(llvmCI);
 
   for (auto &arg : FC.getFunctionType()->params()) {
     if (auto vTy = dyn_cast<VectorType>(arg))
@@ -294,7 +360,7 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   if (auto RT = dyn_cast<VectorType>(FC.getFunctionType()->getReturnType()))
     checkVectorTy(RT);
 
-  auto args = marshallArgs(FC.getFunctionType());
+  auto args = marshallArgs(FC.getFunctionType(), *llvmCI);
 
   // ugh -- these functions have an LLVM "immediate" as their last
   // argument; this is not present in the assembly at all, we have
@@ -311,7 +377,6 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
 
   bool sext{false}, zext{false};
 
-  assert(llvmCI);
   if (llvmCI->hasFnAttr(Attribute::NoReturn)) {
     auto a = CI->getAttributes();
     auto a2 = a.addFnAttribute(Ctx, Attribute::NoReturn);
@@ -432,7 +497,6 @@ Value *riscv2llvm::readFromFPReg(unsigned Reg, Type *ty) {
 }
 
 void riscv2llvm::doReturn() {
-  auto i32ty = getIntTy(32);
   auto i64ty = getIntTy(64);
 
   // The ABI requires SP to be restored on every return path.
@@ -461,19 +525,9 @@ void riscv2llvm::doReturn() {
     if (retTyp->isPointerTy()) {
       retVal = new IntToPtrInst(retVal, PointerType::get(Ctx, 0), "", LLVMBB);
     } else {
-      auto retWidth = DL.getTypeSizeInBits(retTyp);
-      auto retValWidth = DL.getTypeSizeInBits(retVal->getType());
-
-      if (retWidth < retValWidth)
-        retVal = createTrunc(retVal, getIntTy(retWidth));
-
-      // mask off any don't-care bits
-      if (has_ret_attr && (origRetWidth < 32)) {
-        assert(retWidth >= origRetWidth);
-        assert(retWidth == 64);
-        auto trunc = createTrunc(retVal, i32ty);
-        retVal = createZExt(trunc, i64ty);
-      }
+      retVal = checkIntegerABI(retVal, retTyp,
+                               srcFn->hasRetAttribute(Attribute::SExt),
+                               srcFn->hasRetAttribute(Attribute::ZExt));
     }
     createReturn(retVal);
   }

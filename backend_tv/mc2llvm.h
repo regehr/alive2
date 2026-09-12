@@ -986,7 +986,7 @@ public:
   void checkSupport(llvm::Function *srcFn);
   void nameGlobals(llvm::Module *M);
   llvm::Function *adjustSrc(llvm::Function *srcFn);
-  void fixupOptimizedTgt(llvm::Function *tgt);
+  virtual void fixupOptimizedTgt(llvm::Function *tgt);
 
   /*
    * resolve a symbol reference to the corresponding lifted global. used by
@@ -1033,6 +1033,9 @@ public:
    * lift a function return
    */
   virtual void doReturn() = 0;
+  // Backends that check the ABI register representation explicitly can keep
+  // the source return type instead of widening it in adjustSrc.
+  virtual bool needsReturnTypeWidening() const { return true; }
   /*
    * return an unconditional direct branch opcode, it should take a
    * single argument: the target BB

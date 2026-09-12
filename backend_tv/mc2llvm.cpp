@@ -1099,7 +1099,7 @@ void mc2llvm::nameGlobals(Module *M) {
 /*
  * a function that have the sext or zext attribute on its return value
  * is awkward: this obligates the function to sign- or zero-extend the
- * return value. we want to check this, which requires making the
+ * return value. backends that don't check this explicitly make the
  * function return a wider type, which requires cloning the function.
  *
  * cloning a function is an awkward case and we'd like to thoroughly
@@ -1140,7 +1140,8 @@ Function *mc2llvm::adjustSrc(Function *srcFn) {
                  srcFn->hasRetAttribute(Attribute::ZExt);
 
   Type *actualRetTy = nullptr;
-  if (has_ret_attr && origRetWidth != 32 && origRetWidth != 64) {
+  if (needsReturnTypeWidening() && has_ret_attr && origRetWidth != 32 &&
+      origRetWidth != 64) {
     auto *i32 = Type::getIntNTy(srcFn->getContext(), 32);
     auto *i64 = Type::getIntNTy(srcFn->getContext(), 64);
 
