@@ -263,7 +263,7 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy) {
       }
     } else if (argTy->isFloatingPointTy()) {
       if (floatArgNum < 8) {
-        param = readFromFPReg(RISCV::F10_Q + floatArgNum, argTy);
+        param = readFPABIReg(RISCV::F10_Q + floatArgNum, argTy);
         ++floatArgNum;
       } else {
         assert(false);
@@ -368,13 +368,28 @@ Value *riscv2llvm::readFromFPRegOperand(int idx, Type *ty, bool checkNaNBox) {
     return value;
 
   // Non-transfer instructions treat improperly boxed inputs as canonical NaNs.
-  // updateFPReg boxes every narrower write to the 128-bit backing register,
-  // including the unused upper bits when the architectural FLEN is smaller.
-  auto bits = createLoad(getIntTy(128), lookupFPReg(op.getReg()));
-  auto mask = ConstantInt::get(Ctx, APInt::getHighBitsSet(128, 128 - width));
-  auto boxed = createICmp(ICmpInst::ICMP_EQ, createAnd(bits, mask), mask);
+  auto boxed = isNaNBoxed(op.getReg(), width);
   auto nan = ConstantFP::get(Ctx, APFloat::getQNaN(ty->getFltSemantics()));
   return createSelect(boxed, value, nan);
+}
+
+Value *riscv2llvm::isNaNBoxed(unsigned Reg, unsigned width) {
+  assert(width == 16 || width == 32 || width == 64 || width == 128);
+  if (width == 128)
+    return getBoolConst(true);
+
+  // updateFPReg boxes every narrower write to the 128-bit backing register,
+  // including the unused upper bits when the architectural FLEN is smaller.
+  auto bits = createLoad(getIntTy(128), lookupFPReg(Reg));
+  auto mask = ConstantInt::get(Ctx, APInt::getHighBitsSet(128, 128 - width));
+  return createICmp(ICmpInst::ICMP_EQ, createAnd(bits, mask), mask);
+}
+
+Value *riscv2llvm::readFPABIReg(unsigned Reg, Type *ty) {
+  // Call arguments and return values must satisfy the ABI's NaN-boxing rule.
+  // Assert the representation rather than replacing an invalid box with a NaN.
+  assertTrue(isNaNBoxed(Reg, getBitWidth(ty)));
+  return readFromFPReg(Reg, ty);
 }
 
 Value *riscv2llvm::readPtrFromRegOperand(int idx) {
@@ -419,7 +434,7 @@ void riscv2llvm::doReturn() {
   if (retTyp->isVoidTy()) {
     createReturn(nullptr);
   } else if (retTyp->isFloatingPointTy()) {
-    createReturn(readFromFPReg(RISCV::F10_Q, retTyp));
+    createReturn(readFPABIReg(RISCV::F10_Q, retTyp));
   } else {
     Value *retVal{nullptr};
     // FIXME handle vectors

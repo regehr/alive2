@@ -82,6 +82,8 @@ class riscv2llvm final : public mc2llvm {
   unsigned mapRegToBackingReg(unsigned Reg);
   llvm::Value *readFromReg(unsigned Reg, llvm::Type *ty);
   llvm::Value *readFromFPReg(unsigned Reg, llvm::Type *ty);
+  llvm::Value *isNaNBoxed(unsigned Reg, unsigned width);
+  llvm::Value *readFPABIReg(unsigned Reg, llvm::Type *ty);
   llvm::Value *readFromRegOperand(int idx, llvm::Type *ty);
   llvm::Value *readFromFPRegOperand(int idx, llvm::Type *ty,
                                     bool checkNaNBox = true);

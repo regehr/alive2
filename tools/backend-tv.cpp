@@ -273,8 +273,9 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
 
   unique_ptr<llvm::MemoryBuffer> AsmBuffer;
   std::unordered_map<unsigned, llvm::Instruction *> lineMap;
+  // Handwritten assembly can use .loc to identify source calls too.
+  lifter::addDebugInfo(srcFn, lineMap);
   if (opt_asm_input == "") {
-    lifter::addDebugInfo(srcFn, lineMap);
     AsmBuffer = lifter::generateAsm(*srcModule, Targ, DefaultTT, DefaultCPU,
                                     DefaultFeatures);
   } else {
