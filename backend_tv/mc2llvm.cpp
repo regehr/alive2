@@ -1,4 +1,5 @@
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/ModRef.h"
@@ -717,6 +718,8 @@ pair<Function *, Function *> mc2llvm::run() {
   Str->checkEntryBlock(branchInst());
   Str->generateSuccessors();
 
+  set<BasicBlock *> fallthroughBlocks;
+
   // we'll want this later
   vector<Type *> args{getIntTy(1)};
   FunctionType *assertTy = FunctionType::get(Type::getVoidTy(Ctx), args, false);
@@ -779,6 +782,12 @@ pair<Function *, Function *> mc2llvm::run() {
     MCBB = mc_bb;
     auto &mc_instrs = mc_bb->getInstrs();
 
+    // A final conditional branch has no modeled destination for its untaken
+    // path. A single successor must not make both outcomes take the branch.
+    if (MCBB == &Str->MF.BBs.back() &&
+        IA->isConditionalBranch(mc_instrs.back()))
+      fallthroughBlocks.insert(LLVMBB);
+
     *out << "entering new bb\n";
 
     for (auto &inst : mc_instrs) {
@@ -795,16 +804,40 @@ pair<Function *, Function *> mc2llvm::run() {
     if (!LLVMBB->hasTerminator()) {
       auto succs = MCBB->getSuccs().size();
       if (succs == 0) {
-        // this should only happen when we have a function with a
-        // single, empty basic block, which should only when we
-        // started with an LLVM function whose body is something
-        // like UNREACHABLE
-        doReturn();
+        // Supply a terminator for now, but reject any reachable fallthrough
+        // below, before optimization could exploit this unreachable.
+        fallthroughBlocks.insert(LLVMBB);
+        createUnreachable();
       } else if (succs == 1) {
         auto *dst = getBBByName(MCBB->getSuccs()[0]->getName());
         createBranch(dst);
       }
     }
+  }
+
+  // Labels after a return can leave unreachable trailing blocks. Use the
+  // lifted CFG: generic MC instruction metadata does not recognize every
+  // return encoding (e.g. RISC-V JALR zero, ra, 0).
+  set<BasicBlock *> reachableBlocks;
+  vector<BasicBlock *> worklist{&liftedFn->getEntryBlock()};
+  while (!worklist.empty()) {
+    auto *bb = worklist.back();
+    worklist.pop_back();
+    if (!reachableBlocks.insert(bb).second)
+      continue;
+    bool noReturn = false;
+    for (auto &inst : *bb)
+      if (auto *call = dyn_cast<CallBase>(&inst))
+        noReturn |= call->doesNotReturn();
+    if (noReturn)
+      continue;
+    if (fallthroughBlocks.contains(bb)) {
+      *out << "\nERROR: Assembly falls through past the end of the function\n";
+      exit(-1);
+    }
+    if (bb->getTerminator())
+      for (auto *succ : successors(bb))
+        worklist.push_back(succ);
   }
   *out << asmInstNum << " assembly instructions\n";
 
