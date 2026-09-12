@@ -732,10 +732,12 @@ pair<Function *, Function *> mc2llvm::run() {
       Function::Create(srcFn->getFunctionType(), GlobalValue::ExternalLinkage,
                        0, srcFn->getName(), LiftedModule);
   liftedFn->copyAttributesFrom(srcFn);
-  // Account for the helpers' side effects even if the source is memory(none)
-  // or speculatable. Keeping these conservative attributes after fixup is safe.
-  liftedFn->setMemoryEffects(liftedFn->getMemoryEffects() |
-                             MemoryEffects::inaccessibleMemOnly());
+  // The source function's memory effects don't describe the lifted code: it
+  // calls the unknown-value helpers, and it accesses its own stack frame
+  // through pointers materialized from SP with inttoptr. Alive2 can't tell
+  // that such a physical pointer stays inside a local block, so anything
+  // narrower than unknown() makes every stack access UB in the target.
+  liftedFn->setMemoryEffects(MemoryEffects::unknown());
   liftedFn->removeFnAttr(Attribute::Speculatable);
 
   // create LLVM-side basic blocks
