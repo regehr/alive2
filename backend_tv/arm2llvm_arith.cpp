@@ -23,7 +23,8 @@ void arm2llvm::lift_sdiv(unsigned opcode) {
   auto zero = getUnsignedIntConst(0, size);
   auto lhs = readFromOperand(1);
   auto rhs = readFromOperand(2);
-  auto result = createCheckedSDiv(lhs, rhs, zero, zero);
+  // AArch64 returns INT_MIN on signed overflow and zero on division by zero.
+  auto result = createCheckedSDiv(lhs, rhs, zero, getSignedMinConst(size));
   updateOutputReg(result);
 }
 
