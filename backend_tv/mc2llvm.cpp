@@ -1,6 +1,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/Support/ModRef.h"
 
 #include "backend_tv/lifter.h"
 #include "backend_tv/mc2llvm.h"
@@ -628,8 +629,36 @@ void mc2llvm::liftInst(MCInst &I) {
   lift(I);
 }
 
+CallInst *mc2llvm::createUnknownInt(unsigned Width) {
+  auto &decl = unknownIntDecls[Width];
+  if (!decl) {
+    // Source symbols are copied lazily. Reserve their names too, so a helper
+    // cannot force a real external function or global to be renamed later.
+    string baseName = "__backend_tv_unknown_i" + to_string(Width);
+    string name = baseName;
+    for (unsigned suffix = 0; srcFn->getParent()->getNamedValue(name) ||
+                              LiftedModule->getNamedValue(name); ++suffix)
+      name = baseName + "." + to_string(suffix);
+    auto *Ty = FunctionType::get(getIntTy(Width), false);
+    auto *F = Function::Create(Ty, GlobalValue::ExternalLinkage, name,
+                              LiftedModule);
+    F->addRetAttr(Attribute::NoUndef);
+    F->addFnAttr(Attribute::NoCallback);
+    F->addFnAttr(Attribute::NoFree);
+    F->addFnAttr(Attribute::NoSync);
+    F->addFnAttr(Attribute::NoUnwind);
+    F->addFnAttr(Attribute::WillReturn);
+    // Each dynamic call must produce an independent value. A memory(none)
+    // helper could be CSE'd or hoisted out of loops. Synthetic inaccessible
+    // memory effects prevent this without interfering with register storage.
+    F->setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
+    decl = F;
+  }
+  return CallInst::Create(cast<Function>(decl), {}, nextName(), LLVMBB);
+}
+
 void mc2llvm::invalidateReg(unsigned Reg, unsigned Width) {
-  auto F = createFreeze(PoisonValue::get(getIntTy(Width)));
+  auto F = createUnknownInt(Width);
   createStore(F, RegFile[Reg]);
 }
 
@@ -638,7 +667,7 @@ void mc2llvm::invalidateReg(unsigned Reg, unsigned Width) {
 void mc2llvm::createRegStorage(unsigned Reg, unsigned Width,
                                const string &Name) {
   auto A = createAlloca(getIntTy(Width), getUnsignedIntConst(1, 64), Name);
-  auto F = createFreeze(PoisonValue::get(getIntTy(Width)));
+  auto F = createUnknownInt(Width);
   createStore(F, A);
   RegFile[Reg] = A;
 }
@@ -700,6 +729,11 @@ pair<Function *, Function *> mc2llvm::run() {
       Function::Create(srcFn->getFunctionType(), GlobalValue::ExternalLinkage,
                        0, srcFn->getName(), LiftedModule);
   liftedFn->copyAttributesFrom(srcFn);
+  // Account for the helpers' side effects even if the source is memory(none)
+  // or speculatable. Keeping these conservative attributes after fixup is safe.
+  liftedFn->setMemoryEffects(liftedFn->getMemoryEffects() |
+                             MemoryEffects::inaccessibleMemOnly());
+  liftedFn->removeFnAttr(Attribute::Speculatable);
 
   // create LLVM-side basic blocks
   vector<pair<BasicBlock *, MCBasicBlock *>> BBs;
@@ -1169,6 +1203,30 @@ Function *mc2llvm::adjustSrc(Function *srcFn) {
 }
 
 void mc2llvm::fixupOptimizedTgt(Function *tgt) {
+  // Freeze poison is a defined but arbitrary machine value. LLVM may refine
+  // it to zero, so we hide it behind opaque calls until optimization is done.
+  // Restore one freeze per surviving call, preserving its dynamic placement
+  // and sharing its result between all uses. Track helpers by identity, not
+  // name, so source functions cannot be mistaken for our placeholders.
+  for (auto &[Width, decl] : unknownIntDecls) {
+    if (!decl)
+      continue;
+    auto *F = cast<Function>(decl);
+    while (!F->use_empty()) {
+      auto *ci = cast<CallInst>(*F->user_begin());
+      assert(ci->getCalledFunction() == F && ci->getFunction() == tgt);
+      if (!ci->use_empty()) {
+        auto *freeze = new FreezeInst(PoisonValue::get(ci->getType()), "",
+                                      ci->getIterator());
+        freeze->takeName(ci);
+        ci->replaceAllUsesWith(freeze);
+      }
+      ci->eraseFromParent();
+    }
+    F->eraseFromParent();
+  }
+  unknownIntDecls.clear();
+
   /*
    * these attributes can be soundly removed, and a good thing too
    * since they cause spurious TV failures in ASM memory mode

@@ -1,3 +1,9 @@
+; XFAIL: ERROR: Value mismatch
+; LLVM currently overwrites the dividend with the quotient in x8, then emits
+; "msub w8, w8, w1, w8". With initial w8 = 2 and divisor x1 = 2, this
+; returns 63, while the source remainder can only be 0 or 1. Preserving
+; unknown register values through optimization exposes this codegen bug.
+
 target datalayout = "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128"
 target triple = "aarch64-linux-gnu"
 

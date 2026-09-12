@@ -104,6 +104,8 @@ liftFunc(Function *srcFn, unique_ptr<MemoryBuffer> MB,
     exit(-1);
   }
 
+  // Keep general LLVM optimization before this fixup: it restores unknown
+  // machine values as freeze poison, which LLVM could otherwise refine to zero.
   lifter->fixupOptimizedTgt(tgtFn);
 
   *out << "\n\noptimized lifted code:\n\n";

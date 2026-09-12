@@ -151,10 +151,10 @@ Value *arm2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
   if (isZExt && getBitWidth(V) < targetWidth)
     V = createZExt(V, getIntTy(targetWidth));
 
-  // finally, pad out any remaining bits with junk (frozen poisons)
+  // finally, pad out any remaining bits with unknown values
   auto junkBits = targetWidth - getBitWidth(V);
   if (junkBits > 0) {
-    auto junk = createFreeze(PoisonValue::get(getIntTy(junkBits)));
+    auto junk = createUnknownInt(junkBits);
     auto ext1 = createZExt(junk, getIntTy(targetWidth));
     auto shifted =
         createRawShl(ext1, getUnsignedIntConst(getBitWidth(V), targetWidth));

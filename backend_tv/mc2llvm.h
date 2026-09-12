@@ -88,6 +88,7 @@ public:
   llvm::Function *myAlloc{nullptr};
   llvm::WeakTrackingVH myAllocVH{nullptr};
   llvm::Constant *stackSize{nullptr};
+  std::map<unsigned, llvm::WeakTrackingVH> unknownIntDecls;
 
   const uint16_t NO_SPECIFIER = 0xfff;
 
@@ -829,9 +830,7 @@ public:
                                         nextName(), LLVMBB);
   }
 
-  llvm::FreezeInst *createFreeze(llvm::Value *v) {
-    return new llvm::FreezeInst(v, nextName(), LLVMBB);
-  }
+  llvm::CallInst *createUnknownInt(unsigned Width);
 
   llvm::Value *createTrunc(llvm::Value *v, llvm::Type *t) {
     if (v->getType() == t)
