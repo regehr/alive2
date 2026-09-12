@@ -2541,8 +2541,8 @@ void arm2llvm::lift_sli_sri(unsigned opcode) {
   case AArch64::SRIv4i32_shift:
   case AArch64::SRId:
   case AArch64::SRIv2i64_shift:
-    shifted_a = createMaskedLShr(a, shiftVec);
-    maskAmt = ((1ULL << shiftAmt) - 1) << (eltSize - shiftAmt);
+    shifted_a = createSIMDRightShiftImm(a, shiftAmt, false);
+    maskAmt = APInt::getHighBitsSet(eltSize, shiftAmt).getZExtValue();
     break;
   default:
     assert(false && "Invalid opcode for SLI");
