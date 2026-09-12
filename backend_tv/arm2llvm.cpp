@@ -754,7 +754,7 @@ tuple<Value *, Value *, Value *, Value *> arm2llvm::FPCompare(Value *a,
   return {
       createFCmp(FCmpInst::Predicate::FCMP_OLT, a, b),
       createFCmp(FCmpInst::Predicate::FCMP_OEQ, a, b),
-      createFCmp(FCmpInst::Predicate::FCMP_UGT, a, b),
+      createFCmp(FCmpInst::Predicate::FCMP_UGE, a, b),
       createFCmp(FCmpInst::Predicate::FCMP_UNO, a, b),
   };
 }

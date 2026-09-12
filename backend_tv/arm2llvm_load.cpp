@@ -78,7 +78,7 @@ void arm2llvm::lift_ldp_2(unsigned opcode) {
 
   bool isPre = opcode == AArch64::LDPWpre || opcode == AArch64::LDPSpre ||
                opcode == AArch64::LDPXpre || opcode == AArch64::LDPDpre ||
-               opcode == AArch64::LDPQpre;
+               opcode == AArch64::LDPQpre || opcode == AArch64::LDPSWpre;
 
   Value *loaded1, *loaded2;
   if (isPre) {
