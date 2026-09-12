@@ -158,6 +158,9 @@ public:
                  bool splatImm2, bool immShift, bool isUpper,
                  bool operandTypesDiffer);
 
+  llvm::Value *createSIMDRightShiftImm(llvm::Value *a, uint64_t shiftAmt,
+                                      bool isSigned);
+
   llvm::Value *getIndexedElement(unsigned idx, unsigned eltSize,
                                  unsigned reg) override;
 

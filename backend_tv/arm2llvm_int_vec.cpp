@@ -540,6 +540,22 @@ void arm2llvm::lift_xtn(unsigned opcode) {
   updateOutputReg(final_vector);
 }
 
+Value *arm2llvm::createSIMDRightShiftImm(Value *a, uint64_t shiftAmt,
+                                        bool isSigned) {
+  auto eltSize = a->getType()->getScalarSizeInBits();
+  assert(shiftAmt >= 1 && shiftAmt <= eltSize);
+
+  // AArch64 permits a shift by the lane width; LLVM makes it poison.
+  // Logical shifts produce zero, and arithmetic shifts produce sign fill.
+  if (shiftAmt == eltSize) {
+    if (!isSigned)
+      return Constant::getNullValue(a->getType());
+    --shiftAmt;
+  }
+  auto shift = ConstantInt::get(a->getType(), shiftAmt);
+  return isSigned ? createRawAShr(a, shift) : createRawLShr(a, shift);
+}
+
 void arm2llvm::lift_ssra(unsigned opcode) {
   unsigned numElts = -1, eltSize = -1;
   switch (opcode) {
@@ -579,12 +595,11 @@ void arm2llvm::lift_ssra(unsigned opcode) {
     assert(false);
   }
 
-  Value *a, *b, *c;
+  Value *a, *c;
   a = readFromVecOperand(2, eltSize, numElts);
-  b = getElemSplat(numElts, eltSize, getImm(3));
   c = readFromVecOperand(1, eltSize, numElts);
 
-  auto shiftedVec = createMaskedAShr(a, b);
+  auto shiftedVec = createSIMDRightShiftImm(a, getImm(3), true);
   auto res = createAdd(shiftedVec, c);
   updateOutputReg(res);
 }
@@ -762,9 +777,12 @@ void arm2llvm::lift_vec_binop(unsigned opcode) {
   case AArch64::USHRv16i8_shift:
   case AArch64::USHRv8i16_shift:
   case AArch64::USHRv4i32_shift:
+  case AArch64::USHRv2i64_shift:
   case AArch64::USHRd:
     splatImm2 = true;
-    op = [&](Value *a, Value *b) { return createMaskedLShr(a, b); };
+    op = [&](Value *a, Value *) {
+      return createSIMDRightShiftImm(a, getImm(2), false);
+    };
     break;
   case AArch64::MULv2i32:
   case AArch64::MULv8i8:
@@ -783,7 +801,9 @@ void arm2llvm::lift_vec_binop(unsigned opcode) {
   case AArch64::SSHRd:
   case AArch64::SSHRv2i64_shift:
     splatImm2 = true;
-    op = [&](Value *a, Value *b) { return createMaskedAShr(a, b); };
+    op = [&](Value *a, Value *) {
+      return createSIMDRightShiftImm(a, getImm(2), true);
+    };
     break;
   case AArch64::SHLv16i8_shift:
   case AArch64::SHLv8i16_shift:
@@ -985,10 +1005,6 @@ void arm2llvm::lift_vec_binop(unsigned opcode) {
     ext = extKind::ZExt;
     splatImm2 = true;
     op = [&](Value *a, Value *b) { return createRawShl(a, b); };
-    break;
-  case AArch64::USHRv2i64_shift:
-    splatImm2 = true;
-    op = [&](Value *a, Value *b) { return createRawLShr(a, b); };
     break;
   default:
     assert(false && "missed a case");
@@ -3073,16 +3089,8 @@ void arm2llvm::lift_usra(unsigned opcode) {
   assert(numElts != 999 && eltSize != 999);
   auto a = readFromVecOperand(1, eltSize, numElts);
   auto b = readFromVecOperand(2, eltSize, numElts);
-  auto exp = getImm(3);
-  Value *res = getUndefVec(numElts, eltSize);
-  for (unsigned i = 0; i < numElts; ++i) {
-    auto e1 = createExtractElement(a, i);
-    auto e2 = createExtractElement(b, i);
-    auto shift = createMaskedLShr(e2, getUnsignedIntConst(exp, eltSize));
-    auto sum = createAdd(e1, shift);
-    res = createInsertElement(res, sum, i);
-  }
-  updateOutputReg(res);
+  auto shiftedVec = createSIMDRightShiftImm(b, getImm(3), false);
+  updateOutputReg(createAdd(a, shiftedVec));
 }
 
 void arm2llvm::lift_zip1(unsigned opcode) {
