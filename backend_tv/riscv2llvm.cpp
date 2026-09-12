@@ -411,7 +411,9 @@ void riscv2llvm::doReturn() {
   auto i32ty = getIntTy(32);
   auto i64ty = getIntTy(64);
 
-  // FIXME add ABI checks -- this function needs a bunch of work!
+  // The ABI requires SP to be restored on every return path.
+  assertSame(initialSP, readFromReg(RISCV::X2, i64ty));
+  // FIXME: check the return address and callee-saved registers too.
 
   auto *retTyp = srcFn->getReturnType();
   if (retTyp->isVoidTy()) {
