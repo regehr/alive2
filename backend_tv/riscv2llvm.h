@@ -40,6 +40,8 @@
 namespace lifter {
 
 class riscv2llvm final : public mc2llvm {
+  llvm::Value *initialFPReg[32]{nullptr};
+
   void updateOutputReg(llvm::Value *V, bool SExt = false) override;
 
   llvm::Value *makeLoadWithOffset(llvm::Value *base, llvm::Value *offset,

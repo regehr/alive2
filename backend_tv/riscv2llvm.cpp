@@ -19,6 +19,12 @@ using namespace std;
 using namespace lifter;
 using namespace llvm;
 
+// The integer and LP64D floating-point ABIs use the same saved register indices:
+// s0-s11 and fs0-fs11, respectively.
+static bool isCalleeSavedReg(unsigned reg) {
+  return reg == 8 || reg == 9 || (reg >= 18 && reg <= 27);
+}
+
 riscv2llvm::riscv2llvm(
     Function *srcFn, unique_ptr<MemoryBuffer> MB,
     std::unordered_map<unsigned, llvm::Instruction *> &lineMap,
@@ -327,18 +333,21 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
 
   auto RV = enforceSExtZExt(CI, sext, zext);
 
-  // invalidate machine state that is not guaranteed to be preserved across a
-  // call
-  for (unsigned reg = 5; reg <= 7; ++reg)
-    invalidateReg(RISCV::X0 + reg, 64);
-  for (unsigned reg = 28; reg <= 31; ++reg)
-    invalidateReg(RISCV::X0 + reg, 64);
+  // Calls overwrite ra; its precise link address is not modeled yet.
+  invalidateReg(RISCV::X1, 64);
+  // Invalidate t0-t6 and a0-a7 before installing the return value below.
+  for (unsigned reg = 5; reg <= 31; ++reg)
+    if (!isCalleeSavedReg(reg))
+      invalidateReg(RISCV::X0 + reg, 64);
 
-#if 0
-  // invalidate argument regs?
-  for (unsigned reg = 10; reg <= 17; ++reg)
-    invalidateReg(RISCV::X0 + reg, 64);
-#endif
+  // The supported LP64D ABI preserves fs0-fs11, but not ft0-ft11 or fa0-fa7.
+  // Only 64 bits are architectural; keep the unused backing bits NaN-boxed.
+  for (unsigned reg = 0; reg < 32; ++reg) {
+    if (!isCalleeSavedReg(reg)) {
+      auto value = createBitCast(createUnknownInt(64), getFPType(64));
+      updateFPReg(value, RISCV::F0_Q + reg);
+    }
+  }
 
   auto retTy = FC.getFunctionType()->getReturnType();
   if (retTy->isIntegerTy() || retTy->isPointerTy()) {
@@ -428,7 +437,17 @@ void riscv2llvm::doReturn() {
 
   // The ABI requires SP to be restored on every return path.
   assertSame(initialSP, readFromReg(RISCV::X2, i64ty));
-  // FIXME: check the return address and callee-saved registers too.
+  for (unsigned reg = 0; reg < 32; ++reg) {
+    // gp and tp are fixed registers, in addition to the callee-saved GPRs.
+    if (reg == 3 || reg == 4 || isCalleeSavedReg(reg))
+      assertSame(initialReg[reg], readFromReg(RISCV::X0 + reg, i64ty));
+    if (isCalleeSavedReg(reg)) {
+      // Compare the LP64D-preserved bits, including NaN payloads and signs.
+      auto bits = createLoad(i64ty, lookupFPReg(RISCV::F0_Q + reg));
+      assertSame(initialFPReg[reg], bits);
+    }
+  }
+  // FIXME: check the return address too.
 
   auto *retTyp = srcFn->getReturnType();
   if (retTyp->isVoidTy()) {
@@ -469,7 +488,7 @@ void riscv2llvm::platformInit() {
     stringstream Name;
     Name << "X" << Reg - RISCV::X0;
     createRegStorage(Reg, 64, Name.str());
-    // initialReg[Reg - RISCV::X0] = readFromReg(Reg, i64ty);
+    initialReg[Reg - RISCV::X0] = readFromReg(Reg, i64ty);
   }
 
   // allocate storage for the float register file
@@ -477,6 +496,8 @@ void riscv2llvm::platformInit() {
     stringstream Name;
     Name << "F" << Reg - RISCV::F0_Q;
     createRegStorage(Reg, 128, Name.str());
+    if (isCalleeSavedReg(Reg - RISCV::F0_Q))
+      initialFPReg[Reg - RISCV::F0_Q] = createLoad(i64ty, lookupFPReg(Reg));
   }
 
   // allocate floating-point control and status register
