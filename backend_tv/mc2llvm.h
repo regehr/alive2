@@ -954,9 +954,9 @@ public:
   // Reads an Expr and gets the global variable corresponding the containing
   // string variable. Assuming the Expr consists of a single global variable.
   std::pair<llvm::Value *, uint16_t> getExprVar(const llvm::MCExpr *expr);
-  // negative shift exponents go the other direction
+  // The signed low byte controls direction; oversized shifts produce zero.
   llvm::Value *createUSHL(llvm::Value *a, llvm::Value *b);
-  // negative shift exponents go the other direction
+  // The signed low byte controls direction; oversized right shifts sign-fill.
   llvm::Value *createSSHL(llvm::Value *a, llvm::Value *b);
   llvm::Value *rev(llvm::Value *in, unsigned eltSize, unsigned amt);
   llvm::Value *dupElts(llvm::Value *v, unsigned numElts, unsigned eltSize);

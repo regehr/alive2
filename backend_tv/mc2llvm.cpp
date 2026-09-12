@@ -333,20 +333,35 @@ pair<Value *, uint16_t> mc2llvm::getExprVar(const MCExpr *expr) {
 }
 
 Value *mc2llvm::createUSHL(Value *a, Value *b) {
-  auto zero = getUnsignedIntConst(0, getBitWidth(b));
+  auto size = getBitWidth(b);
+  if (size > 8)
+    b = createSExt(createTrunc(b, getIntTy(8)), b->getType());
+  auto zero = getUnsignedIntConst(0, size);
+  auto width = getUnsignedIntConst(size, size);
   auto c = createICmp(ICmpInst::Predicate::ICMP_SGT, b, zero);
   auto neg = createSub(zero, b);
-  auto posRes = createMaskedShl(a, b);
-  auto negRes = createMaskedLShr(a, neg);
+  // Out-of-range LLVM shifts produce poison, discarded by these selects.
+  // Use unsigned comparisons so negating the minimum count is safe too.
+  auto posInRange = createICmp(ICmpInst::Predicate::ICMP_ULT, b, width);
+  auto negInRange = createICmp(ICmpInst::Predicate::ICMP_ULT, neg, width);
+  auto posRes = createSelect(posInRange, createRawShl(a, b), zero);
+  auto negRes = createSelect(negInRange, createRawLShr(a, neg), zero);
   return createSelect(c, posRes, negRes);
 }
 
 Value *mc2llvm::createSSHL(Value *a, Value *b) {
-  auto zero = getUnsignedIntConst(0, getBitWidth(b));
+  auto size = getBitWidth(b);
+  if (size > 8)
+    b = createSExt(createTrunc(b, getIntTy(8)), b->getType());
+  auto zero = getUnsignedIntConst(0, size);
+  auto width = getUnsignedIntConst(size, size);
   auto c = createICmp(ICmpInst::Predicate::ICMP_SGT, b, zero);
   auto neg = createSub(zero, b);
-  auto posRes = createMaskedShl(a, b);
-  auto negRes = createMaskedAShr(a, neg);
+  auto posInRange = createICmp(ICmpInst::Predicate::ICMP_ULT, b, width);
+  auto posRes = createSelect(posInRange, createRawShl(a, b), zero);
+  // Clamp arithmetic right shifts to sign fill instead of wrapping the count.
+  auto rightAmount = createUMin(neg, getUnsignedIntConst(size - 1, size));
+  auto negRes = createRawAShr(a, rightAmount);
   return createSelect(c, posRes, negRes);
 }
 
