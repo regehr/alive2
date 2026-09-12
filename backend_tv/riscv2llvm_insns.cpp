@@ -239,8 +239,9 @@ void riscv2llvm::lift(MCInst &I) {
       // ok, if we don't have a destination block then we left this
       // dangling on purpose, with the assumption that it's a tail
       // call
+      auto returnAddress = readFromReg(RISCV::X1, i64ty);
       doDirectCall();
-      doReturn();
+      doReturn(returnAddress);
     }
     break;
   }
@@ -251,8 +252,11 @@ void riscv2llvm::lift(MCInst &I) {
   }
 
   case RISCV::PseudoTAIL: {
+    // A tail jump passes the current ra to the callee. Capture it before the
+    // abstract call invalidates caller-saved registers, including ra.
+    auto returnAddress = readFromReg(RISCV::X1, i64ty);
     doDirectCall();
-    doReturn();
+    doReturn(returnAddress);
     break;
   }
 

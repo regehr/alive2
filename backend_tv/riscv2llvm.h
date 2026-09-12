@@ -74,6 +74,7 @@ class riscv2llvm final : public mc2llvm {
   unsigned sentinelNOP() override;
 
   void doReturn() override;
+  void doReturn(llvm::Value *returnAddress);
   bool needsReturnTypeWidening() const override { return false; }
 
   void checkArgSupport(llvm::Argument &arg) override;

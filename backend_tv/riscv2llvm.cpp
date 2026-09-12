@@ -497,6 +497,10 @@ Value *riscv2llvm::readFromFPReg(unsigned Reg, Type *ty) {
 }
 
 void riscv2llvm::doReturn() {
+  doReturn(readFromReg(RISCV::X1, getIntTy(64)));
+}
+
+void riscv2llvm::doReturn(Value *returnAddress) {
   auto i64ty = getIntTy(64);
 
   // The ABI requires SP to be restored on every return path.
@@ -511,7 +515,10 @@ void riscv2llvm::doReturn() {
       assertSame(initialFPReg[reg], bits);
     }
   }
-  // FIXME: check the return address too.
+  // JALR clears bit 0 of its target. Compare effective destinations so a
+  // change to that bit alone does not invalidate an otherwise correct return.
+  auto mask = getSignedIntConst(-2, 64);
+  assertSame(createAnd(initialReg[1], mask), createAnd(returnAddress, mask));
 
   auto *retTyp = srcFn->getReturnType();
   if (retTyp->isVoidTy()) {
