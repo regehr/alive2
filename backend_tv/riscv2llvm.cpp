@@ -617,13 +617,9 @@ void riscv2llvm::platformInit() {
         auto Reg = RISCV::X10 + scalarArgNum;
         unsigned bitWidth = getBitWidth(val);
         Value *intVal = createBitCast(val, getIntTy(bitWidth));
-        // 1-extended (NaN-boxed) to FLEN bits.
-        if (bitWidth < 64) {
-          intVal = createOr(
-              createZExt(intVal, getIntTy(64)),
-              ConstantInt::get(getIntTy(64),
-                               APInt::getHighBitsSet(64, 64 - bitWidth)));
-        }
+        // The integer convention leaves excess GPR bits unspecified.
+        // NaN-boxing applies only to arguments passed in FP registers.
+        intVal = enforceSExtZExt(intVal, false, false);
         createStore(intVal, RegFile[Reg]);
         ++scalarArgNum;
         goto end;
