@@ -14,6 +14,8 @@ std::string toString(const ArgLoc &loc) {
   switch (loc.kind) {
   case ArgLoc::None:
     return "NONE";
+  case ArgLoc::Unsupported:
+    return "UNSUPPORTED";
   case ArgLoc::Direct:
     s = "DIRECT";
     break;
@@ -37,6 +39,17 @@ std::string toString(const ArgLoc &loc) {
       s += "r" + std::to_string(limb.reg);
   }
   return s;
+}
+
+bool canPlace(const ArgLoc &loc) {
+  if (loc.kind == ArgLoc::Unsupported || loc.kind == ArgLoc::Indirect)
+    return false;
+  if (loc.limbs.size() <= 1)
+    return true;
+  for (auto &limb : loc.limbs)
+    if (!limb.inReg)
+      return false;
+  return true;
 }
 
 CCAssigner::CCAssigner(Target target, const DataLayout &DL, Type *retTy)
@@ -98,7 +111,10 @@ ArgLoc CCAssigner::assignArgAArch64(Type *ty) {
     return loc;
   }
 
-  assert((ty->isIntegerTy() || ty->isPointerTy()) && "unsupported arg type");
+  if (!ty->isIntegerTy() && !ty->isPointerTy()) {
+    loc.kind = ArgLoc::Unsupported;
+    return loc;
+  }
   loc.kind = ArgLoc::Direct;
   unsigned n = numLimbs(loc.bitWidth);
   loc.topLimbBits = loc.bitWidth - (n - 1) * limbBits();
@@ -138,6 +154,11 @@ ArgLoc CCAssigner::assignArgRISCV(Type *ty) {
   loc.bitWidth = DL.getTypeSizeInBits(ty);
   loc.limbBits = limbBits();
 
+  if (ty->isVectorTy()) {
+    loc.kind = ArgLoc::Unsupported;
+    return loc;
+  }
+
   if (ty->isFloatingPointTy()) {
     if (nextVec < numArgVecRegs) {
       loc.kind = ArgLoc::Vector;
@@ -152,7 +173,11 @@ ArgLoc CCAssigner::assignArgRISCV(Type *ty) {
     return loc;
   }
 
-  assert((ty->isIntegerTy() || ty->isPointerTy()) && "unsupported arg type");
+  if (!ty->isIntegerTy() && !ty->isPointerTy()) {
+    // RV64 vectors, in particular, are not modelled here
+    loc.kind = ArgLoc::Unsupported;
+    return loc;
+  }
   unsigned n = numLimbs(loc.bitWidth);
 
   if (n > 2) {
@@ -193,13 +218,22 @@ ArgLoc CCAssigner::assignRet(Type *ty) {
   loc.bitWidth = DL.getTypeSizeInBits(ty);
   loc.limbBits = limbBits();
 
+  if (ty->isVectorTy() && target == Target::RISCV64) {
+    // RV64 vectors are not modelled here
+    loc.kind = ArgLoc::Unsupported;
+    return loc;
+  }
+
   if (ty->isVectorTy() || ty->isFloatingPointTy()) {
     loc.kind = ArgLoc::Vector;
     loc.limbs.push_back(LimbLoc{true, 0, 0});
     return loc;
   }
 
-  assert((ty->isIntegerTy() || ty->isPointerTy()) && "unsupported return type");
+  if (!ty->isIntegerTy() && !ty->isPointerTy()) {
+    loc.kind = ArgLoc::Unsupported;
+    return loc;
+  }
   unsigned n = numLimbs(loc.bitWidth);
 
   /*

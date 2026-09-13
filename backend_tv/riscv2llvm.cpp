@@ -262,7 +262,11 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
     auto loc = CC.assignArg(argTy);
     *out << "  " << getBitWidth(argTy) << "-bit arg at " << toString(loc)
          << "\n";
-    assert(loc.limbs.size() == 1 && "multi-limb arguments not supported yet");
+    if (!canPlace(loc)) {
+      *out << "\nERROR: we don't support a call argument passed at "
+           << toString(loc) << " yet\n\n";
+      exit(-1);
+    }
     auto &limb = loc.limbs[0];
 
     Value *param{nullptr};
@@ -271,12 +275,16 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
     } else if (argTy->isIntegerTy() || argTy->isPointerTy()) {
       // FIXME -- reading a stack-passed argument back out is not
       // implemented on this side yet; the callee side already does it
-      if (!limb.inReg) {
-        *out << "\nERROR: we don't support stack-passed call arguments "
-                "yet\n\n";
-        exit(-1);
+      vector<Value *> limbs;
+      for (auto &l : loc.limbs) {
+        if (!l.inReg) {
+          *out << "\nERROR: we don't support stack-passed call arguments "
+                  "yet\n\n";
+          exit(-1);
+        }
+        limbs.push_back(readFromReg(RISCV::X10 + l.reg, getIntTy(64)));
       }
-      param = readFromReg(RISCV::X10 + limb.reg, getIntTy(64));
+      param = concatLimbs(limbs);
       if (argTy->isPointerTy()) {
         param = new IntToPtrInst(param, PointerType::get(Ctx, 0), "", LLVMBB);
       } else {
@@ -378,11 +386,16 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
 
   auto retTy = FC.getFunctionType()->getReturnType();
   auto retLoc = CCAssigner(CCAssigner::Target::RISCV64, DL, retTy).retLoc();
-  assert(retLoc.limbs.size() <= 1 && "multi-limb returns not supported yet");
   if (retTy->isIntegerTy() || retTy->isPointerTy()) {
     assert(retLoc.kind == ArgLoc::Direct &&
            "indirect returns not supported yet");
-    updateReg(RV, RISCV::X10 + retLoc.limbs[0].reg);
+    auto limbs = retLoc.limbs.size() > 1
+                     ? splitIntoLimbs(RV, retLoc.limbBits)
+                     : vector<Value *>{RV};
+    for (unsigned i = 0, n = retLoc.limbs.size(); i != n; ++i) {
+      assert(retLoc.limbs[i].inReg);
+      updateReg(limbs[i], RISCV::X10 + retLoc.limbs[i].reg);
+    }
   } else if (retTy->isFloatingPointTy()) {
     updateFPReg(RV, RISCV::F10_Q + retLoc.limbs[0].reg);
   } else if (retTy->isVectorTy()) {
@@ -490,7 +503,6 @@ void riscv2llvm::doReturn(Value *returnAddress) {
   // where the assembly was obliged to leave the result; see
   // backend_tv/abi.h
   auto retLoc = CCAssigner(CCAssigner::Target::RISCV64, DL, retTyp).retLoc();
-  assert(retLoc.limbs.size() <= 1 && "multi-limb returns not supported yet");
 
   if (retTyp->isVoidTy()) {
     createReturn(nullptr);
@@ -499,9 +511,16 @@ void riscv2llvm::doReturn(Value *returnAddress) {
   } else {
     assert(retLoc.kind == ArgLoc::Direct &&
            "indirect returns not supported yet");
-    Value *retVal{nullptr};
     // FIXME handle vectors
-    retVal = readFromReg(RISCV::X10 + retLoc.limbs[0].reg, i64ty);
+    // a value wider than XLEN comes back in several registers, least
+    // significant first; checkIntegerABI narrows it back down and
+    // discards the top limb's unspecified high bits
+    vector<Value *> limbs;
+    for (auto &limb : retLoc.limbs) {
+      assert(limb.inReg);
+      limbs.push_back(readFromReg(RISCV::X10 + limb.reg, i64ty));
+    }
+    Value *retVal = concatLimbs(limbs);
     if (retTyp->isPointerTy()) {
       retVal = new IntToPtrInst(retVal, PointerType::get(Ctx, 0), "", LLVMBB);
     } else {
@@ -576,30 +595,42 @@ void riscv2llvm::platformInit() {
     auto *val =
         enforceSExtZExt(arg, srcArg->hasSExtAttr(), srcArg->hasZExtAttr());
 
-    assert(loc.limbs.size() == 1 && "multi-limb arguments not supported yet");
-    auto &limb = loc.limbs[0];
-
     if (loc.kind == ArgLoc::Vector) {
-      assert(limb.inReg);
-      updateFPReg(val, RISCV::F10_Q + limb.reg);
-    } else if (limb.inReg) {
-      if (argTy->isFloatingPointTy()) {
+      assert(loc.limbs[0].inReg);
+      updateFPReg(val, RISCV::F10_Q + loc.limbs[0].reg);
+    } else {
+      if (argTy->isFloatingPointTy() && loc.limbs[0].inReg) {
         // a float that ran out of FP registers travels in a GPR. the
         // integer convention leaves the excess register bits unspecified;
         // NaN-boxing applies only to arguments passed in FP registers.
         val = createBitCast(val, getIntTy(getBitWidth(val)));
         val = enforceSExtZExt(val, false, false);
       }
-      createStore(val, RegFile[RISCV::X10 + limb.reg]);
-    } else {
-      if (limb.stackOffset / 8 >= numStackSlots) {
-        *out << "\nERROR: maximum stack slots for parameter values "
-                "exceeded\n\n";
-        exit(-1);
+
+      // enforceSExtZExt has widened val to a whole number of
+      // register-sized limbs, filling the high bits of the top limb with
+      // unknown values because the ABI leaves them unspecified
+      auto limbVals = loc.limbs.size() > 1
+                          ? splitIntoLimbs(val, loc.limbBits)
+                          : vector<Value *>{val};
+      assert(limbVals.size() == loc.limbs.size());
+
+      for (unsigned i = 0, n = loc.limbs.size(); i != n; ++i) {
+        auto &limb = loc.limbs[i];
+        if (limb.inReg) {
+          createStore(limbVals[i], RegFile[RISCV::X10 + limb.reg]);
+        } else {
+          if (limb.stackOffset / 8 >= numStackSlots) {
+            *out << "\nERROR: maximum stack slots for parameter values "
+                    "exceeded\n\n";
+            exit(-1);
+          }
+          auto addr =
+              createGEP(i8ty, paramBase,
+                        {getUnsignedIntConst(limb.stackOffset, 64)}, "");
+          createStore(limbVals[i], addr);
+        }
       }
-      auto addr = createGEP(i8ty, paramBase,
-                            {getUnsignedIntConst(limb.stackOffset, 64)}, "");
-      createStore(val, addr);
     }
     *out << "\n";
   }

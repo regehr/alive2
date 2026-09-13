@@ -1076,6 +1076,12 @@ void mc2llvm::checkSupport(Function *srcFn) {
     exit(-1);
   }
 
+  // walk the whole signature at once: where an argument lands depends on
+  // what the arguments before it consumed, and on this target's return
+  // convention. see backend_tv/abi.h
+  CCAssigner CC(ccTarget(), srcFn->getParent()->getDataLayout(),
+                srcFn->getReturnType());
+
   for (auto &arg : srcFn->args()) {
     // backend-specific checks go here
     checkArgSupport(arg);
@@ -1102,12 +1108,16 @@ void mc2llvm::checkSupport(Function *srcFn) {
         *out << "\nERROR: Vector arguments >128 bits not supported\n\n";
         exit(-1);
       }
-    } else {
-      if (orig_width > 64) {
-        *out << "\nERROR: Unsupported function argument: Only integer / "
-                "pointer parameters 64 bits or smaller supported for now\n\n";
-        exit(-1);
-      }
+    }
+
+    // an integer wider than one register travels in several, and we can
+    // place it as long as every limb lands in a register
+    auto loc = CC.assignArg(ty);
+    if (!canPlace(loc)) {
+      *out << "\nERROR: Unsupported function argument: a " << orig_width
+           << "-bit value would be passed at " << toString(loc)
+           << ", which we don't support yet\n\n";
+      exit(-1);
     }
   }
 
@@ -1190,9 +1200,11 @@ Function *mc2llvm::adjustSrc(Function *srcFn) {
       exit(-1);
     }
   } else {
-    if (origRetWidth > 64) {
-      *out << "\nERROR: Scalar return values larger than 64 bits are not "
-              "supported\n\n";
+    auto retLoc = CCAssigner(ccTarget(), DL, origRetTy).retLoc();
+    if (!canPlace(retLoc)) {
+      *out << "\nERROR: Unsupported Function Return: a " << origRetWidth
+           << "-bit value would be returned at " << toString(retLoc)
+           << ", which we don't support yet\n\n";
       exit(-1);
     }
   }

@@ -86,6 +86,9 @@ public:
   void doReturn() override;
   void doReturn(llvm::Value *returnAddress);
   bool needsReturnTypeWidening() const override { return false; }
+  CCAssigner::Target ccTarget() const override {
+    return CCAssigner::Target::AArch64;
+  }
 
   bool isGOT(uint16_t spec) override;
 

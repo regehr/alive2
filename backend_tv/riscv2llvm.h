@@ -75,6 +75,9 @@ class riscv2llvm final : public mc2llvm {
   void doReturn() override;
   void doReturn(llvm::Value *returnAddress);
   bool needsReturnTypeWidening() const override { return false; }
+  CCAssigner::Target ccTarget() const override {
+    return CCAssigner::Target::RISCV64;
+  }
 
   void checkArgSupport(llvm::Argument &arg) override;
   void checkTypeSupport(llvm::Type *ty) override;

@@ -39,6 +39,9 @@ struct ArgLoc {
   enum Kind {
     // a void return value: `limbs` is empty
     None,
+    // a type this target's calling convention model does not cover;
+    // `limbs` is empty. callers must reject rather than place it
+    Unsupported,
     // the value itself occupies `limbs`
     Direct,
     // `limbs` holds exactly one register-sized value: the address of a
@@ -68,6 +71,14 @@ struct ArgLoc {
  * argument area, and X8 for the AArch64 indirect result register.
  */
 std::string toString(const ArgLoc &loc);
+
+/*
+ * can the lifter actually put a value in this location? a single limb in
+ * a register or a stack slot has always worked; several limbs work as
+ * long as they all land in registers. limbs on the stack and values
+ * passed by reference are not implemented yet.
+ */
+bool canPlace(const ArgLoc &loc);
 
 /*
  * assigns locations to a function's arguments in order, mirroring what

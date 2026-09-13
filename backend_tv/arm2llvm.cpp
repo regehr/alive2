@@ -758,7 +758,6 @@ void arm2llvm::doReturn(Value *returnAddress) {
   // where the assembly was obliged to leave the result; see
   // backend_tv/abi.h
   auto retLoc = CCAssigner(CCAssigner::Target::AArch64, DL, retTyp).retLoc();
-  assert(retLoc.limbs.size() <= 1 && "multi-limb returns not supported yet");
 
   if (retTyp->isVoidTy()) {
     createReturn(nullptr);
@@ -767,7 +766,15 @@ void arm2llvm::doReturn(Value *returnAddress) {
   } else {
     assert(retLoc.kind == ArgLoc::Direct &&
            "indirect returns not supported yet");
-    auto *retVal = readFromRegTyped(AArch64::X0 + retLoc.limbs[0].reg, i64);
+    // a value wider than one register comes back in several, least
+    // significant first; checkIntegerABI narrows the result back down and
+    // discards the top limb's unspecified high bits
+    vector<Value *> limbs;
+    for (auto &limb : retLoc.limbs) {
+      assert(limb.inReg);
+      limbs.push_back(readFromRegTyped(AArch64::X0 + limb.reg, i64));
+    }
+    auto *retVal = concatLimbs(limbs);
     if (retTyp->isPointerTy()) {
       retVal = new IntToPtrInst(retVal, PointerType::get(Ctx, 0), "", LLVMBB);
     } else {
@@ -1072,11 +1079,15 @@ vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy,
     auto loc = CC.assignArg(argTy);
     *out << "  " << getBitWidth(argTy) << "-bit arg at " << toString(loc)
          << "\n";
-    assert(loc.limbs.size() == 1 && "multi-limb arguments not supported yet");
-    auto &limb = loc.limbs[0];
+    if (!canPlace(loc)) {
+      *out << "\nERROR: we don't support a call argument passed at "
+           << toString(loc) << " yet\n\n";
+      exit(-1);
+    }
 
     Value *param{nullptr};
     if (argTy->isFloatingPointTy() || argTy->isVectorTy()) {
+      auto &limb = loc.limbs[0];
       if (limb.inReg) {
         param = readFromRegTyped(AArch64::Q0 + limb.reg, argTy);
       } else {
@@ -1088,15 +1099,22 @@ vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy,
         param = createBitCast(createLoad(getIntTy(sz), addr), argTy);
       }
     } else if (argTy->isIntegerTy() || argTy->isPointerTy()) {
-      if (limb.inReg) {
-        param = readFromRegTyped(AArch64::X0 + limb.reg, getIntTy(64));
-      } else {
-        auto SP = readPtrFromReg(AArch64::SP);
-        auto addr = createGEP(getIntTy(8), SP,
-                              {getUnsignedIntConst(limb.stackOffset, 64)},
-                              nextName());
-        param = createLoad(getIntTy(64), addr);
+      // a value wider than one register arrives in several, least
+      // significant first
+      vector<Value *> limbs;
+      for (auto &limb : loc.limbs) {
+        if (limb.inReg) {
+          limbs.push_back(readFromRegTyped(AArch64::X0 + limb.reg,
+                                           getIntTy(64)));
+        } else {
+          auto SP = readPtrFromReg(AArch64::SP);
+          auto addr = createGEP(getIntTy(8), SP,
+                                {getUnsignedIntConst(limb.stackOffset, 64)},
+                                nextName());
+          limbs.push_back(createLoad(getIntTy(64), addr));
+        }
       }
+      param = concatLimbs(limbs);
       if (argTy->isPointerTy()) {
         param = new IntToPtrInst(param, PointerType::get(Ctx, 0), "", LLVMBB);
       } else {
@@ -1196,11 +1214,16 @@ void arm2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
 
   auto retTy = FC.getFunctionType()->getReturnType();
   auto retLoc = CCAssigner(CCAssigner::Target::AArch64, DL, retTy).retLoc();
-  assert(retLoc.limbs.size() <= 1 && "multi-limb returns not supported yet");
   if (retTy->isIntegerTy() || retTy->isPointerTy()) {
     assert(retLoc.kind == ArgLoc::Direct &&
            "indirect returns not supported yet");
-    updateReg(RV, AArch64::X0 + retLoc.limbs[0].reg);
+    auto limbs = retLoc.limbs.size() > 1
+                     ? splitIntoLimbs(RV, retLoc.limbBits)
+                     : vector<Value *>{RV};
+    for (unsigned i = 0, n = retLoc.limbs.size(); i != n; ++i) {
+      assert(retLoc.limbs[i].inReg);
+      updateReg(limbs[i], AArch64::X0 + retLoc.limbs[i].reg);
+    }
   } else if (retTy->isFloatingPointTy() || retTy->isVectorTy()) {
     // An ABI result does not zero the unused high bits like a scalar SIMD
     // instruction does. Retain the arbitrary bits installed above.
@@ -3300,10 +3323,6 @@ void arm2llvm::platformInit() {
   // implement the callee side of the ABI: put each of the source
   // function's arguments where a caller would have left it. CCAssigner
   // works out where that is; see backend_tv/abi.h.
-  //
-  // FIXME -- the placement below only handles values that fit in a single
-  // register or stack slot. wider integers are rejected by checkSupport()
-  // for now, so every location we see here has exactly one limb.
   CCAssigner CC(CCAssigner::Target::AArch64, DL, srcFn->getReturnType());
 
   for (Function::arg_iterator arg = liftedFn->arg_begin(),
@@ -3316,22 +3335,30 @@ void arm2llvm::platformInit() {
     auto *val =
         enforceSExtZExt(arg, srcArg->hasSExtAttr(), srcArg->hasZExtAttr());
 
-    assert(loc.limbs.size() == 1 && "multi-limb arguments not supported yet");
-    auto &limb = loc.limbs[0];
+    // enforceSExtZExt has widened val to a whole number of register-sized
+    // limbs, filling the high bits of the top limb with unknown values
+    // because the ABI leaves them unspecified
+    auto limbVals = loc.limbs.size() > 1
+                        ? splitIntoLimbs(val, loc.limbBits)
+                        : std::vector<Value *>{val};
+    assert(limbVals.size() == loc.limbs.size());
 
-    if (limb.inReg) {
-      auto Reg = (loc.kind == ArgLoc::Vector ? AArch64::Q0 : AArch64::X0) +
-                 limb.reg;
-      createStore(val, RegFile[Reg]);
-    } else {
-      if (limb.stackOffset / 8 >= numStackSlots) {
-        *out << "\nERROR: maximum stack slots for parameter values "
-                "exceeded\n\n";
-        exit(-1);
+    for (unsigned i = 0, n = loc.limbs.size(); i != n; ++i) {
+      auto &limb = loc.limbs[i];
+      if (limb.inReg) {
+        auto Reg = (loc.kind == ArgLoc::Vector ? AArch64::Q0 : AArch64::X0) +
+                   limb.reg;
+        createStore(limbVals[i], RegFile[Reg]);
+      } else {
+        if (limb.stackOffset / 8 >= numStackSlots) {
+          *out << "\nERROR: maximum stack slots for parameter values "
+                  "exceeded\n\n";
+          exit(-1);
+        }
+        auto addr = createGEP(getIntTy(8), paramBase,
+                              {getUnsignedIntConst(limb.stackOffset, 64)}, "");
+        createStore(limbVals[i], addr);
       }
-      auto addr = createGEP(getIntTy(8), paramBase,
-                            {getUnsignedIntConst(limb.stackOffset, 64)}, "");
-      createStore(val, addr);
     }
     *out << "\n";
   }

@@ -384,6 +384,15 @@ version )EOF";
 #endif
 
   // FIXME: we should avoid hard-coding these
+  //
+  // NB: backend_tv/scripts/abi-difftest.py keeps its own copy of the
+  // triple, data layout, and features below, because it has to drive llc
+  // with the same target configuration that we lift against. if you
+  // change any of them here, change the TARGETS table there to match --
+  // otherwise the calling-convention difftest silently compares our model
+  // against a different ABI. plain riscv64 with no features, for example,
+  // has no D extension and so passes doubles in GPRs under soft-float
+  // lp64, which looks like a pile of model bugs that are not real.
   if (opt_backend == "aarch64") {
     DefaultTT = llvm::Triple("aarch64-unknown-linux-gnu");
     DefaultDL = "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32";
