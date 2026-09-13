@@ -1,4 +1,5 @@
 #include "backend_tv/riscv2llvm.h"
+#include "backend_tv/abi.h"
 
 #include "Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.h"
 #include "llvm/ADT/APFloat.h"
@@ -65,7 +66,6 @@ unsigned riscv2llvm::sentinelNOP() {
 
 Value *riscv2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
   auto argTy = V->getType();
-  unsigned targetWidth = 64;
 
   // no work needed
   if (argTy->isPointerTy() || argTy->isVoidTy() || argTy->isFloatingPointTy())
@@ -76,6 +76,11 @@ Value *riscv2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
   }
 
   assert(argTy->isIntegerTy());
+
+  // an integer wider than XLEN is legalized into ceil(N/XLEN) limbs, so
+  // its ABI location is that many registers wide and any extension
+  // obligation reaches across the whole thing
+  unsigned targetWidth = alignTo(getBitWidth(argTy), 64u);
 
   if (isZExt && getBitWidth(V) < targetWidth)
     V = createZExt(V, getIntTy(targetWidth));
@@ -101,14 +106,18 @@ Value *riscv2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
 
 Value *riscv2llvm::checkIntegerABI(Value *V, Type *ty, bool isSExt,
                                  bool isZExt) {
-  assert(V->getType()->isIntegerTy(64));
-  assert(ty->isIntegerTy() && getBitWidth(ty) <= 64);
+  assert(ty->isIntegerTy());
   assert(!(isSExt && isZExt));
-  auto value = getBitWidth(ty) < 64 ? createTrunc(V, ty) : V;
-  // LLVM's RV64 signext/zeroext contracts extend to XLEN. In particular,
-  // signext i32 requires bits 63:32 as well as the low word to be correct.
-  // Unattributed integers leave their excess register bits unspecified.
-  if (!(isSExt || isZExt) || getBitWidth(ty) == 64)
+  unsigned width = getBitWidth(ty);
+  // the ABI location is a whole number of registers wide
+  unsigned regWidth = alignTo(width, 64u);
+  assert(V->getType()->isIntegerTy(regWidth));
+  auto value = width < regWidth ? createTrunc(V, ty) : V;
+  // LLVM's RV64 signext/zeroext contracts extend to the full ABI location.
+  // In particular, signext i32 requires bits 63:32 as well as the low word
+  // to be correct. Unattributed integers leave their excess register bits
+  // unspecified.
+  if (!(isSExt || isZExt) || width == regWidth)
     return value;
 
   auto valid = createICmp(ICmpInst::ICMP_EQ, V,
@@ -235,16 +244,13 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
     *out << "\nERROR: we don't support arrays in return values yet\n\n";
     exit(-1);
   }
-  unsigned vecArgNum = 0;
-  unsigned scalarArgNum = 0;
-  unsigned floatArgNum = 0;
-  // unsigned stackSlot = 0;
+  // CCAssigner tells us where the assembly was obliged to leave each
+  // argument; see backend_tv/abi.h
+  CCAssigner CC(CCAssigner::Target::RISCV64, DL, fTy->getReturnType());
   vector<Value *> args;
   for (auto arg = fTy->param_begin(); arg != fTy->param_end(); ++arg) {
     Type *argTy = *arg;
     assert(argTy);
-    *out << "  vecArgNum = " << vecArgNum << " scalarArgNum = " << scalarArgNum
-         << "\n";
     if (argTy->isStructTy()) {
       *out << "\nERROR: we don't support structures in arguments yet\n\n";
       exit(-1);
@@ -253,43 +259,24 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
       *out << "\nERROR: we don't support arrays in arguments yet\n\n";
       exit(-1);
     }
+    auto loc = CC.assignArg(argTy);
+    *out << "  " << getBitWidth(argTy) << "-bit arg at " << toString(loc)
+         << "\n";
+    assert(loc.limbs.size() == 1 && "multi-limb arguments not supported yet");
+    auto &limb = loc.limbs[0];
+
     Value *param{nullptr};
     if (argTy->isVectorTy()) {
       assert(false && "Error: calling function with vector args is not supported yet\n\n");
-#if 0
-      if (vecArgNum < 8) {
-        param = readFromReg(AArch64::Q0 + vecArgNum, argTy);
-        ++vecArgNum;
-      } else {
-        auto sz = getBitWidth(argTy);
-        if (sz > 64 && ((stackSlot % 2) != 0)) {
-          ++stackSlot;
-          *out << "aligning stack slot for large vector parameter\n";
-        }
-        *out << "vector parameter going on stack with size = " << sz << "\n";
-        auto SP = readPtrFromReg(AArch64::SP);
-        auto addr = createGEP(getIntTy(64), SP,
-                              {getUnsignedIntConst(stackSlot, 64)}, nextName());
-        param = createBitCast(createLoad(getIntTy(sz), addr), argTy);
-        ++stackSlot;
-        if (sz > 64)
-          ++stackSlot;
-      }
-#endif
     } else if (argTy->isIntegerTy() || argTy->isPointerTy()) {
-      if (scalarArgNum < 8) {
-        param = readFromReg(RISCV::X10 + scalarArgNum, getIntTy(64));
-        ++scalarArgNum;
-      } else {
-        assert(false);
-#if 0
-        auto SP = readPtrFromReg(AArch64::SP);
-        auto addr = createGEP(getIntTy(64), SP,
-                              {getUnsignedIntConst(stackSlot, 64)}, nextName());
-        param = createLoad(getIntTy(64), addr);
-        ++stackSlot;
-#endif
+      // FIXME -- reading a stack-passed argument back out is not
+      // implemented on this side yet; the callee side already does it
+      if (!limb.inReg) {
+        *out << "\nERROR: we don't support stack-passed call arguments "
+                "yet\n\n";
+        exit(-1);
       }
+      param = readFromReg(RISCV::X10 + limb.reg, getIntTy(64));
       if (argTy->isPointerTy()) {
         param = new IntToPtrInst(param, PointerType::get(Ctx, 0), "", LLVMBB);
       } else {
@@ -301,12 +288,15 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
                                 llvmCI.paramHasAttr(argIdx, Attribute::ZExt));
       }
     } else if (argTy->isFloatingPointTy()) {
-      if (floatArgNum < 8) {
-        param = readFPABIReg(RISCV::F10_Q + floatArgNum, argTy);
-        ++floatArgNum;
-      } else {
-        assert(false);
+      // FIXME -- once the FP registers run out, CCAssigner says a float
+      // travels in a GPR (and then on the stack). the callee side
+      // implements that; this side does not yet.
+      if (loc.kind != ArgLoc::Vector) {
+        *out << "\nERROR: we don't support call arguments past the FP "
+                "registers yet\n\n";
+        exit(-1);
       }
+      param = readFPABIReg(RISCV::F10_Q + limb.reg, argTy);
     } else {
       assert(false && "unknown arg type\n");
     }
@@ -387,10 +377,14 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   }
 
   auto retTy = FC.getFunctionType()->getReturnType();
+  auto retLoc = CCAssigner(CCAssigner::Target::RISCV64, DL, retTy).retLoc();
+  assert(retLoc.limbs.size() <= 1 && "multi-limb returns not supported yet");
   if (retTy->isIntegerTy() || retTy->isPointerTy()) {
-    updateReg(RV, RISCV::X10);
+    assert(retLoc.kind == ArgLoc::Direct &&
+           "indirect returns not supported yet");
+    updateReg(RV, RISCV::X10 + retLoc.limbs[0].reg);
   } else if (retTy->isFloatingPointTy()) {
-    updateFPReg(RV, RISCV::F10_Q);
+    updateFPReg(RV, RISCV::F10_Q + retLoc.limbs[0].reg);
   } else if (retTy->isVectorTy()) {
     assert(false);
     // updateReg(RV, AArch64::Q0);
@@ -493,14 +487,21 @@ void riscv2llvm::doReturn(Value *returnAddress) {
   assertSame(createAnd(initialReg[1], mask), createAnd(returnAddress, mask));
 
   auto *retTyp = srcFn->getReturnType();
+  // where the assembly was obliged to leave the result; see
+  // backend_tv/abi.h
+  auto retLoc = CCAssigner(CCAssigner::Target::RISCV64, DL, retTyp).retLoc();
+  assert(retLoc.limbs.size() <= 1 && "multi-limb returns not supported yet");
+
   if (retTyp->isVoidTy()) {
     createReturn(nullptr);
   } else if (retTyp->isFloatingPointTy()) {
-    createReturn(readFPABIReg(RISCV::F10_Q, retTyp));
+    createReturn(readFPABIReg(RISCV::F10_Q + retLoc.limbs[0].reg, retTyp));
   } else {
+    assert(retLoc.kind == ArgLoc::Direct &&
+           "indirect returns not supported yet");
     Value *retVal{nullptr};
     // FIXME handle vectors
-    retVal = readFromReg(RISCV::X10, i64ty);
+    retVal = readFromReg(RISCV::X10 + retLoc.limbs[0].reg, i64ty);
     if (retTyp->isPointerTy()) {
       retVal = new IntToPtrInst(retVal, PointerType::get(Ctx, 0), "", LLVMBB);
     } else {
@@ -551,22 +552,22 @@ void riscv2llvm::platformInit() {
 
   *out << "about to do callee-side ABI stuff\n";
 
-  // implement the callee side of the ABI; FIXME -- this code only
-  // supports integer parameters <= 64 bits and will require
-  // significant generalization to handle large parameters
-  unsigned vecArgNum = 0;
-  unsigned scalarArgNum = 0;
-  unsigned floatArgNum = 0;
-  unsigned stackSlot = 0;
+  // implement the callee side of the ABI: put each of the source
+  // function's arguments where a caller would have left it. CCAssigner
+  // works out where that is; see backend_tv/abi.h.
+  //
+  // FIXME -- the placement below only handles values that fit in a single
+  // register or stack slot. wider integers are rejected by checkSupport()
+  // for now, so every location we see here has exactly one limb.
+  CCAssigner CC(CCAssigner::Target::RISCV64, DL, srcFn->getReturnType());
 
   for (Function::arg_iterator arg = liftedFn->arg_begin(),
                               E = liftedFn->arg_end(),
                               srcArg = srcFn->arg_begin();
        arg != E; ++arg, ++srcArg) {
-    *out << "  processing " << getBitWidth(arg)
-         << "-bit arg with vecArgNum = " << vecArgNum
-         << ", scalarArgNum = " << scalarArgNum
-         << ", stackSlot = " << stackSlot;
+    auto loc = CC.assignArg(arg->getType());
+    *out << "  processing " << getBitWidth(arg) << "-bit arg at "
+         << toString(loc);
     auto *argTy = arg->getType();
 
     // FIXME -- this isn't correct for RISC-V, but since it's on the
@@ -575,78 +576,31 @@ void riscv2llvm::platformInit() {
     auto *val =
         enforceSExtZExt(arg, srcArg->hasSExtAttr(), srcArg->hasZExtAttr());
 
-    // first 8 integer parameters go in integer registers starting at X10
-    if ((argTy->isIntegerTy() || argTy->isPointerTy()) && scalarArgNum < 8) {
-      auto Reg = RISCV::X10 + scalarArgNum;
-      createStore(val, RegFile[Reg]);
-      ++scalarArgNum;
-      goto end;
-    }
+    assert(loc.limbs.size() == 1 && "multi-limb arguments not supported yet");
+    auto &limb = loc.limbs[0];
 
-    // TODO: support args > 64 bits (possibly just remove check in mc2llvm.cpp)
-    if (argTy->isFloatingPointTy()) {
-      if (floatArgNum < 8) {
-        auto Reg = RISCV::F10_Q + floatArgNum;
-        updateFPReg(val, Reg);
-        ++floatArgNum;
-        goto end;
-      }
-      // Otherwise pass the argument by GPR.
-      if (scalarArgNum < 8) {
-        auto Reg = RISCV::X10 + scalarArgNum;
-        unsigned bitWidth = getBitWidth(val);
-        Value *intVal = createBitCast(val, getIntTy(bitWidth));
-        // The integer convention leaves excess GPR bits unspecified.
+    if (loc.kind == ArgLoc::Vector) {
+      assert(limb.inReg);
+      updateFPReg(val, RISCV::F10_Q + limb.reg);
+    } else if (limb.inReg) {
+      if (argTy->isFloatingPointTy()) {
+        // a float that ran out of FP registers travels in a GPR. the
+        // integer convention leaves the excess register bits unspecified;
         // NaN-boxing applies only to arguments passed in FP registers.
-        intVal = enforceSExtZExt(intVal, false, false);
-        createStore(intVal, RegFile[Reg]);
-        ++scalarArgNum;
-        goto end;
+        val = createBitCast(val, getIntTy(getBitWidth(val)));
+        val = enforceSExtZExt(val, false, false);
       }
-    }
-
-#if 0
-    // first 8 vector/FP parameters go in the first 8 vector registers
-    if ((argTy->isVectorTy() || argTy->isFloatingPointTy()) && vecArgNum < 8) {
-      auto Reg = AArch64::Q0 + vecArgNum;
-      createStore(val, RegFile[Reg]);
-      ++vecArgNum;
-      goto end;
-    }
-#endif
-
-    // everything else goes onto the stack
-
-    {
-#if 0
-      // 128-bit alignment required for 128-bit arguments
-      if ((getBitWidth(val) == 128) && ((stackSlot % 2) != 0)) {
-        ++stackSlot;
-        *out << " (actual stack slot = " << stackSlot << ")";
-      }
-#endif
-
-      if (stackSlot >= numStackSlots) {
+      createStore(val, RegFile[RISCV::X10 + limb.reg]);
+    } else {
+      if (limb.stackOffset / 8 >= numStackSlots) {
         *out << "\nERROR: maximum stack slots for parameter values "
                 "exceeded\n\n";
         exit(-1);
       }
-
-      auto addr =
-          createGEP(i64ty, paramBase, {getUnsignedIntConst(stackSlot, 64)}, "");
+      auto addr = createGEP(i8ty, paramBase,
+                            {getUnsignedIntConst(limb.stackOffset, 64)}, "");
       createStore(val, addr);
-
-      if (getBitWidth(val) == 64) {
-        stackSlot += 1;
-#if 0
-      } else if (getBitWidth(val) == 128) {
-        stackSlot += 2;
-#endif
-      } else {
-        assert(false);
-      }
     }
-  end:
     *out << "\n";
   }
 
