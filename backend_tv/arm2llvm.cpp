@@ -146,8 +146,15 @@ Value *arm2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
       V = createSExt(V, getIntTy(targetWidth));
   }
 
-  if (isZExt && getBitWidth(V) < targetWidth)
-    V = createZExt(V, getIntTy(targetWidth));
+  if (isZExt) {
+    // LLVM extends integers through i32 to a 32-bit ABI location, in both
+    // registers and stack slots. Bits 63:32 remain unspecified. Wider
+    // integers use a 64-bit location, just as for signext above.
+    if (getBitWidth(V) < 32)
+      V = createZExt(V, i32);
+    else if (getBitWidth(V) > 32 && getBitWidth(V) < targetWidth)
+      V = createZExt(V, getIntTy(targetWidth));
+  }
 
   // finally, pad out any remaining bits with unknown values
   auto junkBits = targetWidth - getBitWidth(V);
