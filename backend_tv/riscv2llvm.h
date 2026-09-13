@@ -41,7 +41,6 @@ namespace lifter {
 
 class riscv2llvm final : public mc2llvm {
   llvm::Value *initialFPReg[32]{nullptr};
-  std::map<unsigned, llvm::WeakTrackingVH> integerABICheckDecls;
 
   void updateOutputReg(llvm::Value *V, bool SExt = false) override;
 
@@ -70,7 +69,6 @@ class riscv2llvm final : public mc2llvm {
   llvm::Value *enforceSExtZExt(llvm::Value *V, bool isSExt, bool isZExt);
   llvm::Value *checkIntegerABI(llvm::Value *V, llvm::Type *ty, bool isSExt,
                              bool isZExt);
-  void fixupOptimizedTgt(llvm::Function *tgt) override;
 
   unsigned sentinelNOP() override;
 

@@ -89,6 +89,7 @@ public:
   llvm::WeakTrackingVH myAllocVH{nullptr};
   llvm::Constant *stackSize{nullptr};
   std::map<unsigned, llvm::WeakTrackingVH> unknownIntDecls;
+  std::map<unsigned, llvm::WeakTrackingVH> integerABICheckDecls;
 
   const uint16_t NO_SPECIFIER = 0xfff;
 
@@ -973,6 +974,7 @@ public:
                                  llvm::Value *ifDivByZero,
                                  llvm::Value *ifOverflow);
   void assertSame(llvm::Value *a, llvm::Value *b);
+  llvm::Value *guardIntegerABI(llvm::Value *value, llvm::Value *valid);
   void doDirectCall();
   llvm::Instruction *getCurLLVMInst();
   void liftInst(llvm::MCInst &I);

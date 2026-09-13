@@ -170,6 +170,34 @@ Value *arm2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
   return V;
 }
 
+Value *arm2llvm::checkIntegerABI(Value *V, Type *ty, bool isSExt,
+                               bool isZExt) {
+  assert(V->getType()->isIntegerTy(64));
+  assert(ty->isIntegerTy() && getBitWidth(ty) <= 64);
+  assert(!(isSExt && isZExt));
+  unsigned width = getBitWidth(ty);
+  auto *value = width < 64 ? createTrunc(V, ty) : V;
+
+  // Match enforceSExtZExt: attributes extend through bit 31 for narrow
+  // integers, or bit 63 for wider ones. Without attributes, only i1 has an
+  // extension requirement: AAPCS64 represents a Boolean as a byte containing
+  // 0 or 1. An explicit signext overrides that unsigned Boolean representation.
+  unsigned abiWidth = width;
+  if (isSExt || isZExt)
+    abiWidth = width <= 32 ? 32 : 64;
+  else if (width == 1)
+    abiWidth = 8;
+  if (abiWidth == width)
+    return value;
+
+  auto *abiTy = getIntTy(abiWidth);
+  auto *actual = abiWidth < 64 ? createTrunc(V, abiTy) : V;
+  auto *expected = isSExt ? createSExt(value, abiTy)
+                          : createZExt(value, abiTy);
+  auto *valid = createICmp(ICmpInst::ICMP_EQ, actual, expected);
+  return guardIntegerABI(value, valid);
+}
+
 tuple<Value *, int, Value *> arm2llvm::getStoreParams() {
   auto &op0 = CurInst->getOperand(0);
   auto &op1 = CurInst->getOperand(1);
@@ -704,7 +732,6 @@ void arm2llvm::doReturn() {
 }
 
 void arm2llvm::doReturn(Value *returnAddress) {
-  auto i32 = getIntTy(32);
   auto i64 = getIntTy(64);
 
   // Check the preserved integer state on every normal or tail return.
@@ -722,33 +749,16 @@ void arm2llvm::doReturn(Value *returnAddress) {
   auto *retTyp = srcFn->getReturnType();
   if (retTyp->isVoidTy()) {
     createReturn(nullptr);
+  } else if (retTyp->isVectorTy() || retTyp->isFloatingPointTy()) {
+    createReturn(readFromRegTyped(AArch64::Q0, retTyp));
   } else {
-    Value *retVal = nullptr;
-    if (retTyp->isVectorTy() || retTyp->isFloatingPointTy()) {
-      retVal = readFromRegTyped(AArch64::Q0, retTyp);
-    } else {
-      retVal = readFromRegOld(AArch64::X0);
-    }
+    auto *retVal = readFromRegTyped(AArch64::X0, i64);
     if (retTyp->isPointerTy()) {
       retVal = new IntToPtrInst(retVal, PointerType::get(Ctx, 0), "", LLVMBB);
     } else {
-      auto retWidth = DL.getTypeSizeInBits(retTyp);
-      auto retValWidth = DL.getTypeSizeInBits(retVal->getType());
-
-      if (retWidth < retValWidth)
-        retVal = createTrunc(retVal, getIntTy(retWidth));
-
-      // mask off any don't-care bits
-      if (has_ret_attr && (origRetWidth < 32)) {
-        assert(retWidth >= origRetWidth);
-        assert(retWidth == 64);
-        auto trunc = createTrunc(retVal, i32);
-        retVal = createZExt(trunc, i64);
-      }
-
-      if ((retTyp->isVectorTy() || retTyp->isFloatingPointTy()) &&
-          !has_ret_attr)
-        retVal = createBitCast(retVal, retTyp);
+      retVal = checkIntegerABI(retVal, retTyp,
+                               srcFn->hasRetAttribute(Attribute::SExt),
+                               srcFn->hasRetAttribute(Attribute::ZExt));
     }
     createReturn(retVal);
   }
@@ -1017,7 +1027,8 @@ uint64_t arm2llvm::AdvSIMDExpandImm(unsigned op, unsigned cmode,
   return imm64;
 }
 
-vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy) {
+vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy,
+                                     const CallInst &llvmCI) {
   *out << "entering marshallArgs()\n";
   assert(fTy);
   if (fTy->getReturnType()->isStructTy()) {
@@ -1066,7 +1077,6 @@ vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy) {
           ++stackSlot;
       }
     } else if (argTy->isIntegerTy() || argTy->isPointerTy()) {
-      // FIXME check signext and zeroext
       if (scalarArgNum < 8) {
         param = readFromRegTyped(AArch64::X0 + scalarArgNum, getIntTy(64));
         ++scalarArgNum;
@@ -1080,9 +1090,12 @@ vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy) {
       if (argTy->isPointerTy()) {
         param = new IntToPtrInst(param, PointerType::get(Ctx, 0), "", LLVMBB);
       } else {
-        assert(argTy->getIntegerBitWidth() <= 64);
-        if (argTy->getIntegerBitWidth() < 64)
-          param = createTrunc(param, getIntTy(argTy->getIntegerBitWidth()));
+        // Attributes use the parameter index; FP/vector arguments have a
+        // separate register sequence. paramHasAttr also checks the declaration.
+        unsigned argIdx = args.size();
+        param = checkIntegerABI(param, argTy,
+                                llvmCI.paramHasAttr(argIdx, Attribute::SExt),
+                                llvmCI.paramHasAttr(argIdx, Attribute::ZExt));
       }
     } else {
       assert(false && "unknown arg type\n");
@@ -1104,7 +1117,8 @@ void arm2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   if (auto RT = dyn_cast<VectorType>(FC.getFunctionType()->getReturnType()))
     checkVectorTy(RT);
 
-  auto args = marshallArgs(FC.getFunctionType());
+  assert(llvmCI);
+  auto args = marshallArgs(FC.getFunctionType(), *llvmCI);
 
   // ugh -- these functions have an LLVM "immediate" as their last
   // argument; this is not present in the assembly at all, we have
