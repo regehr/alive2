@@ -1097,8 +1097,6 @@ void arm2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   if (auto RT = dyn_cast<VectorType>(FC.getFunctionType()->getReturnType()))
     checkVectorTy(RT);
 
-  // FIXME: invalidate argument registers before putting arguments there
-
   auto args = marshallArgs(FC.getFunctionType());
 
   // ugh -- these functions have an LLVM "immediate" as their last
@@ -1147,14 +1145,31 @@ void arm2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   if (CurInst->getOpcode() == AArch64::BL ||
       CurInst->getOpcode() == AArch64::BLR)
     invalidateReg(AArch64::LR, 64);
-  for (unsigned reg = 9; reg <= 15; ++reg)
+  // Arguments have already been read. Clobber all caller-saved GPRs before
+  // installing the result, including x0 for calls returning void. The
+  // supported Linux ABI also treats the platform register x18 as caller-saved.
+  for (unsigned reg = 0; reg <= 18; ++reg)
     invalidateReg(AArch64::X0 + reg, 64);
+
+  for (unsigned reg = 0; reg < 32; ++reg) {
+    if (reg >= 8 && reg <= 15) {
+      // Only the low 64 bits of v8-v15 are callee-saved. Overwrite the upper
+      // half separately so the preserved bits retain their exact value.
+      auto upper = createGEP(getIntTy(64), RegFile[AArch64::Q0 + reg],
+                              {getUnsignedIntConst(1, 64)}, nextName());
+      createStore(createUnknownInt(64), upper);
+    } else {
+      invalidateReg(AArch64::Q0 + reg, 128);
+    }
+  }
 
   auto retTy = FC.getFunctionType()->getReturnType();
   if (retTy->isIntegerTy() || retTy->isPointerTy()) {
     updateReg(RV, AArch64::X0);
   } else if (retTy->isFloatingPointTy() || retTy->isVectorTy()) {
-    updateReg(RV, AArch64::Q0);
+    // An ABI result does not zero the unused high bits like a scalar SIMD
+    // instruction does. Retain the arbitrary bits installed above.
+    createStore(RV, RegFile[AArch64::Q0]);
   } else {
     assert(retTy->isVoidTy());
   }
