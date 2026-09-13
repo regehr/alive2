@@ -82,6 +82,7 @@ public:
   void doIndirectCall();
 
   void doReturn() override;
+  void doReturn(llvm::Value *returnAddress);
 
   bool isGOT(uint16_t spec) override;
 

@@ -2,8 +2,6 @@
 
 #include "Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.h"
 
-const bool EXTRA_ABI_CHECKS = false;
-
 using namespace std;
 using namespace lifter;
 using namespace llvm;
@@ -695,24 +693,24 @@ void arm2llvm::doIndirectCall() {
 }
 
 void arm2llvm::doReturn() {
+  doReturn(readFromRegTyped(AArch64::LR, getIntTy(64)));
+}
+
+void arm2llvm::doReturn(Value *returnAddress) {
   auto i32 = getIntTy(32);
   auto i64 = getIntTy(64);
 
-  if (EXTRA_ABI_CHECKS) {
-    /*
-     * ABI stuff: on all return paths, check that callee-saved +
-     * other registers have been reset to their previous
-     * values. these values were saved at the top of the function so
-     * the trivially dominate all returns
-     */
-    // FIXME: check callee-saved vector registers
-    // FIXME: make sure code doesn't touch 16, 17?
-    // FIXME: check FP and LR?
-    assertSame(initialSP, readFromRegTyped(AArch64::SP, getIntTy(64)));
-    for (unsigned r = 19; r <= 28; ++r)
-      assertSame(initialReg[r],
-                 readFromRegTyped(AArch64::X0 + r, getIntTy(64)));
-  }
+  // Check the preserved integer state on every normal or tail return.
+  // Opaque assertions keep optimization from discarding these obligations.
+  // FIXME: check callee-saved vector registers.
+  assertSame(initialSP, readFromRegTyped(AArch64::SP, i64));
+  for (unsigned r = 19; r <= 28; ++r)
+    assertSame(initialReg[r], readFromRegTyped(AArch64::X0 + r, i64));
+  assertSame(initialReg[29], readFromRegTyped(AArch64::FP, i64));
+
+  // LR itself is caller-saved: RET may use another register holding the
+  // original return address, even if LR has been overwritten.
+  assertSame(initialReg[30], returnAddress);
 
   auto *retTyp = srcFn->getReturnType();
   if (retTyp->isVoidTy()) {
@@ -1144,6 +1142,11 @@ void arm2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   invalidateReg(AArch64::Z, 1);
   invalidateReg(AArch64::C, 1);
   invalidateReg(AArch64::V, 1);
+  // Branch-with-link instructions overwrite LR; tail branches do not.
+  // The precise address of the instruction after the call is not modeled.
+  if (CurInst->getOpcode() == AArch64::BL ||
+      CurInst->getOpcode() == AArch64::BLR)
+    invalidateReg(AArch64::LR, 64);
   for (unsigned reg = 9; reg <= 15; ++reg)
     invalidateReg(AArch64::X0 + reg, 64);
 
@@ -3220,11 +3223,16 @@ void arm2llvm::platformInit() {
   createStore(paramBase, RegFile[AArch64::SP]);
   initialSP = readFromRegOld(AArch64::SP);
 
-  // FP is X29; we'll initialize it later
+  // FP is X29. Its incoming value belongs to the caller, not this frame.
   createRegStorage(AArch64::FP, 64, "FP");
+  initialReg[29] = readFromRegOld(AArch64::FP);
 
-  // LR is X30; FIXME initialize this
+  // LR is X30. A caller's return address is aligned to an A64 instruction.
   createRegStorage(AArch64::LR, 64, "LR");
+  auto returnAddress = createAnd(readFromRegOld(AArch64::LR),
+                                 getSignedIntConst(-4, 64));
+  createStore(returnAddress, RegFile[AArch64::LR]);
+  initialReg[30] = returnAddress;
 
   // initializing to zero makes loads from XZR work; stores are
   // handled in updateReg()
@@ -3306,11 +3314,6 @@ void arm2llvm::platformInit() {
   }
 
   *out << "done with callee-side ABI stuff\n";
-
-  // initialize the frame pointer
-  auto initFP =
-      createGEP(i64, paramBase, {getUnsignedIntConst(stackSlot, 64)}, "");
-  createStore(initFP, RegFile[AArch64::FP]);
 }
 
 void arm2llvm::checkArgSupport(Argument &arg) {}
