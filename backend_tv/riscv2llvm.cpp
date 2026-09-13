@@ -186,6 +186,19 @@ void riscv2llvm::updateReg(Value *V, uint64_t Reg) {
   if (Reg == RISCV::X0)
     return;
   createStore(V, lookupReg(Reg));
+  // The standard RV64 ABI requires SP to remain 16-byte aligned throughout
+  // execution, including temporary updates that are restored before return.
+  if (Reg == RISCV::X2)
+    checkStackAlignment();
+}
+
+void riscv2llvm::checkStackAlignment() {
+  auto sp = readFromReg(RISCV::X2, getIntTy(64));
+  auto lowBits = createAnd(sp, getUnsignedIntConst(15, 64));
+  // Use the opaque assertion so optimization cannot discard an intermediate
+  // misaligned SP merely because the register is subsequently overwritten.
+  assertTrue(createICmp(ICmpInst::ICMP_EQ, lowBits,
+                        getUnsignedIntConst(0, 64)));
 }
 
 void riscv2llvm::updateFPReg(Value *V, uint64_t Reg) {
@@ -352,6 +365,10 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
                         const string &calleeName) {
   *out << "entering doCall()\n";
   assert(llvmCI);
+
+  // Establish the ABI precondition before abstracting either a normal or a
+  // tail call. Restoring SP later does not make a misaligned call valid.
+  checkStackAlignment();
 
   for (auto &arg : FC.getFunctionType()->params()) {
     if (auto vTy = dyn_cast<VectorType>(arg))
