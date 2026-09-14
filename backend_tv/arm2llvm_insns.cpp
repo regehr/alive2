@@ -78,7 +78,7 @@ void arm2llvm::lift(MCInst &I) {
     break;
 
   case AArch64::RET:
-    doReturn();
+    doReturn(readFromRegTyped(I.getOperand(0).getReg(), getIntTy(64)));
     break;
 
   case AArch64::Bcc:

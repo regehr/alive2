@@ -55,6 +55,8 @@ public:
   bool isSIMDandFPRegOperand(llvm::MCOperand &op);
 
   llvm::Value *enforceSExtZExt(llvm::Value *V, bool isSExt, bool isZExt);
+  llvm::Value *checkIntegerABI(llvm::Value *V, llvm::Type *ty, bool isSExt,
+                             bool isZExt);
 
   std::tuple<llvm::Value *, int, llvm::Value *> getStoreParams();
 
@@ -82,6 +84,8 @@ public:
   void doIndirectCall();
 
   void doReturn() override;
+  void doReturn(llvm::Value *returnAddress);
+  bool needsReturnTypeWidening() const override { return false; }
 
   bool isGOT(uint16_t spec) override;
 
@@ -111,7 +115,8 @@ public:
   // imm8)
   uint64_t AdvSIMDExpandImm(unsigned op, unsigned cmode, unsigned imm8);
 
-  std::vector<llvm::Value *> marshallArgs(llvm::FunctionType *fTy);
+  std::vector<llvm::Value *> marshallArgs(llvm::FunctionType *fTy,
+                                        const llvm::CallInst &llvmCI);
 
   void doCall(llvm::FunctionCallee FC, llvm::CallInst *llvmCI,
               const std::string &calleeName) override;

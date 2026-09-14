@@ -113,52 +113,7 @@ Value *riscv2llvm::checkIntegerABI(Value *V, Type *ty, bool isSExt,
 
   auto valid = createICmp(ICmpInst::ICMP_EQ, V,
                          enforceSExtZExt(value, isSExt, isZExt));
-
-  // Invalid representations become poison, rather than immediate UB: source
-  // poison may legally be returned or passed without satisfying the extension.
-  // Hide the select behind a helper until after optimization, which could
-  // otherwise refine away its poison arm and erase the ABI check.
-  auto &decl = integerABICheckDecls[getBitWidth(ty)];
-  if (!decl) {
-    string baseName = "__backend_tv_riscv_abi_i" + to_string(getBitWidth(ty));
-    string name = baseName;
-    for (unsigned suffix = 0; srcFn->getParent()->getNamedValue(name) ||
-                              LiftedModule->getNamedValue(name); ++suffix)
-      name = baseName + "." + to_string(suffix);
-    auto *fnTy = FunctionType::get(ty, {ty, getIntTy(1)}, false);
-    auto *fn = Function::Create(fnTy, GlobalValue::ExternalLinkage, name,
-                               LiftedModule);
-    fn->addFnAttr(Attribute::NoCallback);
-    fn->addFnAttr(Attribute::NoFree);
-    fn->addFnAttr(Attribute::NoSync);
-    fn->addFnAttr(Attribute::NoUnwind);
-    fn->addFnAttr(Attribute::WillReturn);
-    fn->setMemoryEffects(MemoryEffects::none());
-    decl = fn;
-  }
-  return CallInst::Create(cast<Function>(decl), {value, valid}, nextName(),
-                          LLVMBB);
-}
-
-void riscv2llvm::fixupOptimizedTgt(Function *tgt) {
-  mc2llvm::fixupOptimizedTgt(tgt);
-  for (auto &[width, decl] : integerABICheckDecls) {
-    if (!decl)
-      continue;
-    auto *fn = cast<Function>(decl);
-    while (!fn->use_empty()) {
-      auto *ci = cast<CallInst>(*fn->user_begin());
-      assert(ci->getCalledFunction() == fn && ci->getFunction() == tgt);
-      auto *value = SelectInst::Create(ci->getArgOperand(1), ci->getArgOperand(0),
-                                      PoisonValue::get(ci->getType()), "",
-                                      ci->getIterator());
-      value->takeName(ci);
-      ci->replaceAllUsesWith(value);
-      ci->eraseFromParent();
-    }
-    fn->eraseFromParent();
-  }
-  integerABICheckDecls.clear();
+  return guardIntegerABI(value, valid);
 }
 
 Value *riscv2llvm::lookupReg(unsigned Reg) {

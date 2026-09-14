@@ -1,4 +1,6 @@
-; CHECK: 1 correct
+; CHECK: 1 incorrect transformations
+
+; The post-indexed load does not restore the incoming stack pointer.
 
 define i32 @f1() {
   %1 = alloca [32 x i32], align 4

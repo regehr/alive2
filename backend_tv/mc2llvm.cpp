@@ -554,6 +554,35 @@ void mc2llvm::assertSame(Value *a, Value *b) {
   assertTrue(c);
 }
 
+Value *mc2llvm::guardIntegerABI(Value *value, Value *valid) {
+  auto *ty = value->getType();
+  assert(ty->isIntegerTy() && valid->getType()->isIntegerTy(1));
+  // Invalid representations become poison, rather than immediate UB: source
+  // poison may legally be returned or passed without satisfying the extension.
+  // Hide the select behind a helper until after optimization, which could
+  // otherwise refine away its poison arm and erase the ABI check.
+  auto &decl = integerABICheckDecls[getBitWidth(ty)];
+  if (!decl) {
+    string baseName = "__backend_tv_abi_i" + to_string(getBitWidth(ty));
+    string name = baseName;
+    for (unsigned suffix = 0; srcFn->getParent()->getNamedValue(name) ||
+                              LiftedModule->getNamedValue(name); ++suffix)
+      name = baseName + "." + to_string(suffix);
+    auto *fnTy = FunctionType::get(ty, {ty, getIntTy(1)}, false);
+    auto *fn = Function::Create(fnTy, GlobalValue::ExternalLinkage, name,
+                               LiftedModule);
+    fn->addFnAttr(Attribute::NoCallback);
+    fn->addFnAttr(Attribute::NoFree);
+    fn->addFnAttr(Attribute::NoSync);
+    fn->addFnAttr(Attribute::NoUnwind);
+    fn->addFnAttr(Attribute::WillReturn);
+    fn->setMemoryEffects(MemoryEffects::none());
+    decl = fn;
+  }
+  return CallInst::Create(cast<Function>(decl), {value, valid}, nextName(),
+                          LLVMBB);
+}
+
 void mc2llvm::doDirectCall() {
   *out << "in doDirectCall\n";
 
@@ -1262,6 +1291,24 @@ void mc2llvm::fixupOptimizedTgt(Function *tgt) {
     F->eraseFromParent();
   }
   unknownIntDecls.clear();
+
+  for (auto &[width, decl] : integerABICheckDecls) {
+    if (!decl)
+      continue;
+    auto *fn = cast<Function>(decl);
+    while (!fn->use_empty()) {
+      auto *ci = cast<CallInst>(*fn->user_begin());
+      assert(ci->getCalledFunction() == fn && ci->getFunction() == tgt);
+      auto *value = SelectInst::Create(ci->getArgOperand(1), ci->getArgOperand(0),
+                                      PoisonValue::get(ci->getType()), "",
+                                      ci->getIterator());
+      value->takeName(ci);
+      ci->replaceAllUsesWith(value);
+      ci->eraseFromParent();
+    }
+    fn->eraseFromParent();
+  }
+  integerABICheckDecls.clear();
 
   /*
    * these attributes can be soundly removed, and a good thing too

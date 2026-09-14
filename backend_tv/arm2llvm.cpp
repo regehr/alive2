@@ -2,8 +2,6 @@
 
 #include "Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.h"
 
-const bool EXTRA_ABI_CHECKS = false;
-
 using namespace std;
 using namespace lifter;
 using namespace llvm;
@@ -148,8 +146,15 @@ Value *arm2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
       V = createSExt(V, getIntTy(targetWidth));
   }
 
-  if (isZExt && getBitWidth(V) < targetWidth)
-    V = createZExt(V, getIntTy(targetWidth));
+  if (isZExt) {
+    // LLVM extends integers through i32 to a 32-bit ABI location, in both
+    // registers and stack slots. Bits 63:32 remain unspecified. Wider
+    // integers use a 64-bit location, just as for signext above.
+    if (getBitWidth(V) < 32)
+      V = createZExt(V, i32);
+    else if (getBitWidth(V) > 32 && getBitWidth(V) < targetWidth)
+      V = createZExt(V, getIntTy(targetWidth));
+  }
 
   // finally, pad out any remaining bits with unknown values
   auto junkBits = targetWidth - getBitWidth(V);
@@ -163,6 +168,34 @@ Value *arm2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
   }
 
   return V;
+}
+
+Value *arm2llvm::checkIntegerABI(Value *V, Type *ty, bool isSExt,
+                               bool isZExt) {
+  assert(V->getType()->isIntegerTy(64));
+  assert(ty->isIntegerTy() && getBitWidth(ty) <= 64);
+  assert(!(isSExt && isZExt));
+  unsigned width = getBitWidth(ty);
+  auto *value = width < 64 ? createTrunc(V, ty) : V;
+
+  // Match enforceSExtZExt: attributes extend through bit 31 for narrow
+  // integers, or bit 63 for wider ones. Without attributes, only i1 has an
+  // extension requirement: AAPCS64 represents a Boolean as a byte containing
+  // 0 or 1. An explicit signext overrides that unsigned Boolean representation.
+  unsigned abiWidth = width;
+  if (isSExt || isZExt)
+    abiWidth = width <= 32 ? 32 : 64;
+  else if (width == 1)
+    abiWidth = 8;
+  if (abiWidth == width)
+    return value;
+
+  auto *abiTy = getIntTy(abiWidth);
+  auto *actual = abiWidth < 64 ? createTrunc(V, abiTy) : V;
+  auto *expected = isSExt ? createSExt(value, abiTy)
+                          : createZExt(value, abiTy);
+  auto *valid = createICmp(ICmpInst::ICMP_EQ, actual, expected);
+  return guardIntegerABI(value, valid);
 }
 
 tuple<Value *, int, Value *> arm2llvm::getStoreParams() {
@@ -695,55 +728,37 @@ void arm2llvm::doIndirectCall() {
 }
 
 void arm2llvm::doReturn() {
-  auto i32 = getIntTy(32);
+  doReturn(readFromRegTyped(AArch64::LR, getIntTy(64)));
+}
+
+void arm2llvm::doReturn(Value *returnAddress) {
   auto i64 = getIntTy(64);
 
-  if (EXTRA_ABI_CHECKS) {
-    /*
-     * ABI stuff: on all return paths, check that callee-saved +
-     * other registers have been reset to their previous
-     * values. these values were saved at the top of the function so
-     * the trivially dominate all returns
-     */
-    // FIXME: check callee-saved vector registers
-    // FIXME: make sure code doesn't touch 16, 17?
-    // FIXME: check FP and LR?
-    assertSame(initialSP, readFromRegTyped(AArch64::SP, getIntTy(64)));
-    for (unsigned r = 19; r <= 28; ++r)
-      assertSame(initialReg[r],
-                 readFromRegTyped(AArch64::X0 + r, getIntTy(64)));
-  }
+  // Check the preserved integer state on every normal or tail return.
+  // Opaque assertions keep optimization from discarding these obligations.
+  // FIXME: check callee-saved vector registers.
+  assertSame(initialSP, readFromRegTyped(AArch64::SP, i64));
+  for (unsigned r = 19; r <= 28; ++r)
+    assertSame(initialReg[r], readFromRegTyped(AArch64::X0 + r, i64));
+  assertSame(initialReg[29], readFromRegTyped(AArch64::FP, i64));
+
+  // LR itself is caller-saved: RET may use another register holding the
+  // original return address, even if LR has been overwritten.
+  assertSame(initialReg[30], returnAddress);
 
   auto *retTyp = srcFn->getReturnType();
   if (retTyp->isVoidTy()) {
     createReturn(nullptr);
+  } else if (retTyp->isVectorTy() || retTyp->isFloatingPointTy()) {
+    createReturn(readFromRegTyped(AArch64::Q0, retTyp));
   } else {
-    Value *retVal = nullptr;
-    if (retTyp->isVectorTy() || retTyp->isFloatingPointTy()) {
-      retVal = readFromRegTyped(AArch64::Q0, retTyp);
-    } else {
-      retVal = readFromRegOld(AArch64::X0);
-    }
+    auto *retVal = readFromRegTyped(AArch64::X0, i64);
     if (retTyp->isPointerTy()) {
       retVal = new IntToPtrInst(retVal, PointerType::get(Ctx, 0), "", LLVMBB);
     } else {
-      auto retWidth = DL.getTypeSizeInBits(retTyp);
-      auto retValWidth = DL.getTypeSizeInBits(retVal->getType());
-
-      if (retWidth < retValWidth)
-        retVal = createTrunc(retVal, getIntTy(retWidth));
-
-      // mask off any don't-care bits
-      if (has_ret_attr && (origRetWidth < 32)) {
-        assert(retWidth >= origRetWidth);
-        assert(retWidth == 64);
-        auto trunc = createTrunc(retVal, i32);
-        retVal = createZExt(trunc, i64);
-      }
-
-      if ((retTyp->isVectorTy() || retTyp->isFloatingPointTy()) &&
-          !has_ret_attr)
-        retVal = createBitCast(retVal, retTyp);
+      retVal = checkIntegerABI(retVal, retTyp,
+                               srcFn->hasRetAttribute(Attribute::SExt),
+                               srcFn->hasRetAttribute(Attribute::ZExt));
     }
     createReturn(retVal);
   }
@@ -1012,7 +1027,8 @@ uint64_t arm2llvm::AdvSIMDExpandImm(unsigned op, unsigned cmode,
   return imm64;
 }
 
-vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy) {
+vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy,
+                                     const CallInst &llvmCI) {
   *out << "entering marshallArgs()\n";
   assert(fTy);
   if (fTy->getReturnType()->isStructTy()) {
@@ -1061,7 +1077,6 @@ vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy) {
           ++stackSlot;
       }
     } else if (argTy->isIntegerTy() || argTy->isPointerTy()) {
-      // FIXME check signext and zeroext
       if (scalarArgNum < 8) {
         param = readFromRegTyped(AArch64::X0 + scalarArgNum, getIntTy(64));
         ++scalarArgNum;
@@ -1075,9 +1090,12 @@ vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy) {
       if (argTy->isPointerTy()) {
         param = new IntToPtrInst(param, PointerType::get(Ctx, 0), "", LLVMBB);
       } else {
-        assert(argTy->getIntegerBitWidth() <= 64);
-        if (argTy->getIntegerBitWidth() < 64)
-          param = createTrunc(param, getIntTy(argTy->getIntegerBitWidth()));
+        // Attributes use the parameter index; FP/vector arguments have a
+        // separate register sequence. paramHasAttr also checks the declaration.
+        unsigned argIdx = args.size();
+        param = checkIntegerABI(param, argTy,
+                                llvmCI.paramHasAttr(argIdx, Attribute::SExt),
+                                llvmCI.paramHasAttr(argIdx, Attribute::ZExt));
       }
     } else {
       assert(false && "unknown arg type\n");
@@ -1099,9 +1117,8 @@ void arm2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   if (auto RT = dyn_cast<VectorType>(FC.getFunctionType()->getReturnType()))
     checkVectorTy(RT);
 
-  // FIXME: invalidate argument registers before putting arguments there
-
-  auto args = marshallArgs(FC.getFunctionType());
+  assert(llvmCI);
+  auto args = marshallArgs(FC.getFunctionType(), *llvmCI);
 
   // ugh -- these functions have an LLVM "immediate" as their last
   // argument; this is not present in the assembly at all, we have
@@ -1144,14 +1161,36 @@ void arm2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   invalidateReg(AArch64::Z, 1);
   invalidateReg(AArch64::C, 1);
   invalidateReg(AArch64::V, 1);
-  for (unsigned reg = 9; reg <= 15; ++reg)
+  // Branch-with-link instructions overwrite LR; tail branches do not.
+  // The precise address of the instruction after the call is not modeled.
+  if (CurInst->getOpcode() == AArch64::BL ||
+      CurInst->getOpcode() == AArch64::BLR)
+    invalidateReg(AArch64::LR, 64);
+  // Arguments have already been read. Clobber all caller-saved GPRs before
+  // installing the result, including x0 for calls returning void. The
+  // supported Linux ABI also treats the platform register x18 as caller-saved.
+  for (unsigned reg = 0; reg <= 18; ++reg)
     invalidateReg(AArch64::X0 + reg, 64);
+
+  for (unsigned reg = 0; reg < 32; ++reg) {
+    if (reg >= 8 && reg <= 15) {
+      // Only the low 64 bits of v8-v15 are callee-saved. Overwrite the upper
+      // half separately so the preserved bits retain their exact value.
+      auto upper = createGEP(getIntTy(64), RegFile[AArch64::Q0 + reg],
+                              {getUnsignedIntConst(1, 64)}, nextName());
+      createStore(createUnknownInt(64), upper);
+    } else {
+      invalidateReg(AArch64::Q0 + reg, 128);
+    }
+  }
 
   auto retTy = FC.getFunctionType()->getReturnType();
   if (retTy->isIntegerTy() || retTy->isPointerTy()) {
     updateReg(RV, AArch64::X0);
   } else if (retTy->isFloatingPointTy() || retTy->isVectorTy()) {
-    updateReg(RV, AArch64::Q0);
+    // An ABI result does not zero the unused high bits like a scalar SIMD
+    // instruction does. Retain the arbitrary bits installed above.
+    createStore(RV, RegFile[AArch64::Q0]);
   } else {
     assert(retTy->isVoidTy());
   }
@@ -3220,11 +3259,16 @@ void arm2llvm::platformInit() {
   createStore(paramBase, RegFile[AArch64::SP]);
   initialSP = readFromRegOld(AArch64::SP);
 
-  // FP is X29; we'll initialize it later
+  // FP is X29. Its incoming value belongs to the caller, not this frame.
   createRegStorage(AArch64::FP, 64, "FP");
+  initialReg[29] = readFromRegOld(AArch64::FP);
 
-  // LR is X30; FIXME initialize this
+  // LR is X30. A caller's return address is aligned to an A64 instruction.
   createRegStorage(AArch64::LR, 64, "LR");
+  auto returnAddress = createAnd(readFromRegOld(AArch64::LR),
+                                 getSignedIntConst(-4, 64));
+  createStore(returnAddress, RegFile[AArch64::LR]);
+  initialReg[30] = returnAddress;
 
   // initializing to zero makes loads from XZR work; stores are
   // handled in updateReg()
@@ -3306,11 +3350,6 @@ void arm2llvm::platformInit() {
   }
 
   *out << "done with callee-side ABI stuff\n";
-
-  // initialize the frame pointer
-  auto initFP =
-      createGEP(i64, paramBase, {getUnsignedIntConst(stackSlot, 64)}, "");
-  createStore(initFP, RegFile[AArch64::FP]);
 }
 
 void arm2llvm::checkArgSupport(Argument &arg) {}
