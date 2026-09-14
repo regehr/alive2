@@ -378,14 +378,24 @@ version )EOF";
   // asm mode, which has no undef to begin with.
   config::disable_undef_input = true;
 
-#if 0
   // for now let's just avoid bugs coming from poison inputs;
   // separately, this flag means that memory passed to us will be
-  // frozen. disabled because it was producing false alarms; see commit
-  // 47c25595. this is separate from the undef setting above -- they
-  // used to share an #if 0, which silently turned undef inputs back on.
+  // frozen. this is separate from the undef setting above -- they used
+  // to share an #if 0, which silently turned undef inputs back on.
+  //
+  // NB: 47c25595 turned this off because it was producing false alarms,
+  // and it is now back on without the underlying cause having been
+  // identified. the checked-in tests/arm-tv suite behaves identically
+  // either way, so the original alarms probably came from fuzzed inputs.
+  // if they come back, start with Memory::mkCallState: the non-poison
+  // axiom in Memory::mkNonlocalValAxioms is guarded by isSource(), so
+  // post-call non-local memory is constrained in the source but not in
+  // the lifted target, which is exactly the shape of a false alarm on
+  // functions containing calls.
+  //
+  // NB: this assignment runs after cmd_args_def.h, so it overrides
+  // --disable-poison-input.
   config::disable_poison_input = true;
-#endif
 
   // FIXME: we should avoid hard-coding these
   //
