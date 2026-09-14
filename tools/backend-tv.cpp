@@ -373,13 +373,17 @@ version )EOF";
   // general
   config::tgt_is_asm = true;
 
-#if 0
-  // undef is going away, we don't want to see bugs about it
+  // undef is going away, we don't want to see bugs about it. NB: this
+  // only matters for the source function -- the lifted target runs in
+  // asm mode, which has no undef to begin with.
   config::disable_undef_input = true;
 
+#if 0
   // for now let's just avoid bugs coming from poison inputs;
   // separately, this flag means that memory passed to us will be
-  // frozen
+  // frozen. disabled because it was producing false alarms; see commit
+  // 47c25595. this is separate from the undef setting above -- they
+  // used to share an #if 0, which silently turned undef inputs back on.
   config::disable_poison_input = true;
 #endif
 
