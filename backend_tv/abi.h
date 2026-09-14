@@ -73,10 +73,10 @@ struct ArgLoc {
 std::string toString(const ArgLoc &loc);
 
 /*
- * can the lifter actually put a value in this location? a single limb in
- * a register or a stack slot has always worked; several limbs work as
- * long as they all land in registers. limbs on the stack and values
- * passed by reference are not implemented yet.
+ * can the lifter actually put a value in this location? registers and
+ * stack slots both work, in any combination -- a wide value really can
+ * have some limbs in registers and the rest on the stack. what we cannot
+ * do yet is follow a value passed by reference.
  */
 bool canPlace(const ArgLoc &loc);
 

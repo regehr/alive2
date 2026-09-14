@@ -42,14 +42,7 @@ std::string toString(const ArgLoc &loc) {
 }
 
 bool canPlace(const ArgLoc &loc) {
-  if (loc.kind == ArgLoc::Unsupported || loc.kind == ArgLoc::Indirect)
-    return false;
-  if (loc.limbs.size() <= 1)
-    return true;
-  for (auto &limb : loc.limbs)
-    if (!limb.inReg)
-      return false;
-  return true;
+  return loc.kind != ArgLoc::Unsupported && loc.kind != ArgLoc::Indirect;
 }
 
 CCAssigner::CCAssigner(Target target, const DataLayout &DL, Type *retTy)

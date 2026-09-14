@@ -273,16 +273,20 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
     if (argTy->isVectorTy()) {
       assert(false && "Error: calling function with vector args is not supported yet\n\n");
     } else if (argTy->isIntegerTy() || argTy->isPointerTy()) {
-      // FIXME -- reading a stack-passed argument back out is not
-      // implemented on this side yet; the callee side already does it
+      // a value wider than XLEN arrives in several limbs, least
+      // significant first, and the ones that did not fit in registers sit
+      // in the outgoing argument area at the current SP
       vector<Value *> limbs;
       for (auto &l : loc.limbs) {
-        if (!l.inReg) {
-          *out << "\nERROR: we don't support stack-passed call arguments "
-                  "yet\n\n";
-          exit(-1);
+        if (l.inReg) {
+          limbs.push_back(readFromReg(RISCV::X10 + l.reg, getIntTy(64)));
+        } else {
+          auto SP = readFromReg(RISCV::X2, PointerType::get(Ctx, 0));
+          auto addr = createGEP(getIntTy(8), SP,
+                                {getUnsignedIntConst(l.stackOffset, 64)},
+                                nextName());
+          limbs.push_back(createLoad(getIntTy(64), addr));
         }
-        limbs.push_back(readFromReg(RISCV::X10 + l.reg, getIntTy(64)));
       }
       param = concatLimbs(limbs);
       if (argTy->isPointerTy()) {
