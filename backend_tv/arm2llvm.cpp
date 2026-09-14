@@ -1,5 +1,7 @@
 #include "backend_tv/arm2llvm.h"
 
+#include "backend_tv/abi.h"
+
 #include "Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.h"
 
 using namespace std;
@@ -121,7 +123,10 @@ Value *arm2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
     else
       targetWidth = 128;
   } else {
-    targetWidth = 64;
+    // an integer wider than one register is legalized into ceil(N/64)
+    // limbs, so its ABI location is that many registers wide and any
+    // extension obligation reaches across the whole thing
+    targetWidth = alignTo(getBitWidth(argTy), 64u);
   }
 
   assert(argTy->isIntegerTy());
@@ -172,26 +177,29 @@ Value *arm2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {
 
 Value *arm2llvm::checkIntegerABI(Value *V, Type *ty, bool isSExt,
                                bool isZExt) {
-  assert(V->getType()->isIntegerTy(64));
-  assert(ty->isIntegerTy() && getBitWidth(ty) <= 64);
+  assert(ty->isIntegerTy());
   assert(!(isSExt && isZExt));
   unsigned width = getBitWidth(ty);
-  auto *value = width < 64 ? createTrunc(V, ty) : V;
+  // the ABI location is a whole number of registers wide
+  unsigned regWidth = alignTo(width, 64u);
+  assert(V->getType()->isIntegerTy(regWidth));
+  auto *value = width < regWidth ? createTrunc(V, ty) : V;
 
   // Match enforceSExtZExt: attributes extend through bit 31 for narrow
-  // integers, or bit 63 for wider ones. Without attributes, only i1 has an
-  // extension requirement: AAPCS64 represents a Boolean as a byte containing
-  // 0 or 1. An explicit signext overrides that unsigned Boolean representation.
+  // integers, or across the whole ABI location for wider ones. Without
+  // attributes, only i1 has an extension requirement: AAPCS64 represents a
+  // Boolean as a byte containing 0 or 1. An explicit signext overrides that
+  // unsigned Boolean representation.
   unsigned abiWidth = width;
   if (isSExt || isZExt)
-    abiWidth = width <= 32 ? 32 : 64;
+    abiWidth = width <= 32 ? 32 : regWidth;
   else if (width == 1)
     abiWidth = 8;
   if (abiWidth == width)
     return value;
 
   auto *abiTy = getIntTy(abiWidth);
-  auto *actual = abiWidth < 64 ? createTrunc(V, abiTy) : V;
+  auto *actual = abiWidth < regWidth ? createTrunc(V, abiTy) : V;
   auto *expected = isSExt ? createSExt(value, abiTy)
                           : createZExt(value, abiTy);
   auto *valid = createICmp(ICmpInst::ICMP_EQ, actual, expected);
@@ -747,12 +755,26 @@ void arm2llvm::doReturn(Value *returnAddress) {
   assertSame(initialReg[30], returnAddress);
 
   auto *retTyp = srcFn->getReturnType();
+  // where the assembly was obliged to leave the result; see
+  // backend_tv/abi.h
+  auto retLoc = CCAssigner(CCAssigner::Target::AArch64, DL, retTyp).retLoc();
+
   if (retTyp->isVoidTy()) {
     createReturn(nullptr);
   } else if (retTyp->isVectorTy() || retTyp->isFloatingPointTy()) {
-    createReturn(readFromRegTyped(AArch64::Q0, retTyp));
+    createReturn(readFromRegTyped(AArch64::Q0 + retLoc.limbs[0].reg, retTyp));
   } else {
-    auto *retVal = readFromRegTyped(AArch64::X0, i64);
+    assert(retLoc.kind == ArgLoc::Direct &&
+           "indirect returns not supported yet");
+    // a value wider than one register comes back in several, least
+    // significant first; checkIntegerABI narrows the result back down and
+    // discards the top limb's unspecified high bits
+    vector<Value *> limbs;
+    for (auto &limb : retLoc.limbs) {
+      assert(limb.inReg);
+      limbs.push_back(readFromRegTyped(AArch64::X0 + limb.reg, i64));
+    }
+    auto *retVal = concatLimbs(limbs);
     if (retTyp->isPointerTy()) {
       retVal = new IntToPtrInst(retVal, PointerType::get(Ctx, 0), "", LLVMBB);
     } else {
@@ -1039,15 +1061,13 @@ vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy,
     *out << "\nERROR: we don't support arrays in return values yet\n\n";
     exit(-1);
   }
-  unsigned vecArgNum = 0;
-  unsigned scalarArgNum = 0;
-  unsigned stackSlot = 0;
+  // CCAssigner tells us where the assembly was obliged to leave each
+  // argument; see backend_tv/abi.h
+  CCAssigner CC(CCAssigner::Target::AArch64, DL, fTy->getReturnType());
   vector<Value *> args;
   for (auto arg = fTy->param_begin(); arg != fTy->param_end(); ++arg) {
     Type *argTy = *arg;
     assert(argTy);
-    *out << "  vecArgNum = " << vecArgNum << " scalarArgNum = " << scalarArgNum
-         << "\n";
     if (argTy->isStructTy()) {
       *out << "\nERROR: we don't support structures in arguments yet\n\n";
       exit(-1);
@@ -1056,37 +1076,45 @@ vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy,
       *out << "\nERROR: we don't support arrays in arguments yet\n\n";
       exit(-1);
     }
+    auto loc = CC.assignArg(argTy);
+    *out << "  " << getBitWidth(argTy) << "-bit arg at " << toString(loc)
+         << "\n";
+    if (!canPlace(loc)) {
+      *out << "\nERROR: we don't support a call argument passed at "
+           << toString(loc) << " yet\n\n";
+      exit(-1);
+    }
+
     Value *param{nullptr};
     if (argTy->isFloatingPointTy() || argTy->isVectorTy()) {
-      if (vecArgNum < 8) {
-        param = readFromRegTyped(AArch64::Q0 + vecArgNum, argTy);
-        ++vecArgNum;
+      auto &limb = loc.limbs[0];
+      if (limb.inReg) {
+        param = readFromRegTyped(AArch64::Q0 + limb.reg, argTy);
       } else {
         auto sz = getBitWidth(argTy);
-        if (sz > 64 && ((stackSlot % 2) != 0)) {
-          ++stackSlot;
-          *out << "aligning stack slot for large vector parameter\n";
-        }
-        *out << "vector parameter going on stack with size = " << sz << "\n";
         auto SP = readPtrFromReg(AArch64::SP);
-        auto addr = createGEP(getIntTy(64), SP,
-                              {getUnsignedIntConst(stackSlot, 64)}, nextName());
+        auto addr = createGEP(getIntTy(8), SP,
+                              {getUnsignedIntConst(limb.stackOffset, 64)},
+                              nextName());
         param = createBitCast(createLoad(getIntTy(sz), addr), argTy);
-        ++stackSlot;
-        if (sz > 64)
-          ++stackSlot;
       }
     } else if (argTy->isIntegerTy() || argTy->isPointerTy()) {
-      if (scalarArgNum < 8) {
-        param = readFromRegTyped(AArch64::X0 + scalarArgNum, getIntTy(64));
-        ++scalarArgNum;
-      } else {
-        auto SP = readPtrFromReg(AArch64::SP);
-        auto addr = createGEP(getIntTy(64), SP,
-                              {getUnsignedIntConst(stackSlot, 64)}, nextName());
-        param = createLoad(getIntTy(64), addr);
-        ++stackSlot;
+      // a value wider than one register arrives in several, least
+      // significant first
+      vector<Value *> limbs;
+      for (auto &limb : loc.limbs) {
+        if (limb.inReg) {
+          limbs.push_back(readFromRegTyped(AArch64::X0 + limb.reg,
+                                           getIntTy(64)));
+        } else {
+          auto SP = readPtrFromReg(AArch64::SP);
+          auto addr = createGEP(getIntTy(8), SP,
+                                {getUnsignedIntConst(limb.stackOffset, 64)},
+                                nextName());
+          limbs.push_back(createLoad(getIntTy(64), addr));
+        }
       }
+      param = concatLimbs(limbs);
       if (argTy->isPointerTy()) {
         param = new IntToPtrInst(param, PointerType::get(Ctx, 0), "", LLVMBB);
       } else {
@@ -1185,12 +1213,21 @@ void arm2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   }
 
   auto retTy = FC.getFunctionType()->getReturnType();
+  auto retLoc = CCAssigner(CCAssigner::Target::AArch64, DL, retTy).retLoc();
   if (retTy->isIntegerTy() || retTy->isPointerTy()) {
-    updateReg(RV, AArch64::X0);
+    assert(retLoc.kind == ArgLoc::Direct &&
+           "indirect returns not supported yet");
+    auto limbs = retLoc.limbs.size() > 1
+                     ? splitIntoLimbs(RV, retLoc.limbBits)
+                     : vector<Value *>{RV};
+    for (unsigned i = 0, n = retLoc.limbs.size(); i != n; ++i) {
+      assert(retLoc.limbs[i].inReg);
+      updateReg(limbs[i], AArch64::X0 + retLoc.limbs[i].reg);
+    }
   } else if (retTy->isFloatingPointTy() || retTy->isVectorTy()) {
     // An ABI result does not zero the unused high bits like a scalar SIMD
     // instruction does. Retain the arbitrary bits installed above.
-    createStore(RV, RegFile[AArch64::Q0]);
+    createStore(RV, RegFile[AArch64::Q0 + retLoc.limbs[0].reg]);
   } else {
     assert(retTy->isVoidTy());
   }
@@ -3283,69 +3320,46 @@ void arm2llvm::platformInit() {
 
   *out << "about to do callee-side ABI stuff\n";
 
-  // implement the callee side of the ABI; FIXME -- this code only
-  // supports integer parameters <= 64 bits and will require
-  // significant generalization to handle large parameters
-  unsigned vecArgNum = 0;
-  unsigned scalarArgNum = 0;
-  unsigned stackSlot = 0;
+  // implement the callee side of the ABI: put each of the source
+  // function's arguments where a caller would have left it. CCAssigner
+  // works out where that is; see backend_tv/abi.h.
+  CCAssigner CC(CCAssigner::Target::AArch64, DL, srcFn->getReturnType());
 
   for (Function::arg_iterator arg = liftedFn->arg_begin(),
                               E = liftedFn->arg_end(),
                               srcArg = srcFn->arg_begin();
        arg != E; ++arg, ++srcArg) {
-    *out << "  processing " << getBitWidth(arg)
-         << "-bit arg with vecArgNum = " << vecArgNum
-         << ", scalarArgNum = " << scalarArgNum
-         << ", stackSlot = " << stackSlot;
-    auto *argTy = arg->getType();
+    auto loc = CC.assignArg(arg->getType());
+    *out << "  processing " << getBitWidth(arg) << "-bit arg at "
+         << toString(loc);
     auto *val =
         enforceSExtZExt(arg, srcArg->hasSExtAttr(), srcArg->hasZExtAttr());
 
-    // first 8 integer parameters go in the first 8 integer registers
-    if ((argTy->isIntegerTy() || argTy->isPointerTy()) && scalarArgNum < 8) {
-      auto Reg = AArch64::X0 + scalarArgNum;
-      createStore(val, RegFile[Reg]);
-      ++scalarArgNum;
-      goto end;
-    }
+    // enforceSExtZExt has widened val to a whole number of register-sized
+    // limbs, filling the high bits of the top limb with unknown values
+    // because the ABI leaves them unspecified
+    auto limbVals = loc.limbs.size() > 1
+                        ? splitIntoLimbs(val, loc.limbBits)
+                        : std::vector<Value *>{val};
+    assert(limbVals.size() == loc.limbs.size());
 
-    // first 8 vector/FP parameters go in the first 8 vector registers
-    if ((argTy->isVectorTy() || argTy->isFloatingPointTy()) && vecArgNum < 8) {
-      auto Reg = AArch64::Q0 + vecArgNum;
-      createStore(val, RegFile[Reg]);
-      ++vecArgNum;
-      goto end;
-    }
-
-    // anything else goes onto the stack
-    {
-      // 128-bit alignment required for 128-bit arguments
-      if ((getBitWidth(val) == 128) && ((stackSlot % 2) != 0)) {
-        ++stackSlot;
-        *out << " (actual stack slot = " << stackSlot << ")";
-      }
-
-      if (stackSlot >= numStackSlots) {
-        *out << "\nERROR: maximum stack slots for parameter values "
-                "exceeded\n\n";
-        exit(-1);
-      }
-
-      auto addr =
-          createGEP(i64, paramBase, {getUnsignedIntConst(stackSlot, 64)}, "");
-      createStore(val, addr);
-
-      if (getBitWidth(val) == 64) {
-        stackSlot += 1;
-      } else if (getBitWidth(val) == 128) {
-        stackSlot += 2;
+    for (unsigned i = 0, n = loc.limbs.size(); i != n; ++i) {
+      auto &limb = loc.limbs[i];
+      if (limb.inReg) {
+        auto Reg = (loc.kind == ArgLoc::Vector ? AArch64::Q0 : AArch64::X0) +
+                   limb.reg;
+        createStore(limbVals[i], RegFile[Reg]);
       } else {
-        assert(false);
+        if (limb.stackOffset / 8 >= numStackSlots) {
+          *out << "\nERROR: maximum stack slots for parameter values "
+                  "exceeded\n\n";
+          exit(-1);
+        }
+        auto addr = createGEP(getIntTy(8), paramBase,
+                              {getUnsignedIntConst(limb.stackOffset, 64)}, "");
+        createStore(limbVals[i], addr);
       }
     }
-
-  end:
     *out << "\n";
   }
 

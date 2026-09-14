@@ -26,6 +26,7 @@
 #include "llvm/Target/TargetMachine.h"
 #include <cstdint>
 
+#include "backend_tv/abi.h"
 #include "backend_tv/lifter.h"
 #include "backend_tv/streamerwrapper.h"
 
@@ -795,6 +796,48 @@ public:
                                         nextName(), LLVMBB);
   }
 
+  /*
+   * an integer wider than one register travels in ceil(N / limbBits)
+   * register-sized limbs, least significant first. these two convert
+   * between that representation and a single value.
+   *
+   * the value handed to splitIntoLimbs must already be a whole number of
+   * limbs wide -- enforceSExtZExt widens it and fills the high bits of
+   * the top limb with unknown values, since the ABI leaves them
+   * unspecified. concatLimbs likewise returns a whole number of limbs,
+   * for checkIntegerABI to narrow back down to the source type.
+   */
+  std::vector<llvm::Value *> splitIntoLimbs(llvm::Value *V, unsigned limbBits) {
+    auto W = getBitWidth(V);
+    assert(W % limbBits == 0 && "value is not a whole number of limbs");
+    auto *limbTy = getIntTy(limbBits);
+    std::vector<llvm::Value *> limbs;
+    for (unsigned i = 0, n = W / limbBits; i != n; ++i) {
+      auto *shifted =
+          i == 0 ? V : createRawLShr(V, getUnsignedIntConst(i * limbBits, W));
+      limbs.push_back(W == limbBits ? shifted : createTrunc(shifted, limbTy));
+    }
+    return limbs;
+  }
+
+  llvm::Value *concatLimbs(const std::vector<llvm::Value *> &limbs) {
+    assert(!limbs.empty());
+    auto limbBits = getBitWidth(limbs[0]);
+    auto W = limbBits * limbs.size();
+    if (limbs.size() == 1)
+      return limbs[0];
+    auto *wideTy = getIntTy(W);
+    llvm::Value *acc = createZExt(limbs[0], wideTy);
+    for (unsigned i = 1; i != limbs.size(); ++i) {
+      assert(getBitWidth(limbs[i]) == limbBits && "ragged limbs");
+      auto *ext = createZExt(limbs[i], wideTy);
+      auto *shifted =
+          createRawShl(ext, getUnsignedIntConst(i * limbBits, W));
+      acc = createOr(acc, shifted);
+    }
+    return acc;
+  }
+
   llvm::Value *getLowOnes(int ones, int w) {
     auto zero = getUnsignedIntConst(0, ones);
     auto one = getUnsignedIntConst(1, ones);
@@ -1038,6 +1081,10 @@ public:
   // Backends that check the ABI register representation explicitly can keep
   // the source return type instead of widening it in adjustSrc.
   virtual bool needsReturnTypeWidening() const { return true; }
+  /*
+   * which calling convention CCAssigner should model for this backend
+   */
+  virtual CCAssigner::Target ccTarget() const = 0;
   /*
    * return an unconditional direct branch opcode, it should take a
    * single argument: the target BB

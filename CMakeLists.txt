@@ -209,6 +209,7 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
   )
 
   set(BACKEND_TV_SRCS
+    "backend_tv/abi.cpp"
     "backend_tv/lifter.cpp"
     "backend_tv/mc2llvm.cpp"
     "backend_tv/run_backend.cpp"
@@ -244,6 +245,14 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
 
   add_llvm_executable(backend-tv
     "tools/backend-tv.cpp"
+  )
+
+  # abi-dump is a small debugging aid for the calling-convention model.
+  # it compiles abi.cpp directly rather than linking backend_tv, so it does
+  # not drag in Z3, hiredis, or the rest of the validator.
+  add_llvm_executable(abi-dump
+    "tools/abi-dump.cpp"
+    "backend_tv/abi.cpp"
   )
 
   add_llvm_executable(quick-fuzz
@@ -338,6 +347,7 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
 #  target_link_libraries(alive2 PRIVATE ${llvm_libs})
   target_link_libraries(alive-tv PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
   target_link_libraries(backend-tv PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
+  target_link_libraries(abi-dump PRIVATE ${llvm_libs})
   target_link_libraries(quick-fuzz PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
   target_link_libraries(alive-exec PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
   install(TARGETS alive-tv quick-fuzz alive-exec)
