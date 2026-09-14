@@ -3269,7 +3269,6 @@ Value *arm2llvm::regShift(Value *value, int encodedShift) {
 
 void arm2llvm::platformInit() {
   auto i8 = getIntTy(8);
-  auto i64 = getIntTy(64);
 
   // allocate storage for the main register file
   for (unsigned Reg = AArch64::X0; Reg <= AArch64::X28; ++Reg) {
