@@ -382,12 +382,17 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   // ugh -- these functions have an LLVM "immediate" as their last
   // argument; this is not present in the assembly at all, we have
   // to provide it by hand
+  bool returnsDestPtr = false;
   if (calleeName == "llvm.memset.p0.i64" ||
       calleeName == "llvm.memset.p0.i32" ||
       calleeName == "llvm.memcpy.p0.p0.i64" ||
       calleeName == "llvm.memmove.p0.p0.i64") {
     *out << "adding constant Boolean as args[3]\n";
     args[3] = getBoolConst(false);
+    // the assembly called libc memset/memcpy/memmove, which return their
+    // destination argument; we model them with LLVM intrinsics that return
+    // void, so a0 has to be installed by hand below
+    returnsDestPtr = true;
   }
 
   auto CI = CallInst::Create(FC, args, "", LLVMBB);
@@ -429,6 +434,11 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
       auto value = createBitCast(createUnknownInt(64), getFPType(64));
       updateFPReg(value, RISCV::F0_Q + reg);
     }
+  }
+
+  if (returnsDestPtr) {
+    updateReg(args[0], RISCV::X10);
+    return;
   }
 
   auto retTy = FC.getFunctionType()->getReturnType();
