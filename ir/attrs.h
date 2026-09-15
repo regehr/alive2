@@ -161,6 +161,9 @@ public:
   void add(AllocKind k) { allockind |= (uint8_t)k; }
   bool has(AllocKind k) const { return allockind & (uint8_t)k; }
   bool isAlloc() const { return allockind != 0 || has(AllocSize); }
+  // An allocating function that does not return a pointer has nothing for
+  // these to describe; see llvm2alive's parse_fn_attrs().
+  void clearAllocAttrs() { allockind = 0; bits &= ~(unsigned)AllocSize; }
 
   void inferImpliedAttributes();
 

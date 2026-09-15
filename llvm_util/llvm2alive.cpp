@@ -339,9 +339,20 @@ public:
     default:
       return error(i);
     }
+    // Alive2 only models fast-math flags on fpext and fptrunc; for the other
+    // conversions FpConversionOp asserts that there are none, so refuse the
+    // instruction rather than build one we cannot model. LLVM does allow the
+    // flags on sitofp and uitofp -- both are FPMathOperators -- and they are
+    // not vacuous there: ninf makes an overflowing conversion poison, and
+    // arcp/contract/reassoc/afn approximate the result.
+    auto fmath = parse_fmath(i);
+    if (!fmath.isNone() && op != FpConversionOp::FPExt &&
+        op != FpConversionOp::FPTrunc)
+      return error(i);
+
     return make_unique<FpConversionOp>(*ty, value_name(i), *val, op,
                                        FpRoundingMode{}, FpExceptionMode{},
-                                       flags, parse_fmath(i));
+                                       flags, fmath);
   }
 
   RetTy visitFreezeInst(llvm::FreezeInst &i) {
@@ -1574,6 +1585,18 @@ public:
                         Value **val, bool is_callsite) {
     bool precise = true;
     for (const llvm::Attribute &llvmattr : aset) {
+      // getKindAsEnum() asserts on a string attribute, and a parameter can
+      // carry one -- "nvvm.grid_constant", for instance. handleRetAttrs() and
+      // handleFnAttrs() already screen those out. Treat them the way this
+      // function treats any other attribute it does not recognize, rather
+      // than dropping semantics on the floor.
+      if (!llvmattr.hasKindAsEnum()) {
+        if (!is_callsite)
+          errorAttr(llvmattr);
+        precise = false;
+        continue;
+      }
+
       switch (llvmattr.getKindAsEnum()) {
       case llvm::Attribute::InReg:
         attrs.set(ParamAttrs::InReg);
@@ -1868,12 +1891,27 @@ public:
     return attrs;
   }
 
+  // LLVM does not require an allocating function to return a pointer: the
+  // verifier only checks that an allocsize argument names an integer
+  // parameter, so `declare i64 @f(i64, i64) allocsize(1)' is valid IR. Alive2
+  // models an allocation as a pointer to a fresh object, so these attributes
+  // describe nothing when no pointer comes back. Dropping them here keeps the
+  // one decision in one place: FnCall::toSMT() would otherwise take the
+  // allocation path and assert on the non-pointer result, while the memory
+  // layout accounting in transform.cpp skips such a call entirely.
+  static void dropAllocAttrsWithoutPtr(const llvm::Type *retTy,
+                                       FnAttrs &attrs) {
+    if (!retTy->isPointerTy())
+      attrs.clearAllocAttrs();
+  }
+
   static void parse_fn_decl_attrs(const llvm::Function *fn, FnAttrs &attrs) {
     llvm::AttributeList attrs_fndef = fn->getAttributes();
     auto ret = llvm::AttributeList::ReturnIndex;
     auto fnidx = llvm::AttributeList::FunctionIndex;
     handleRetAttrs(attrs_fndef.getAttributes(ret), attrs);
     handleFnAttrs(attrs_fndef.getAttributes(fnidx), attrs);
+    dropAllocAttrsWithoutPtr(fn->getReturnType(), attrs);
     attrs.mem.setFullAccess();
     attrs.mem &= handleMemAttrs(fn->getMemoryEffects());
     attrs.inferImpliedAttributes();
@@ -1890,6 +1928,7 @@ public:
     auto fnidx = llvm::AttributeList::FunctionIndex;
     handleRetAttrs(attrs_callsite.getAttributes(ret), attrs);
     handleFnAttrs(attrs_callsite.getAttributes(fnidx), attrs);
+    dropAllocAttrsWithoutPtr(i.getType(), attrs);
     attrs.mem &= handleMemAttrs(i.getMemoryEffects());
     attrs.inferImpliedAttributes();
   }
@@ -1996,6 +2035,7 @@ public:
     const auto &fnidx = llvm::AttributeList::FunctionIndex;
     handleRetAttrs(attrlist.getAttributes(ridx), attrs);
     handleFnAttrs(attrlist.getAttributes(fnidx), attrs);
+    dropAllocAttrsWithoutPtr(f.getReturnType(), attrs);
     attrs.mem = handleMemAttrs(f.getMemoryEffects());
     attrs.inferImpliedAttributes();
 
