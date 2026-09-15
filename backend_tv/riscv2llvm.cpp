@@ -462,8 +462,15 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   auto retTy = FC.getFunctionType()->getReturnType();
   auto retLoc = CCAssigner(CCAssigner::Target::RISCV64, DL, retTy).retLoc();
   if (retTy->isIntegerTy() || retTy->isPointerTy()) {
-    assert(retLoc.kind == ArgLoc::Direct &&
-           "indirect returns not supported yet");
+    // checkSupport() vets the lifted function's own return type, but nothing
+    // vets the ones it calls, so a callee returning a value too wide for the
+    // registers arrives here.
+    if (!canPlace(retLoc)) {
+      *out << "\nERROR: Unsupported Function Return: a " << getBitWidth(retTy)
+           << "-bit value would be returned at " << toString(retLoc)
+           << " by a callee, which we don't support yet\n\n";
+      exit(-1);
+    }
     auto limbs = retLoc.limbs.size() > 1
                      ? splitIntoLimbs(RV, retLoc.limbBits)
                      : vector<Value *>{RV};

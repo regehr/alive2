@@ -606,8 +606,10 @@ void mc2llvm::doDirectCall() {
   }
 
   *out << "lifting a direct call, callee is: '" << calleeName << "'\n";
+  // Not necessarily a function: src can do `call void @g0()' where @g0 is a
+  // global variable, which is a call through a constant pointer. Handled
+  // below, alongside the signature choice.
   auto *callee = dyn_cast<Function>(expr);
-  assert(callee);
 
   if (false && callee == liftedFn) {
     *out << "Recursion currently not supported\n\n";
@@ -628,23 +630,33 @@ void mc2llvm::doDirectCall() {
     exit(-1);
   }
 
-  // A call instruction carries its own signature, which LLVM allows to differ
-  // from the callee's declaration -- `call void @g0()' against
-  // `declare void @g0(i32)' is legal -- and the assembly was generated from
-  // the call site, so the call site says how many arguments were really
-  // passed. Indexing the declaration's parameters into the call site's
-  // shorter argument list is what used to trip an assertion inside LLVM.
+  // Prefer the call site's signature. LLVM lets it differ from the callee's
+  // declaration -- `call void @g0()' against `declare void @g0(i32)' is legal
+  // -- and the assembly was generated from the call site, so it is what says
+  // how many arguments were really passed. Indexing the declaration's
+  // parameters into a shorter argument list used to trip an assertion inside
+  // LLVM. When the symbol is not a function at all, as in a call to a global
+  // variable, the call site is the only signature there is.
   //
-  // That only holds when the symbol we resolved is the function src calls.
-  // Where the backend synthesized the callee instead -- lowering
-  // llvm.memset.p0.i32 into a call to memset, which we map to
-  // llvm.memset.p0.i64 -- the arguments belong to the synthesized callee, and
-  // its declaration is what describes them.
+  // Two cases have to fall back to the declaration. A variadic call site does
+  // not list its variadic arguments, so it under-describes the call: for
+  // `call void (ptr, ...) @g0(ptr %0, i32 42)' the site has one parameter and
+  // the assembly passed two. And where the backend synthesized the callee --
+  // lowering llvm.memset.p0.i32 into a call to memset, which we map to
+  // llvm.memset.p0.i64 -- the arguments belong to that synthesized callee.
   auto *srcCallee = dyn_cast_or_null<Function>(llvmCI->getCalledOperand());
-  auto *fnTy = (srcCallee && srcCallee->getName() == callee->getName())
-                   ? llvmCI->getFunctionType()
-                   : callee->getFunctionType();
-  FunctionCallee FC{fnTy, callee};
+  auto *siteTy = llvmCI->getFunctionType();
+  auto *fnTy = siteTy;
+  if (callee) {
+    bool sameFn = srcCallee && srcCallee->getName() == callee->getName();
+    if (siteTy->isVarArg() || !sameFn)
+      fnTy = callee->getFunctionType();
+  }
+  if (fnTy->isVarArg()) {
+    *out << "\nERROR: varargs not supported\n\n";
+    exit(-1);
+  }
+  FunctionCallee FC{fnTy, expr};
   doCall(FC, llvmCI, calleeName);
 }
 
@@ -1037,6 +1049,14 @@ void mc2llvm::checkInstSupport(Instruction &i, const DataLayout &DL,
 
       if (name.find("llvm.memcpy.element.unordered.atomic") != string::npos) {
         *out << "\nERROR: atomic instrinsics not supported\n\n";
+        exit(-1);
+      }
+
+      // hwasan has the backend outline its check into a second function in
+      // the emitted assembly, which our block and successor bookkeeping is
+      // not set up to read.
+      if (name.find("llvm.hwasan") != string::npos) {
+        *out << "\nERROR: llvm.hwasan intrinsics not supported\n\n";
         exit(-1);
       }
 
