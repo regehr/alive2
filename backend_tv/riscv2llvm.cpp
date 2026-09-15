@@ -295,6 +295,17 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
         // Use the parameter index, not its GPR index: FP arguments have their
         // own register sequence. paramHasAttr checks both call and declaration.
         unsigned argIdx = args.size();
+        // The assembly's callee and the source call site can disagree about
+        // the argument list: a call site whose signature differs from the
+        // declaration, or debuginfo pointing at a different call than the one
+        // the assembly makes. Either way there is no call-site argument here
+        // to take the extension attributes from.
+        if (argIdx >= llvmCI.arg_size()) {
+          *out << "\nERROR: the source call site passes " << llvmCI.arg_size()
+               << " argument(s) but the callee the assembly names takes "
+               << fTy->getNumParams() << "\n\n";
+          exit(-1);
+        }
         param = checkIntegerABI(param, argTy,
                                 llvmCI.paramHasAttr(argIdx, Attribute::SExt),
                                 llvmCI.paramHasAttr(argIdx, Attribute::ZExt));

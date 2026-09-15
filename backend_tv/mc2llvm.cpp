@@ -39,8 +39,14 @@ Constant *mc2llvm::lazyAddGlobal(string newGlobal) {
   *out << "  lazyAddGlobal '" << newGlobal << "'\n";
 
   {
+    // These are names the backend synthesizes -- lowering llvm.memset to a
+    // call to memset, for example -- so the mapping only applies when the
+    // name does not appear in src at all. A program that declares its own
+    // memset binds the assembly's call to that function instead, and
+    // rewriting the name here would hide it.
     auto got = intrinsic_names.find(newGlobal);
-    if (got != intrinsic_names.end())
+    if (got != intrinsic_names.end() &&
+        !srcFn->getParent()->getNamedValue(newGlobal))
       newGlobal = got->second;
   }
 
@@ -622,7 +628,23 @@ void mc2llvm::doDirectCall() {
     exit(-1);
   }
 
-  FunctionCallee FC{callee};
+  // A call instruction carries its own signature, which LLVM allows to differ
+  // from the callee's declaration -- `call void @g0()' against
+  // `declare void @g0(i32)' is legal -- and the assembly was generated from
+  // the call site, so the call site says how many arguments were really
+  // passed. Indexing the declaration's parameters into the call site's
+  // shorter argument list is what used to trip an assertion inside LLVM.
+  //
+  // That only holds when the symbol we resolved is the function src calls.
+  // Where the backend synthesized the callee instead -- lowering
+  // llvm.memset.p0.i32 into a call to memset, which we map to
+  // llvm.memset.p0.i64 -- the arguments belong to the synthesized callee, and
+  // its declaration is what describes them.
+  auto *srcCallee = dyn_cast_or_null<Function>(llvmCI->getCalledOperand());
+  auto *fnTy = (srcCallee && srcCallee->getName() == callee->getName())
+                   ? llvmCI->getFunctionType()
+                   : callee->getFunctionType();
+  FunctionCallee FC{fnTy, callee};
   doCall(FC, llvmCI, calleeName);
 }
 

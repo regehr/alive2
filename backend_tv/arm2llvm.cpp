@@ -1121,6 +1121,12 @@ vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy,
         // Attributes use the parameter index; FP/vector arguments have a
         // separate register sequence. paramHasAttr also checks the declaration.
         unsigned argIdx = args.size();
+        if (argIdx >= llvmCI.arg_size()) {
+          *out << "\nERROR: the source call site passes " << llvmCI.arg_size()
+               << " argument(s) but the callee the assembly names takes "
+               << fTy->getNumParams() << "\n\n";
+          exit(-1);
+        }
         param = checkIntegerABI(param, argTy,
                                 llvmCI.paramHasAttr(argIdx, Attribute::SExt),
                                 llvmCI.paramHasAttr(argIdx, Attribute::ZExt));
