@@ -951,6 +951,25 @@ void mc2llvm::checkInstSupport(Instruction &i, const DataLayout &DL,
       *out << "\nERROR: inline assembly not supported\n\n";
       exit(-1);
     }
+    // An operand bundle changes what a call does, and the lifter ignores
+    // bundles, so a call carrying one cannot be verified -- kcfi, for
+    // instance, has the backend emit a type check and a trap table that we
+    // would otherwise choke on much later, while parsing the assembly.
+    // Bundles on llvm.assume are the exception: they only carry facts about
+    // values, and are already modeled.
+    if (cb->hasOperandBundles() &&
+        cb->getIntrinsicID() != Intrinsic::assume) {
+      for (unsigned idx = 0, n = cb->getNumOperandBundles(); idx != n; ++idx) {
+        auto tag = cb->getOperandBundleAt(idx).getTagName();
+        // Grandfathered: these are ignored today and the comparison does
+        // verify, so rejecting them here would lose coverage we already have.
+        if (tag == "deactivation-symbol")
+          continue;
+        *out << "\nERROR: the \"" << (string)tag
+             << "\" operand bundle is not supported\n\n";
+        exit(-1);
+      }
+    }
   }
   if (auto *ci = dyn_cast<CallInst>(&i)) {
 

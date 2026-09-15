@@ -88,9 +88,17 @@ void MCStreamerWrapper::emitValueImpl(const MCExpr *Value, unsigned Size,
   } else if (auto BE = dyn_cast<MCBinaryExpr>(Value)) {
     *out << "[emitValue MCBinaryExpr]\n";
     auto *LHS = dyn_cast<MCSymbolRefExpr>(BE->getLHS());
-    assert(LHS);
     auto *RHS = dyn_cast<MCConstantExpr>(BE->getRHS());
-    assert(RHS);
+    if (!LHS || !RHS) {
+      // We can represent symbol+constant and nothing else. A label
+      // difference, which is what XRay sled tables, pcsections and exception
+      // tables emit, describes where the code landed rather than a value the
+      // program can load, so there is nothing to relate it back to.
+      BE->dump();
+      *out << "\nERROR: unsupported relocatable expression emitted into "
+              "section '" << curSec << "'\n\n";
+      exit(-1);
+    }
     OffsetSym s{(std::string)LHS->getSymbol().getName(), RHS->getValue()};
     curROData.push_back(RODataItem{s});
   } else if (auto TE = dyn_cast<MCTargetExpr>(Value)) {
