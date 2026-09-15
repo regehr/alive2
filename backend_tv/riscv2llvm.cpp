@@ -318,6 +318,56 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
   return args;
 }
 
+void riscv2llvm::doIndirectCall() {
+  *out << "in doIndirectCall\n";
+
+  auto llvmInst = getCurLLVMInst();
+  if (!llvmInst) {
+    *out << "\nERROR: no debuginfo mapping exists for an indirect call\n\n";
+    exit(-1);
+  }
+  auto llvmCI = dyn_cast<CallInst>(llvmInst);
+  if (!llvmCI) {
+    *out << "\nERROR: debuginfo for an indirect call gave us something "
+            "that's not a call instruction\n\n";
+    exit(-1);
+  }
+  // A call to a known function is lifted from PseudoCALL or PseudoTAIL, so
+  // anything arriving here should be a call through a pointer. Ask whether
+  // the callee is a Function rather than using isIndirectCall(), which also
+  // rejects a constant callee such as null or an inttoptr.
+  if (llvmCI->getCalledFunction()) {
+    *out << "\nERROR: expected an indirect JALR to map to an indirect "
+            "call\n\n";
+    exit(-1);
+  }
+
+  // An indirect call site carries its own signature; there is no separate
+  // declaration that can disagree with it about arity or parameter types.
+  auto *FnTy = llvmCI->getFunctionType();
+  if (FnTy->isVarArg()) {
+    *out << "\nERROR: varargs not supported\n\n";
+    exit(-1);
+  }
+
+  // JALR transfers control to (rs1 + imm) & ~1. Only the imm == 0 form is
+  // generated for a call; a nonzero offset would name something other than
+  // the source-level callee.
+  if (CurInst->getOperand(2).getImm() != 0) {
+    *out << "\nERROR: indirect call through JALR with a nonzero offset is "
+            "not supported\n\n";
+    exit(-1);
+  }
+
+  // The bit that JALR discards is deliberately not masked off: the lifted
+  // callee is compared against the source function pointer, and masking would
+  // make an equal pointer compare unequal. A callee with bit 0 set is not
+  // modeled.
+  auto fnPtr = readPtrFromRegOperand(1);
+  FunctionCallee FC(FnTy, fnPtr);
+  doCall(FC, llvmCI, "");
+}
+
 void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
                         const string &calleeName) {
   *out << "entering doCall()\n";

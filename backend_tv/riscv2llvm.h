@@ -52,6 +52,7 @@ class riscv2llvm final : public mc2llvm {
 
   void doCall(llvm::FunctionCallee FC, llvm::CallInst *llvmCI,
               const std::string &calleeName) override;
+  void doIndirectCall();
   void checkStackAlignment();
 
   void lift(llvm::MCInst &I) override;

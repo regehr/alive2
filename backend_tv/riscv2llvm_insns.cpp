@@ -608,10 +608,34 @@ void riscv2llvm::lift(MCInst &I) {
   }
 
   case RISCV::JALR: {
-    assert(CurInst->getOperand(0).getReg() == RISCV::X0);
-    assert(CurInst->getOperand(1).getReg() == RISCV::X1);
-    assert(CurInst->getOperand(2).getImm() == 0);
-    doReturn();
+    // JALR is a return, an indirect call, or an indirect tail call, told
+    // apart by which register receives the link address and which one holds
+    // the target.
+    auto linkReg = CurInst->getOperand(0).getReg();
+    auto targetReg = CurInst->getOperand(1).getReg();
+
+    if (linkReg == RISCV::X0 && targetReg == RISCV::X1) {
+      // jalr zero, ra, 0 -- the canonical return
+      if (CurInst->getOperand(2).getImm() != 0) {
+        *out << "\nERROR: return through JALR with a nonzero offset is not "
+                "supported\n";
+        exit(-1);
+      }
+      doReturn();
+    } else if (linkReg == RISCV::X1) {
+      // jalr ra, rs, 0 -- an indirect call
+      doIndirectCall();
+    } else if (linkReg == RISCV::X0) {
+      // jr rs -- an indirect tail call. The callee inherits our return
+      // address, so read ra before the abstract call invalidates it.
+      auto returnAddress = readFromReg(RISCV::X1, i64ty);
+      doIndirectCall();
+      doReturn(returnAddress);
+    } else {
+      *out << "\nERROR: JALR with an unsupported link register is not "
+              "supported\n";
+      exit(-1);
+    }
     break;
   }
 
