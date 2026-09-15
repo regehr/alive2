@@ -764,6 +764,26 @@ static T round_value(const State &s, FpRoundingMode rm, AndExpr &non_poison,
                        expr::rtz())))));
 }
 
+// The rewrite-based fast-math flags (arcp, contract, reassoc, afn) don't
+// constrain the value of a single instruction; they license rewriting the
+// expression it belongs to. Over-approximate by making the result an
+// uninterpreted function of the exact result.
+static expr handle_rewrite_flags(State &s, FastMathFlags fmath, expr val) {
+  auto approx = [&](const char *name) {
+    val = expr::mkUF(name, { val }, val);
+    s.doesApproximation(name, val);
+  };
+  if (fmath.flags & FastMathFlags::ARCP)
+    approx("arcp");
+  if (fmath.flags & FastMathFlags::Contract)
+    approx("contract");
+  if (fmath.flags & FastMathFlags::Reassoc)
+    approx("reassoc");
+  if (fmath.flags & FastMathFlags::AFN)
+    approx("afn");
+  return val;
+}
+
 static StateValue fm_poison(State &s, expr a, const expr &ap, expr b,
                             const expr &bp, expr c, const expr &cp,
                             function<expr(const expr&, const expr&,
@@ -831,22 +851,7 @@ static StateValue fm_poison(State &s, expr a, const expr &ap, expr b,
     if (!flags_in_only && val.isFloat())
       non_poison.add(!val.isInf());
   }
-  if (fmath.flags & FastMathFlags::ARCP) {
-    val = expr::mkUF("arcp", { val }, val);
-    s.doesApproximation("arcp", val);
-  }
-  if (fmath.flags & FastMathFlags::Contract) {
-    val = expr::mkUF("contract", { val }, val);
-    s.doesApproximation("contract", val);
-  }
-  if (fmath.flags & FastMathFlags::Reassoc) {
-    val = expr::mkUF("reassoc", { val }, val);
-    s.doesApproximation("reassoc", val);
-  }
-  if (fmath.flags & FastMathFlags::AFN) {
-    val = expr::mkUF("afn", { val }, val);
-    s.doesApproximation("afn", val);
-  }
+  val = handle_rewrite_flags(s, fmath, std::move(val));
 
   if (!bitwise && val.isFloat()) {
     val = handle_subnormal(s,
@@ -1969,6 +1974,8 @@ FpConversionOp::FpConversionOp(Type &type, std::string &&name, Value &val,
   switch (op) {
   case FPTrunc:
   case FPExt:
+  case SIntToFP:
+  case UIntToFP:
     break;
   default:
     assert(fmath.isNone());
@@ -2026,15 +2033,21 @@ StateValue FpConversionOp::toSMT(State &s) const {
 
   switch (op) {
   case SIntToFP:
-    fn = [](auto &val, auto &to_type, auto &rm) -> StateValue {
-      return { val.sint2fp(to_type.getAsFloatType()->getDummyFloat(), rm),
-               true };
-    };
-    break;
   case UIntToFP:
     fn = [&](auto &val, auto &to_type, auto &rm) -> StateValue {
-      return {val.uint2fp(to_type.getAsFloatType()->getDummyFloat(), rm),
-              (flags & NNEG) ? !val.isNegative() : true};
+      expr dummy = to_type.getAsFloatType()->getDummyFloat();
+      expr r = op == SIntToFP ? val.sint2fp(dummy, rm) : val.uint2fp(dummy, rm);
+      AndExpr np;
+
+      if (op == UIntToFP && (flags & NNEG))
+        np.add(!val.isNegative());
+
+      if (fmath.flags & FastMathFlags::NSZ)
+        r = any_fp_zero(s, std::move(r));
+      if (fmath.flags & FastMathFlags::NInf)
+        np.add(!r.isInf());
+      r = handle_rewrite_flags(s, fmath, std::move(r));
+      return { std::move(r), np() };
     };
     break;
   case FPToSInt:
