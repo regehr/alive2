@@ -705,11 +705,12 @@ public:
     return phi;
   }
 
-  RetTy visitBranchInst(llvm::BranchInst &i) {
-    auto &dst_true = getBB(i.getSuccessor(0));
-    if (i.isUnconditional())
-      return make_unique<Branch>(dst_true);
+  RetTy visitUncondBrInst(llvm::UncondBrInst &i) {
+    return make_unique<Branch>(getBB(i.getSuccessor(0)));
+  }
 
+  RetTy visitCondBrInst(llvm::CondBrInst &i) {
+    auto &dst_true = getBB(i.getSuccessor(0));
     auto &dst_false = getBB(i.getSuccessor(1));
     auto cond = get_operand(i.getCondition());
     if (!cond)
@@ -840,7 +841,10 @@ public:
     case llvm::Intrinsic::smax:
     case llvm::Intrinsic::abs:
     case llvm::Intrinsic::ucmp:
-    case llvm::Intrinsic::scmp: {
+    case llvm::Intrinsic::scmp:
+    case llvm::Intrinsic::clmul:
+    case llvm::Intrinsic::pext:
+    case llvm::Intrinsic::pdep: {
       PARSE_BINOP();
       addNoundefAssumes(i, {a, b});
       BinOp::Op op;
@@ -866,6 +870,9 @@ public:
       case llvm::Intrinsic::abs:      op = BinOp::Abs; break;
       case llvm::Intrinsic::ucmp:     op = BinOp::UCmp; break;
       case llvm::Intrinsic::scmp:     op = BinOp::SCmp; break;
+      case llvm::Intrinsic::clmul:    op = BinOp::Clmul; break;
+      case llvm::Intrinsic::pext:     op = BinOp::PExt; break;
+      case llvm::Intrinsic::pdep:     op = BinOp::PDep; break;
       default: UNREACHABLE();
       }
       ret = make_unique<BinOp>(*ty, value_name(i), *a, *b, op);
@@ -1705,6 +1712,14 @@ public:
         ranges::sort(attrs.initializes);
         break;
 
+      case llvm::Attribute::NoFree:
+        attrs.set(ParamAttrs::NoFree);
+        break;
+
+      case llvm::Attribute::NoFreeObj:
+        attrs.set(ParamAttrs::NoFreeObj);
+        break;
+
       default:
         // If it is call site, it should be added at approximation list
         if (!is_callsite)
@@ -1754,24 +1769,26 @@ public:
     }
   }
 
-  static FPDenormalAttrs::Type parse_fp_denormal_str(string_view str) {
-    if (str == "dynamic")       return FPDenormalAttrs::Dynamic;
-    if (str == "ieee")          return FPDenormalAttrs::IEEE;
-    if (str == "preserve-sign") return FPDenormalAttrs::PreserveSign;
-    if (str == "positive-zero") return FPDenormalAttrs::PositiveZero;
-    UNREACHABLE();
+  static FPDenormalAttrs::Type parse_fp_denormal(llvm::DenormalMode::DenormalModeKind mode) {
+    switch (mode) {
+    case llvm::DenormalMode::IEEE:
+      return FPDenormalAttrs::IEEE;
+    case llvm::DenormalMode::PositiveZero:
+      return FPDenormalAttrs::PositiveZero;
+    case llvm::DenormalMode::PreserveSign:
+      return FPDenormalAttrs::PreserveSign;
+    case llvm::DenormalMode::Dynamic:
+      return FPDenormalAttrs::Dynamic;
+    default:
+      UNREACHABLE();
+    }
   }
 
-  static FPDenormalAttrs parse_fp_denormal(string_view str) {
-    FPDenormalAttrs attr;
-    auto comma = str.find(',');
-    if (comma == string_view::npos) {
-      attr.input = attr.output = parse_fp_denormal_str(str);
-    } else {
-      attr.output = parse_fp_denormal_str(string_view(str.data(), comma));
-      attr.input  = parse_fp_denormal_str(str.data() + comma + 1);
-    }
-    return attr;
+  static FPDenormalAttrs parse_fp_denormal(llvm::DenormalMode mode) {
+    return {
+      .input = parse_fp_denormal(mode.Input),
+      .output = parse_fp_denormal(mode.Output),
+    };
   }
 
   static void handleFnAttrs(const llvm::AttributeSet &aset, FnAttrs &attrs) {
@@ -1779,11 +1796,7 @@ public:
       if (llvmattr.isStringAttribute()) {
         auto str = llvmattr.getKindAsString();
         auto val = llvmattr.getValueAsString();
-        if (str == "denormal-fp-math") {
-          attrs.setFPDenormal(parse_fp_denormal(val));
-        } else if (str == "denormal-fp-math-f32") {
-          attrs.setFPDenormal(parse_fp_denormal(val), 32);
-        } else if (str == "alloc-family") {
+        if (str == "alloc-family") {
           attrs.allocfamily = val;
         }
       }
@@ -1803,6 +1816,13 @@ public:
         attrs.allocsize_0 = args.first;
         if (args.second)
           attrs.allocsize_1 = *args.second;
+        break;
+      }
+      case llvm::Attribute::DenormalFPEnv: {
+        auto fp_env = llvmattr.getDenormalFPEnv();
+        attrs.setFPDenormal(parse_fp_denormal(fp_env.DefaultMode));
+        if (fp_env.F32Mode != fp_env.DefaultMode)
+          attrs.setFPDenormal(parse_fp_denormal(fp_env.F32Mode), 32);
         break;
       }
       case llvm::Attribute::AllocKind: {

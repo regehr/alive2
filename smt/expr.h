@@ -217,6 +217,9 @@ public:
   expr cttz(const expr &val_zero) const;
   expr ctlz() const;
   expr ctpop() const;
+  expr clmul(const expr &rhs) const;
+  expr pext(const expr &mask) const;
+  expr pdep(const expr &mask) const;
 
   expr umin(const expr &rhs) const;
   expr umax(const expr &rhs) const;
@@ -420,7 +423,7 @@ public:
       [&]() -> decltype(auto) { return b; })
 
 template <typename RetTy, typename T1, typename T2>
-static RetTy mkIf_fold_fn(const expr &cond, T1 &&a, T2 &&b) {
+static inline RetTy mkIf_fold_fn(const expr &cond, T1 &&a, T2 &&b) {
   if (cond.isTrue())
     return a();
   if (cond.isFalse())

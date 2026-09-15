@@ -1950,7 +1950,8 @@ void Transform::preprocess() {
           unsigned bits = tgt_i->getType().bits();
           auto it = src_loads.find(bits);
           if (it != src_loads.end()) {
-            auto new_align = min(min(it->second, min_loads), uint64_t(bits/8));
+            auto new_align = min(min(it->second, min_loads),
+                                 bit_floor(uint64_t(bits/8)));
             if (tgt_i->getAlign() < new_align)
               tgt_i->setAlign(new_align);
           }
@@ -1960,7 +1961,8 @@ void Transform::preprocess() {
           unsigned bits = tgt_i->getValue().getType().bits();
           auto it = src_stores.find(bits);
           if (it != src_stores.end()) {
-            auto new_align = min(min(it->second, min_stores), uint64_t(bits/8));
+            auto new_align = min(min(it->second, min_stores),
+                                 bit_floor(uint64_t(bits/8)));
             if (tgt_i->getAlign() < new_align)
               tgt_i->setAlign(new_align);
           }
