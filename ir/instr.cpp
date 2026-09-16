@@ -764,23 +764,23 @@ static T round_value(const State &s, FpRoundingMode rm, AndExpr &non_poison,
                        expr::rtz())))));
 }
 
-// The rewrite-based fast-math flags (arcp, contract, reassoc, afn) don't
-// constrain the value of a single instruction; they license rewriting the
-// expression it belongs to. Over-approximate by making the result an
-// uninterpreted function of the exact result.
 static expr handle_rewrite_flags(State &s, FastMathFlags fmath, expr val) {
-  auto approx = [&](const char *name) {
-    val = expr::mkUF(name, { val }, val);
-    s.doesApproximation(name, val);
-  };
-  if (fmath.flags & FastMathFlags::ARCP)
-    approx("arcp");
-  if (fmath.flags & FastMathFlags::Contract)
-    approx("contract");
-  if (fmath.flags & FastMathFlags::Reassoc)
-    approx("reassoc");
-  if (fmath.flags & FastMathFlags::AFN)
-    approx("afn");
+  if (fmath.flags & FastMathFlags::ARCP) {
+    val = expr::mkUF("arcp", { val }, val);
+    s.doesApproximation("arcp", val);
+  }
+  if (fmath.flags & FastMathFlags::Contract) {
+    val = expr::mkUF("contract", { val }, val);
+    s.doesApproximation("contract", val);
+  }
+  if (fmath.flags & FastMathFlags::Reassoc) {
+    val = expr::mkUF("reassoc", { val }, val);
+    s.doesApproximation("reassoc", val);
+  }
+  if (fmath.flags & FastMathFlags::AFN) {
+    val = expr::mkUF("afn", { val }, val);
+    s.doesApproximation("afn", val);
+  }
   return val;
 }
 
