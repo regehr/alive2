@@ -4,6 +4,7 @@
 #include "llvm_util/utils.h"
 #include "ir/constant.h"
 #include "ir/function.h"
+#include "util/config.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
@@ -17,6 +18,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/SourceMgr.h"
+#include <limits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -40,7 +42,9 @@ FloatType quad_type("fp128", FloatType::Quad);
 FloatType bfloat_type("bfloat", FloatType::BFloat);
 
 // cache complex types
-unordered_map<const llvm::Type*, unique_ptr<Type>> type_cache;
+// Keep concrete types for each scale alive while the plugin caches functions.
+unordered_map<const llvm::Type*, unordered_map<unsigned, unique_ptr<Type>>>
+  type_cache;
 unsigned type_id_counter; // for unnamed types
 
 Function *current_fn;
@@ -159,7 +163,12 @@ Type* llvm_type2alive(const llvm::Type *ty) {
     if (strty->isOpaque())
       return get_int_type(8);
 
-    auto &cache = type_cache[ty];
+    // If there's a scalable struct member, return early since
+    // otherwise getStructLayout() will assert out
+    if (strty->isScalableTy())
+      return nullptr;
+
+    auto &cache = type_cache[ty][util::config::vscale_value];
     if (!cache) {
       vector<Type*> elems;
       vector<bool> is_padding;
@@ -202,22 +211,30 @@ Type* llvm_type2alive(const llvm::Type *ty) {
     }
     return cache.get();
   }
-  // TODO: non-fixed sized vectors
-  case llvm::Type::FixedVectorTyID: {
-    auto &cache = type_cache[ty];
+  case llvm::Type::FixedVectorTyID:
+  case llvm::Type::ScalableVectorTyID: {
+    auto &cache = type_cache[ty][util::config::vscale_value];
     if (!cache) {
       auto vty = cast<llvm::VectorType>(ty);
       auto elems = vty->getElementCount().getKnownMinValue();
       auto ety = llvm_type2alive(vty->getElementType());
       if (!ety || elems > 1024)
         return nullptr;
+      uint64_t count = elems;
+      if (vty->isScalableTy())
+        count *= util::config::vscale_value;
+      if (!count || count > numeric_limits<unsigned>::max() /
+                              max(ety->bits(), ety->np_bits(false))) {
+        *out << "ERROR: Vector type is too large\n";
+        return nullptr;
+      }
       cache = make_unique<VectorType>("ty_" + to_string(type_id_counter++),
-                                      elems, *ety);
+                                      elems, *ety, vty->isScalableTy());
     }
     return cache.get();
   }
   case llvm::Type::ArrayTyID: {
-    auto &cache = type_cache[ty];
+    auto &cache = type_cache[ty][util::config::vscale_value];
     if (!cache) {
       auto aty = cast<llvm::ArrayType>(ty);
       auto elemty = aty->getElementType();
@@ -298,7 +315,7 @@ Value* get_operand(llvm::Value *v,
     return nullptr;
 
   // automatic splat of constant values
-  if (auto vty = dyn_cast<llvm::FixedVectorType>(v->getType());
+  if (auto vty = dyn_cast<llvm::VectorType>(v->getType());
       vty && isa<llvm::ConstantInt, llvm::ConstantFP>(v)) {
     llvm::Value *llvm_splat = nullptr;
     if (auto cnst = dyn_cast<llvm::ConstantInt>(v)) {
@@ -315,7 +332,9 @@ Value* get_operand(llvm::Value *v,
     if (!splat)
       return nullptr;
 
-    vector<Value*> vals(vty->getNumElements(), splat);
+    // ty was built at the current vscale, so for a scalable vector it
+    // already holds the concrete element count, not the type's minimum.
+    vector<Value*> vals(ty->getAsAggregateType()->numElementsConst(), splat);
     auto val = make_unique<AggregateValue>(*ty, std::move(vals));
     auto ret = val.get();
     current_fn->addConstant(std::move(val));

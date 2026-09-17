@@ -185,4 +185,17 @@ llvm::cl::opt<bool> opt_disallow_ub_exploitation(
   llvm::cl::desc("Disallow UB exploitation by optimizations (default=allow)"),
   llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
 
+#ifdef ARGS_VSCALE_LOOP
+llvm::cl::opt<unsigned> opt_max_vscale(LLVM_ARGS_PREFIX "max-vscale",
+  llvm::cl::desc("Check power-of-two vscale values up to this inclusive maximum "
+                 "(default=16)"),
+  llvm::cl::init(16), llvm::cl::value_desc("value"),
+  llvm::cl::cat(alive_cmdargs));
+#else
+llvm::cl::opt<unsigned> opt_vscale(LLVM_ARGS_PREFIX "vscale",
+  llvm::cl::desc("Set vscale value for scalable vectors (default=2)"),
+  llvm::cl::init(2), llvm::cl::value_desc("value"),
+  llvm::cl::cat(alive_cmdargs));
+#endif
+
 }

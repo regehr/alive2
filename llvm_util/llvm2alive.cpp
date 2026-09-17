@@ -2,9 +2,11 @@
 // Distributed under the MIT license that can be found in the LICENSE file.
 
 #include "llvm_util/llvm2alive.h"
+#include "ir/type.h"
 #include "ir/x86_intrinsics.h"
 #include "llvm_util/known_fns.h"
 #include "llvm_util/utils.h"
+#include "util/config.h"
 #include "util/sort.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
@@ -668,7 +670,14 @@ public:
         continue;
       }
 
-      gep->addIdx(I.getSequentialElementStride(DL()).getKnownMinValue(), *op);
+      auto stride = I.getSequentialElementStride(DL());
+      auto size = stride.getKnownMinValue();
+      if (stride.isScalable() &&
+          __builtin_mul_overflow(size, uint64_t(config::vscale_value), &size)) {
+        *out << "ERROR: Scalable GEP stride is too large\n";
+        return error(i);
+      }
+      gep->addIdx(size, *op);
     }
     return gep;
   }
@@ -1231,6 +1240,21 @@ public:
       addNoundefAssumes(i, {a, b});
       return make_unique<VaCopy>(*a, *b);
     }
+    case llvm::Intrinsic::vscale: {
+      auto ty = llvm_type2alive(i.getType());
+      if (!ty)
+        return error(i);
+      llvm::Constant *constant;
+      if (ty->bits() < 32 && (config::vscale_value >> ty->bits()) != 0)
+        constant = llvm::PoisonValue::get(i.getType());
+      else
+        constant = llvm::ConstantInt::get(i.getType(), config::vscale_value);
+      auto val = get_operand(constant);
+      if (!val)
+        return error(i);
+      ret = make_unique<UnaryOp>(*ty, value_name(i), *val, UnaryOp::Copy);
+      break;
+    }
 
     // do nothing intrinsics
     case llvm::Intrinsic::dbg_declare:
@@ -1342,8 +1366,17 @@ public:
   RetTy visitShuffleVectorInst(llvm::ShuffleVectorInst &i) {
     PARSE_BINOP();
     vector<unsigned> mask;
-    for (auto m : i.getShuffleMask())
-      mask.push_back(m);
+
+    unsigned replicate = 1;
+    if (i.getType()->isScalableTy()) {
+      replicate = config::vscale_value;
+    }
+
+    auto &&sm = i.getShuffleMask();
+    for (unsigned j = 0; j < replicate; j++) {
+      mask.insert(mask.end(), sm.begin(), sm.end());
+    }
+
     return
       make_unique<ShuffleVector>(*ty, value_name(i), *a, *b, std::move(mask));
   }
@@ -1591,7 +1624,10 @@ public:
         attrs.set(ParamAttrs::ByVal);
         auto ty = aset.getByValType();
         auto asz = DL().getTypeAllocSize(ty);
-        attrs.blockSize = max(attrs.blockSize, asz.getKnownMinValue());
+        auto size = asz.getKnownMinValue();
+        if (asz.isScalable())
+          size *= uint64_t(config::vscale_value);
+        attrs.blockSize = max(attrs.blockSize, size);
 
         attrs.set(ParamAttrs::Align);
         attrs.align = max(attrs.align, DL().getABITypeAlign(ty).value());

@@ -6,7 +6,9 @@
 #include "ir/state.h"
 #include "smt/solver.h"
 #include "util/compiler.h"
+#include "util/config.h"
 #include <array>
+#include <bit>
 #include <cassert>
 #include <charconv>
 #include <cstring>
@@ -19,12 +21,16 @@ using namespace std;
 
 static constexpr unsigned var_type_bits = 3;
 static constexpr unsigned var_bw_bits = 11;
-static constexpr unsigned var_vector_elements = 16;
+static constexpr unsigned var_vector_elements = 32;
 
 
 namespace IR {
 
 VoidType Type::voidTy;
+
+expr Type::vscale(unsigned max_vscale) {
+  return expr::mkVar("vscale", max(1u, (unsigned)bit_width(max_vscale)));
+}
 
 unsigned Type::np_bits(bool fromInt) const {
   if (!fromInt)
@@ -1110,9 +1116,13 @@ void ArrayType::print(ostream &os) const {
 }
 
 
-VectorType::VectorType(string &&name, unsigned elements, Type &elementTy)
-  : AggregateType(std::move(name), false) {
+VectorType::VectorType(string &&name, unsigned elements, Type &elementTy,
+                       bool scalable)
+  : AggregateType(std::move(name), false),
+    vscale_value(scalable ? util::config::vscale_value : 0) {
   assert(elements != 0);
+  if (scalable)
+    elements *= vscale_value;
   this->elements = elements;
   defined = true;
   children.resize(elements, &elementTy);
@@ -1199,8 +1209,13 @@ expr VectorType::enforceVectorType(
 }
 
 void VectorType::print(ostream &os) const {
-  if (elements)
-    os << '<' << elements << " x " << *children[0] << '>';
+  if (!elements)
+    return;
+  os << '<';
+  if (vscale_value)
+    os << "vscale:" << vscale_value << " x ";
+  os << (vscale_value ? elements / vscale_value : elements)
+     << " x " << *children[0] << '>';
 }
 
 

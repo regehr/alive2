@@ -5,6 +5,7 @@
 #include "ir/memory.h"
 #include "llvm_util/llvm2alive.h"
 #include "llvm_util/utils.h"
+#include "llvm_util/vscale.h"
 #include "smt/smt.h"
 #include "smt/solver.h"
 #include "tools/transform.h"
@@ -21,6 +22,7 @@
 #include "llvm/TargetParser/Triple.h"
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <random>
 #include <signal.h>
@@ -38,6 +40,7 @@ using namespace std;
 #define LLVM_ARGS_PREFIX "tv-"
 #define ARGS_SRC_TGT
 #define ARGS_REFINEMENT
+#define ARGS_VSCALE_LOOP
 #include "llvm_util/cmd_args_list.h"
 
 namespace {
@@ -72,11 +75,14 @@ struct FnInfo {
   Function fn;
   string fn_tostr;
   unsigned n = 0;
+  bool vscale_dependent = false;
+  bool vscale_allowed = true;
 };
 
 optional<smt::smt_initializer> smt_init;
 optional<llvm_util::initializer> llvm_util_init;
-unordered_map<string, FnInfo> fns;
+map<pair<string, unsigned>, FnInfo> fns;
+vector<unsigned> vscales;
 unsigned initialized = 0;
 bool showed_stats = false;
 bool has_failure = false;
@@ -201,7 +207,22 @@ struct TVLegacyPass final : public llvm::ModulePass {
     string name = F.getName().str();
     if (name.empty())
       name = "anon$" + std::to_string(++anon_count);
-    auto [I, first] = fns.try_emplace(std::move(name));
+    bool dependent = referencesVScale(F);
+    bool checked = false, has_source = false;
+    for (unsigned scale : vscales) {
+      TmpValueChange vscale(config::vscale_value, scale);
+      runOn(F, TLI, name, dependent, checked, has_source);
+    }
+    if (has_source && !checked)
+      *out << "ERROR: No vscale values to check up to " << opt_max_vscale
+           << "\n\n";
+    return false;
+  }
+
+  bool runOn(llvm::Function &F, llvm::TargetLibraryInfo *TLI,
+             const string &name, bool dependent, bool &checked,
+             bool &has_source) {
+    auto [I, first] = fns.try_emplace(pair(name, config::vscale_value));
     if (onlyif_src_exists && first) {
       // src does not exist; skip this fn
       fns.erase(I);
@@ -211,15 +232,48 @@ struct TVLegacyPass final : public llvm::ModulePass {
     if (!first && nop_transform)
       return false;
 
-    auto fn = llvm2alive(F, *TLI, first,
-                         first ? vector<GlobalVariable*>()
-                               : I->second.fn.getGlobalVars());
+    auto &info = I->second;
+    bool source_allowed = info.vscale_allowed;
+    bool scalable = dependent || info.vscale_dependent;
+    bool verify_scale = !first && !unsupported_transform && source_allowed &&
+                        (scalable || !checked);
+    has_source |= !first && !unsupported_transform;
+    info.vscale_dependent = dependent;
+    info.vscale_allowed = allowsVScale(F, config::vscale_value);
+    if (verify_scale) {
+      checked = true;
+      if (scalable && !config::quiet)
+        *out << "Checking vscale = " << config::vscale_value << '\n';
+      if (!info.vscale_allowed) {
+        *out << "Transformation doesn't verify! (unsound)\n"
+                "ERROR: Target vscale_range excludes vscale = "
+             << config::vscale_value << "\n\nPass: " << pass_name << '\n';
+        emitCommandLine(out);
+        *out << '\n';
+        has_failure = true;
+        if (opt_error_fatal)
+          finalize();
+      }
+    }
+    if (!info.vscale_allowed) {
+      info.fn = Function();
+      info.fn_tostr.clear();
+      return false;
+    }
+
+    bool fresh = !verify_scale;
+    auto fn = llvm2alive(F, *TLI, fresh,
+                         fresh ? vector<GlobalVariable*>()
+                               : info.fn.getGlobalVars());
     if (!fn) {
       fns.erase(I);
       return false;
     }
 
-    if (first || unsupported_transform) {
+    // Cache every concrete source: a later pass may introduce vscale even
+    // when this source is independent of it. Such pairs are verified once
+    // while both source and target remain independent.
+    if (!verify_scale) {
       I->second.fn = std::move(*fn);
       if (!opt_always_verify)
         // Prepare syntactic check
@@ -411,6 +465,15 @@ struct TVLegacyPass final : public llvm::ModulePass {
     showed_stats = false;
     llvm_util_init.emplace(*out, module.getDataLayout());
     smt_init.emplace();
+    auto scales = getVScales(opt_max_vscale);
+    if (!scales) {
+      *out << "ERROR: Could not solve typing constraints\n\n";
+      return;
+    }
+    vscales = std::move(*scales);
+    if (vscales.empty())
+      *out << "ERROR: No vscale values to check up to " << opt_max_vscale
+           << "\n\n";
     return;
   }
 

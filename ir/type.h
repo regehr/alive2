@@ -43,6 +43,7 @@ protected:
 
 public:
   Type(std::string &&name) : name(std::move(name)) {}
+  static smt::expr vscale(unsigned max_vscale);
   virtual unsigned bits() const = 0;
   virtual unsigned np_bits(bool fromInt) const;
 
@@ -335,9 +336,12 @@ public:
 
 
 class VectorType final : public AggregateType {
+  unsigned vscale_value = 0;
+
 public:
   VectorType(std::string &&name) : AggregateType(std::move(name)) {}
-  VectorType(std::string &&name, unsigned elements, Type &elementTy);
+  VectorType(std::string &&name, unsigned elements, Type &elementTy,
+             bool scalable = false);
 
   IR::StateValue extract(const IR::StateValue &vector,
                          const smt::expr &index) const;

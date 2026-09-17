@@ -116,6 +116,17 @@ Or using the opt wrapper:
 ~/alive2/build/opt-alive-test.sh -passes=instcombine foo.ll
 ```
 
+When either function uses scalable vectors or `llvm.vscale`, Alive2 checks
+each power-of-two `vscale` from 1 through 16, subject to the source function's
+`vscale_range` attribute. Use `--max-vscale=N` to change this inclusive ceiling
+(`-tv-max-vscale=N` for the `opt` and `clang` plugins).
+The type solver enumerates these values using a power-of-two `vscale` parameter
+(five bits with the default ceiling). Each iteration uses a concrete scale for
+both functions; diagnostics identify that scale, and success requires every
+applicable iteration to pass. This is
+bounded validation: values above the ceiling are not checked. Functions without
+a dependency on `vscale` are checked once.
+
 
 Translation validation of a single LLVM unit test, using lit:
 ```

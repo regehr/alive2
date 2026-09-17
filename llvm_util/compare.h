@@ -21,6 +21,8 @@ struct Verifier {
   bool always_verify = false;
   bool print_dot = false;
   bool bidirectional = false;
+  bool print_transform = true;
+  bool print_success = true;
 
   Verifier(llvm::TargetLibraryInfoWrapperPass &TLI,
            smt::smt_initializer &smt_init, std::ostream &out)

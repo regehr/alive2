@@ -97,7 +97,8 @@ Results verify(llvm::Function &F1, llvm::Function &F2,
 } // namespace
 
 bool Verifier::compareFunctions(llvm::Function &F1, llvm::Function &F2) {
-  auto r = verify(F1, F2, TLI, smt_init, out, !config::quiet, always_verify);
+  auto r = verify(F1, F2, TLI, smt_init, out,
+                  print_transform && !config::quiet, always_verify);
   if (r.status == Results::ERROR) {
     out << "ERROR: " << r.error;
     ++num_errors;
@@ -118,12 +119,14 @@ bool Verifier::compareFunctions(llvm::Function &F1, llvm::Function &F2) {
     break;
 
   case Results::SYNTACTIC_EQ:
-    out << "Transformation seems to be correct! (syntactically equal)\n\n";
+    if (print_success)
+      out << "Transformation seems to be correct! (syntactically equal)\n\n";
     ++num_correct;
     break;
 
   case Results::CORRECT:
-    out << "Transformation seems to be correct!\n\n";
+    if (print_success)
+      out << "Transformation seems to be correct!\n\n";
     ++num_correct;
     break;
 
@@ -156,7 +159,8 @@ bool Verifier::compareFunctions(llvm::Function &F1, llvm::Function &F2) {
 
     case Results::SYNTACTIC_EQ:
     case Results::CORRECT:
-      out << "These functions seem to be equivalent!\n\n";
+      if (print_success)
+        out << "These functions seem to be equivalent!\n\n";
       return true;
 
     case Results::FAILED_TO_PROVE:

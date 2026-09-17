@@ -6,6 +6,7 @@
 #include "llvm_util/llvm2alive.h"
 #include "llvm_util/llvm_optimizer.h"
 #include "llvm_util/utils.h"
+#include "llvm_util/vscale.h"
 #include "smt/smt.h"
 #include "tools/transform.h"
 #include "util/version.h"
@@ -40,6 +41,7 @@ using namespace llvm_util;
 #define LLVM_ARGS_PREFIX ""
 #define ARGS_SRC_TGT
 #define ARGS_REFINEMENT
+#define ARGS_VSCALE_LOOP
 #include "llvm_util/cmd_args_list.h"
 
 namespace {
@@ -70,6 +72,74 @@ llvm::cl::opt<string>
                            "https://llvm.org/docs/NewPassManager.html#invoking-opt"),
             llvm::cl::cat(alive_cmdargs), llvm::cl::init("O2"));
 
+bool compareFunctions(Verifier &verifier, llvm::Function &src,
+                      llvm::Function &tgt) {
+  if (!referencesVScale(src) && !referencesVScale(tgt))
+    return verifier.compareFunctions(src, tgt);
+
+  auto scales = getVScales(opt_max_vscale);
+  if (!scales) {
+    *out << "ERROR: Could not solve typing constraints\n\n";
+    ++verifier.num_failed;
+    return true;
+  }
+
+  bool checked = false;
+  for (unsigned scale : *scales) {
+    bool forward = allowsVScale(src, scale);
+    bool reverse = verifier.bidirectional && allowsVScale(tgt, scale);
+    if (forward || reverse) {
+      TmpValueChange vscale(config::vscale_value, scale);
+      *out << "Checking vscale = " << scale << endl;
+
+      // A target restriction cannot remove cases allowed by the source.
+      if ((forward && !allowsVScale(tgt, scale)) ||
+          (reverse && !allowsVScale(src, scale))) {
+        *out << "ERROR: " << (forward ? "Target" : "Source")
+             << " vscale_range excludes vscale = " << scale << "\n\n";
+        ++verifier.num_unsound;
+        return false;
+      }
+
+      Verifier iteration(verifier.TLI, verifier.smt_init, verifier.out);
+      iteration.always_verify = verifier.always_verify;
+      iteration.print_dot = verifier.print_dot;
+      iteration.print_transform = verifier.print_transform && !checked;
+      iteration.print_success = false;
+      checked = true;
+      bool valid = iteration.compareFunctions(src, tgt);
+      if (valid && !iteration.num_errors && !iteration.num_failed && reverse) {
+        *out << "Checking reverse transformation at vscale = " << scale << endl;
+        iteration.print_transform = false;
+        valid = iteration.compareFunctions(tgt, src);
+      }
+      if (!valid) {
+        ++verifier.num_unsound;
+        return false;
+      }
+      if (iteration.num_errors) {
+        ++verifier.num_errors;
+        return true;
+      }
+      if (iteration.num_failed) {
+        ++verifier.num_failed;
+        return true;
+      }
+    }
+  }
+
+  if (!checked) {
+    *out << "ERROR: No vscale values to check up to " << opt_max_vscale << "\n\n";
+    ++verifier.num_failed;
+    return true;
+  }
+  ++verifier.num_correct;
+  *out << "Transformation seems to be correct! "
+          "(all applicable vscale values up to " << opt_max_vscale << ")\n\n";
+  if (verifier.bidirectional)
+    *out << "These functions seem to be equivalent!\n\n";
+  return true;
+}
 
 }
 
@@ -118,6 +188,11 @@ and "tgt5" will unused.
 
   llvm::cl::HideUnrelatedOptions(alive_cmdargs);
   llvm::cl::ParseCommandLineOptions(argc, argv, Usage);
+
+  if (opt_max_vscale == 0) {
+    cerr << "ERROR: --max-vscale must be greater than zero\n";
+    return 1;
+  }
 
   auto M1 = openInputFile(Context, opt_file1);
   if (!M1.get()) {
@@ -180,7 +255,7 @@ and "tgt5" will unused.
       auto TGT = findFunction(*M1, DstFName);
       if (SRC && TGT) {
         ++Cnt;
-        if (!verifier.compareFunctions(*SRC, *TGT))
+        if (!compareFunctions(verifier, *SRC, *TGT))
           if (opt_error_fatal)
             goto end;
       }
@@ -243,7 +318,7 @@ and "tgt5" will unused.
         continue;
       F2 = I->second;
     }
-    if (!verifier.compareFunctions(F1, *F2))
+    if (!compareFunctions(verifier, F1, *F2))
       if (opt_error_fatal)
         goto end;
   }

@@ -96,7 +96,7 @@ class Alive2Test(TestFormat):
         id_check('src', cmd, [test, '-src-fn=src', '-tgt-fn=src'])
         id_check('tgt', cmd, [test, '-src-fn=tgt', '-tgt-fn=tgt'])
       except Exception as e:
-        return lit.Test.FAIL, e
+        return lit.Test.FAIL, str(e)
 
     if alive_tv_2 and do_identity:
       try:
@@ -104,7 +104,7 @@ class Alive2Test(TestFormat):
         tgtpath = test.replace('.src.ll', '.tgt.ll')
         id_check('tgt', cmd, [tgtpath, tgtpath])
       except Exception as e:
-        return lit.Test.FAIL, e
+        return lit.Test.FAIL, str(e)
 
     cmd.append(test)
     if alive_tv_2:
@@ -128,9 +128,10 @@ class Alive2Test(TestFormat):
       if output.find(chk.strip()) == -1:
         return lit.Test.FAIL, output
 
-    chk_not = self.regex_check_not.search(input)
-    if chk_not != None and output.find(chk_not.group(1).strip()) != -1:
-      return lit.Test.FAIL, output
+    chk_not = self.regex_check_not.findall(input)
+    for chk in chk_not:
+      if output.find(chk.strip()) != -1:
+        return lit.Test.FAIL, output
 
     if clang_tv and exitCode != 0:
       # clang tv should not exit with non-zero even if validation fails.
@@ -139,7 +140,7 @@ class Alive2Test(TestFormat):
 
     expect_err = self.regex_errs.search(input)
     if expect_err is None and xfail is None and len(chks) == 0 and \
-       chk_not is None:
+       len(chk_not) == 0:
       # If there's no other test, correctness of the transformation should be
       # checked.
       if exitCode == 0 and output.find(ok_string) != -1 and \

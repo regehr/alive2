@@ -24,6 +24,9 @@ config::debug = opt_debug;
 config::quiet = opt_quiet;
 config::max_offset_bits = opt_max_offset_in_bits;
 config::max_sizet_bits  = opt_max_sizet_in_bits;
+#ifndef ARGS_VSCALE_LOOP
+config::vscale_value = opt_vscale;
+#endif
 
 if ((config::disallow_ub_exploitation = opt_disallow_ub_exploitation)) {
   config::disable_undef_input = true;
