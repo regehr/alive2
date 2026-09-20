@@ -854,7 +854,9 @@ public:
     case llvm::Intrinsic::scmp:
     case llvm::Intrinsic::clmul:
     case llvm::Intrinsic::pext:
-    case llvm::Intrinsic::pdep: {
+    case llvm::Intrinsic::pdep:
+    case llvm::Intrinsic::umulh:
+    case llvm::Intrinsic::smulh: {
       PARSE_BINOP();
       addNoundefAssumes(i, {a, b});
       BinOp::Op op;
@@ -883,6 +885,8 @@ public:
       case llvm::Intrinsic::clmul:    op = BinOp::Clmul; break;
       case llvm::Intrinsic::pext:     op = BinOp::PExt; break;
       case llvm::Intrinsic::pdep:     op = BinOp::PDep; break;
+      case llvm::Intrinsic::umulh:    op = BinOp::UMulH; break;
+      case llvm::Intrinsic::smulh:    op = BinOp::SMulH; break;
       default: UNREACHABLE();
       }
       ret = make_unique<BinOp>(*ty, value_name(i), *a, *b, op);
@@ -1585,17 +1589,14 @@ public:
                         Value **val, bool is_callsite) {
     bool precise = true;
     for (const llvm::Attribute &llvmattr : aset) {
-      // getKindAsEnum() asserts on a string attribute, and a parameter can
-      // carry one -- "nvvm.grid_constant", for instance. handleRetAttrs() and
-      // handleFnAttrs() already screen those out. Treat them the way this
-      // function treats any other attribute it does not recognize, rather
-      // than dropping semantics on the floor.
-      if (!llvmattr.hasKindAsEnum()) {
-        if (!is_callsite)
-          errorAttr(llvmattr);
-        precise = false;
+      // A parameter can carry a string attribute -- "nvvm.grid_constant",
+      // for instance -- and getKindAsEnum() asserts on those. They carry no
+      // semantics we model, so skip them the way handleRetAttrs() and
+      // handleFnAttrs() do. Note this test is narrower than the one those
+      // functions use: constant-range attributes (Range, Initializes) are
+      // handled by the switch below and must not be skipped here.
+      if (llvmattr.isStringAttribute())
         continue;
-      }
 
       switch (llvmattr.getKindAsEnum()) {
       case llvm::Attribute::InReg:
