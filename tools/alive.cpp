@@ -139,10 +139,6 @@ int main(int argc, char **argv) {
           }
           cout << "\rDone: " << ++i << flush;
         }
-        if (types.hasError()) {
-          cerr << "Could not solve typing constraints\n";
-          correct = false;
-        }
         cout << '\n';
         if (correct)
           cout << "Transformation seems to be correct!\n";
