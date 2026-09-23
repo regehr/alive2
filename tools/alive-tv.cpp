@@ -77,7 +77,9 @@ bool compareFunctions(Verifier &verifier, llvm::Function &src,
   if (!referencesVScale(src) && !referencesVScale(tgt))
     return verifier.compareFunctions(src, tgt);
 
-  auto scales = getVScales(opt_max_vscale);
+  auto scales = opt_single_vscale.getNumOccurrences()
+                  ? optional(vector<unsigned>{opt_single_vscale})
+                  : getVScales(opt_max_vscale);
   if (!scales) {
     *out << "ERROR: Could not solve typing constraints\n\n";
     ++verifier.num_failed;

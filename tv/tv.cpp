@@ -465,7 +465,9 @@ struct TVLegacyPass final : public llvm::ModulePass {
     showed_stats = false;
     llvm_util_init.emplace(*out, module.getDataLayout());
     smt_init.emplace();
-    auto scales = getVScales(opt_max_vscale);
+    auto scales = opt_single_vscale.getNumOccurrences()
+                    ? optional(vector<unsigned>{opt_single_vscale})
+                    : getVScales(opt_max_vscale);
     if (!scales) {
       *out << "ERROR: Could not solve typing constraints\n\n";
       return;

@@ -606,7 +606,8 @@ public:
     }
 
     auto typesz = DL().getTypeAllocSize(i.getAllocatedType());
-    if (typesz.isScalable()) // TODO: scalable vectors not supported
+    // TODO: scalable alloca
+    if (typesz.isScalable())
       return error(i);
 
     auto size = make_intconst(typesz, 64);
@@ -642,7 +643,9 @@ public:
         auto ofs_ty = llvm::IntegerType::get(i.getContext(), 64);
 
         if (auto opvty = dyn_cast<llvm::VectorType>(opty)) {
-          assert(!isa<llvm::ScalableVectorType>(opvty));
+          // TODO: scalable splat struct indices
+          if (isa<llvm::ScalableVectorType>(opvty))
+            return error(i);
           vector<llvm::Constant *> offsets;
 
           for (unsigned i = 0; i < opvty->getElementCount().getKnownMinValue();
@@ -1371,16 +1374,10 @@ public:
     PARSE_BINOP();
     vector<unsigned> mask;
 
-    unsigned replicate = 1;
-    if (i.getType()->isScalableTy()) {
-      replicate = config::vscale_value;
-    }
-
-    auto &&sm = i.getShuffleMask();
-    for (unsigned j = 0; j < replicate; j++) {
+    unsigned replicate = i.getType()->isScalableTy() ? config::vscale_value : 1;
+    auto sm = i.getShuffleMask();
+    for (unsigned j = 0; j < replicate; ++j)
       mask.insert(mask.end(), sm.begin(), sm.end());
-    }
-
     return
       make_unique<ShuffleVector>(*ty, value_name(i), *a, *b, std::move(mask));
   }

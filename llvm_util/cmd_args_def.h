@@ -1,6 +1,8 @@
 // Copyright (c) 2018-present The Alive2 Authors.
 // Distributed under the MIT license that can be found in the LICENSE file.
 
+#include <bit>
+
 #ifdef ARGS_SRC_TGT
 config::src_unroll_cnt = opt_src_unrolling_factor;
 config::tgt_unroll_cnt = opt_tgt_unrolling_factor;
@@ -24,8 +26,20 @@ config::debug = opt_debug;
 config::quiet = opt_quiet;
 config::max_offset_bits = opt_max_offset_in_bits;
 config::max_sizet_bits  = opt_max_sizet_in_bits;
-#ifndef ARGS_VSCALE_LOOP
-config::vscale_value = opt_vscale;
+
+if (!std::has_single_bit(unsigned(opt_single_vscale))) {
+  cerr << "Alive2: " LLVM_ARGS_PREFIX
+          "single-vscale must be a positive power of two!" << endl;
+  exit(1);
+}
+config::vscale_value = opt_single_vscale;
+#ifdef ARGS_VSCALE_LOOP
+if (opt_single_vscale.getNumOccurrences() &&
+    opt_max_vscale.getNumOccurrences()) {
+  cerr << "ERROR: " LLVM_ARGS_PREFIX "single-vscale and " LLVM_ARGS_PREFIX
+          "max-vscale cannot both be specified" << endl;
+  exit(1);
+}
 #endif
 
 if ((config::disallow_ub_exploitation = opt_disallow_ub_exploitation)) {

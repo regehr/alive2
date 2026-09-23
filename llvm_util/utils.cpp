@@ -4,6 +4,7 @@
 #include "llvm_util/utils.h"
 #include "ir/constant.h"
 #include "ir/function.h"
+#include "ir/type.h"
 #include "util/config.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Constants.h"
@@ -223,8 +224,7 @@ Type* llvm_type2alive(const llvm::Type *ty) {
       uint64_t count = elems;
       if (vty->isScalableTy())
         count *= util::config::vscale_value;
-      if (!count || count > numeric_limits<unsigned>::max() /
-                              max(ety->bits(), ety->np_bits(false))) {
+      if (!count || count > max_vector_elements) {
         *out << "ERROR: Vector type is too large\n";
         return nullptr;
       }

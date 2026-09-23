@@ -21,7 +21,8 @@ using namespace std;
 
 static constexpr unsigned var_type_bits = 3;
 static constexpr unsigned var_bw_bits = 11;
-static constexpr unsigned var_vector_elements = 32;
+static constexpr unsigned var_elements_bits = 16;
+static_assert(IR::max_vector_elements == (1u << var_elements_bits) - 1);
 
 
 namespace IR {
@@ -813,8 +814,8 @@ AggregateType::AggregateType(string &&name, vector<Type*> &&vchildren,
 }
 
 expr AggregateType::numElements() const {
-  return defined ? expr::mkUInt(elements, var_vector_elements) :
-                   var("elements", var_vector_elements);
+  return defined ? expr::mkUInt(elements, var_elements_bits) :
+                   var("elements", var_elements_bits);
 }
 
 unsigned AggregateType::numPaddingsConst() const {
