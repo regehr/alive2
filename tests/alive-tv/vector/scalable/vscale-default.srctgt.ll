@@ -3,19 +3,18 @@
 ; CHECK: Checking vscale = 2
 ; CHECK: Checking vscale = 4
 ; CHECK: Checking vscale = 8
-; CHECK: Checking vscale = 16
-; CHECK: Transformation seems to be correct! (all applicable vscale values up to 16)
-; CHECK-NOT: Checking vscale = 32
+; CHECK: Transformation seems to be correct! (all applicable vscale values up to 8)
+; CHECK-NOT: Checking vscale = 16
 ; CHECK-NOT: ERROR:
 
-; Every enumerated scale must be a nonzero power of two no greater than 16.
+; Every enumerated scale must be a nonzero power of two no greater than 8.
 define i1 @src() {
   %v = call i32 @llvm.vscale.i32()
   %prev = sub i32 %v, 1
   %bits = and i32 %v, %prev
   %power = icmp eq i32 %bits, 0
   %positive = icmp ugt i32 %v, 0
-  %bounded = icmp ule i32 %v, 16
+  %bounded = icmp ule i32 %v, 8
   %a = and i1 %power, %positive
   %r = and i1 %a, %bounded
   ret i1 %r

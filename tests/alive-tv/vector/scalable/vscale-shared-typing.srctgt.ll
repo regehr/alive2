@@ -1,11 +1,10 @@
 ; TEST-ARGS: --smt-verbose --smt-random-seed=42
-; CHECK: (declare-fun vscale () (_ BitVec 5))
+; CHECK: (declare-fun vscale () (_ BitVec 4))
 ; CHECK: Checking vscale = 1
 ; CHECK: Checking vscale = 2
 ; CHECK: Checking vscale = 4
 ; CHECK: Checking vscale = 8
-; CHECK: Checking vscale = 16
-; CHECK: Transformation seems to be correct! (all applicable vscale values up to 16)
+; CHECK: Transformation seems to be correct! (all applicable vscale values up to 8)
 ; CHECK-NOT: ERROR:
 
 ; Both vector types and llvm.vscale must use the same selected scale,

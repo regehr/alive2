@@ -77,9 +77,9 @@ bool compareFunctions(Verifier &verifier, llvm::Function &src,
   if (!referencesVScale(src) && !referencesVScale(tgt))
     return verifier.compareFunctions(src, tgt);
 
-  auto scales = opt_single_vscale.getNumOccurrences()
-                  ? optional(vector<unsigned>{opt_single_vscale})
-                  : getVScales(opt_max_vscale);
+  bool single = opt_single_vscale.getNumOccurrences();
+  auto scales = single ? optional(vector<unsigned>{opt_single_vscale})
+                       : getVScales(opt_max_vscale);
   if (!scales) {
     *out << "ERROR: Could not solve typing constraints\n\n";
     ++verifier.num_failed;
@@ -131,13 +131,22 @@ bool compareFunctions(Verifier &verifier, llvm::Function &src,
   }
 
   if (!checked) {
-    *out << "ERROR: No vscale values to check up to " << opt_max_vscale << "\n\n";
+    if (single)
+      *out << "ERROR: vscale_range excludes vscale = " << opt_single_vscale
+           << "\n\n";
+    else
+      *out << "ERROR: No vscale values to check up to " << opt_max_vscale
+           << "\n\n";
     ++verifier.num_failed;
     return true;
   }
   ++verifier.num_correct;
-  *out << "Transformation seems to be correct! "
-          "(all applicable vscale values up to " << opt_max_vscale << ")\n\n";
+  *out << "Transformation seems to be correct! ";
+  if (single)
+    *out << "(vscale = " << opt_single_vscale << ")\n\n";
+  else
+    *out << "(all applicable vscale values up to " << opt_max_vscale
+         << ")\n\n";
   if (verifier.bidirectional)
     *out << "These functions seem to be equivalent!\n\n";
   return true;

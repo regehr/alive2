@@ -83,6 +83,16 @@ optional<smt::smt_initializer> smt_init;
 optional<llvm_util::initializer> llvm_util_init;
 map<pair<string, unsigned>, FnInfo> fns;
 vector<unsigned> vscales;
+
+void printNoVScales() {
+  if (opt_single_vscale.getNumOccurrences())
+    *out << "ERROR: vscale_range excludes vscale = " << opt_single_vscale
+         << "\n\n";
+  else
+    *out << "ERROR: No vscale values to check up to " << opt_max_vscale
+         << "\n\n";
+}
+
 unsigned initialized = 0;
 bool showed_stats = false;
 bool has_failure = false;
@@ -214,8 +224,7 @@ struct TVLegacyPass final : public llvm::ModulePass {
       runOn(F, TLI, name, dependent, checked, has_source);
     }
     if (has_source && !checked)
-      *out << "ERROR: No vscale values to check up to " << opt_max_vscale
-           << "\n\n";
+      printNoVScales();
     return false;
   }
 
@@ -474,8 +483,7 @@ struct TVLegacyPass final : public llvm::ModulePass {
     }
     vscales = std::move(*scales);
     if (vscales.empty())
-      *out << "ERROR: No vscale values to check up to " << opt_max_vscale
-           << "\n\n";
+      printNoVScales();
     return;
   }
 
