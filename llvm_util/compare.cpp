@@ -159,16 +159,21 @@ bool Verifier::compareFunctions(llvm::Function &F1, llvm::Function &F2) {
       out << "These functions seem to be equivalent!\n\n";
       return true;
 
+    // Equivalence was not shown, so the pair no longer counts as correct.
     case Results::FAILED_TO_PROVE:
       out << "Failed to verify the reverse transformation\n\n";
       if (!config::quiet)
         out << r.errs << endl;
+      --num_correct;
+      ++num_failed;
       return true;
 
     case Results::UNSOUND:
       out << "Reverse transformation doesn't verify!\n\n";
       if (!config::quiet)
         out << r.errs << endl;
+      --num_correct;
+      ++num_unsound;
       return false;
     }
   }
