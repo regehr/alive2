@@ -88,6 +88,9 @@ class Function final {
   bool little_endian = true;
   bool is_var_args = false;
 
+  // vscale_range attribute; vscale_max == 0 means unbounded
+  unsigned vscale_min = 1, vscale_max = 0;
+
   // constants used in this function
   std::vector<std::unique_ptr<Value>> constants;
   std::vector<std::unique_ptr<Predicate>> predicates;
@@ -130,6 +133,13 @@ public:
   auto& getFnAttrs() { return attrs; }
   auto& getFnAttrs() const { return attrs; }
   bool has(FnAttrs::Attribute a) const { return attrs.has(a); }
+
+  void setVScaleRange(unsigned min, unsigned max) {
+    vscale_min = min;
+    vscale_max = max;
+  }
+  unsigned getVScaleMin() const { return vscale_min; }
+  unsigned getVScaleMax() const { return vscale_max; }
 
   smt::expr getTypeConstraints() const;
   void fixupTypes(const smt::Model &m);

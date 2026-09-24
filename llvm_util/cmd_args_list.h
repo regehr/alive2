@@ -191,4 +191,10 @@ llvm::cl::opt<unsigned> opt_single_vscale(LLVM_ARGS_PREFIX "single-vscale",
   llvm::cl::init(2), llvm::cl::value_desc("value"),
   llvm::cl::cat(alive_cmdargs));
 
+llvm::cl::opt<unsigned> opt_max_vscale(LLVM_ARGS_PREFIX "max-vscale",
+  llvm::cl::desc("Check scalable vectors at every power-of-two vscale up to "
+                 "this value (default=off)"),
+  llvm::cl::init(0), llvm::cl::value_desc("value"),
+  llvm::cl::cat(alive_cmdargs));
+
 }

@@ -942,7 +942,7 @@ expr AggregateType::sizeVar() const {
   expr elems = numElements();
   expr sz = expr::mkUInt(0, var_bw_bits);
 
-  for (unsigned i = 0; i < elements; ++i) {
+  for (unsigned i = 0, e = children.size(); i != e; ++i) {
     sz = expr::mkIf(elems.ugt(i), sz + children[i]->sizeVar(), sz);
   }
   return sz;
@@ -1112,12 +1112,31 @@ void ArrayType::print(ostream &os) const {
 }
 
 
+static unsigned vscale_min = 1, vscale_max = 0, vscale_fixed = 0;
+
+static expr vscaleVar() {
+  return expr::mkVar("vscale", var_elements_bits);
+}
+
+void VectorType::setVScaleRange(unsigned min, unsigned max) {
+  vscale_min = min;
+  vscale_max = max;
+}
+
+unsigned VectorType::getVScale() {
+  return vscale_fixed;
+}
+
 VectorType::VectorType(string &&name, unsigned elements, Type &elementTy,
                        bool scalable)
   : AggregateType(std::move(name), false), scalable(scalable) {
   assert(elements != 0);
-  if (scalable)
-    elements *= util::config::vscale_value;
+  if (scalable) {
+    min_elements = elements;
+    // with a symbolic vscale, allocate children for the largest vscale
+    elements *= util::config::max_vscale ? util::config::max_vscale
+                                         : util::config::vscale_value;
+  }
   this->elements = elements;
   defined = true;
   children.resize(elements, &elementTy);
@@ -1170,6 +1189,16 @@ StateValue VectorType::update(const StateValue &vector,
                   (vector.non_poison & mask_np) | np_shifted});
 }
 
+bool VectorType::hasSymbolicVScale() const {
+  return scalable && util::config::max_vscale;
+}
+
+expr VectorType::numElements() const {
+  if (!hasSymbolicVScale())
+    return AggregateType::numElements();
+  return expr::mkUInt(min_elements, var_elements_bits) * vscaleVar();
+}
+
 expr VectorType::getTypeConstraints() const {
   auto &elementTy = *children[0];
   expr r = AggregateType::getTypeConstraints() &&
@@ -1183,7 +1212,22 @@ expr VectorType::getTypeConstraints() const {
     r &= numElements().ugt(i).implies(elementTy == *children[i]);
   }
 
+  if (hasSymbolicVScale()) {
+    // the constructor sized children for vscale <= max_vscale
+    assert(vscale_max <= util::config::max_vscale);
+    auto vscale = vscaleVar();
+    r &= vscale.isPowerOf2() && vscale.uge(vscale_min) &&
+         vscale.ule(vscale_max);
+  }
   return r;
+}
+
+void VectorType::fixup(const Model &m) {
+  if (hasSymbolicVScale()) {
+    vscale_fixed = m.getUInt(vscaleVar());
+    elements = min_elements * vscale_fixed;
+  }
+  AggregateType::fixup(m);
 }
 
 unsigned VectorType::maxSubBitAccess() const {
@@ -1207,10 +1251,11 @@ void VectorType::print(ostream &os) const {
   if (!elements)
     return;
   os << '<';
-  if (scalable)
-    os << "vscale:" << util::config::vscale_value << " x ";
-  os << (scalable ? elements / util::config::vscale_value : elements)
-     << " x " << *children[0] << '>';
+  if (hasSymbolicVScale())
+    os << "vscale x ";
+  else if (scalable)
+    os << "vscale:" << elements / min_elements << " x ";
+  os << (scalable ? min_elements : elements) << " x " << *children[0] << '>';
 }
 
 

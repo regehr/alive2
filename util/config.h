@@ -50,6 +50,11 @@ extern unsigned max_sizet_bits;
 // elements.
 extern unsigned vscale_value;
 
+// If non-zero, the type checker enumerates every power-of-two vscale up to
+// this value (and within the function's vscale_range), instead of using
+// vscale_value.
+extern unsigned max_vscale;
+
 std::ostream &dbg();
 void set_debug(std::ostream &os);
 

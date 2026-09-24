@@ -328,11 +328,20 @@ struct TVLegacyPass final : public llvm::ModulePass {
                 "ERROR: program doesn't type check!\n\n";
         goto done;
       }
-      assert(types.hasSingleTyping());
-    }
 
-    {
-      Errors errs = verifier.verify();
+      // with a symbolic vscale, there is one typing per vscale value
+      Errors errs;
+      for (; types; ++types) {
+        verifier.fixupTypes(types);
+        errs = verifier.verify();
+        if (errs)
+          break;
+      }
+      if (types.hasError()) {
+        *out << "ERROR: Could not solve typing constraints\n\n";
+        goto done;
+      }
+
       if (errs.hasWarnings())
         errs.printWarnings(*out);
 

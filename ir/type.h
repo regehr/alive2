@@ -281,7 +281,7 @@ protected:
                 std::vector<bool> &&is_padding);
 
 public:
-  smt::expr numElements() const;
+  virtual smt::expr numElements() const;
   smt::expr numElementsExcludingPadding() const;
   unsigned numElementsConst() const { return elements; }
   unsigned numPaddingsConst() const;
@@ -338,6 +338,12 @@ public:
 
 class VectorType final : public AggregateType {
   bool scalable = false;
+  unsigned min_elements = 0;
+
+  // with -max-vscale, the element count of a scalable vector is
+  // min_elements * vscale, where vscale is a type variable shared by all
+  // scalable vectors
+  bool hasSymbolicVScale() const;
 
 public:
   VectorType(std::string &&name) : AggregateType(std::move(name)) {}
@@ -349,13 +355,20 @@ public:
   IR::StateValue update(const IR::StateValue &vector,
                         const IR::StateValue &val,
                         const smt::expr &idx) const;
+  smt::expr numElements() const override;
   smt::expr getTypeConstraints() const override;
+  void fixup(const smt::Model &m) override;
   unsigned maxSubBitAccess() const override;
   smt::expr scalarSize() const override;
   bool isVectorType() const override;
   smt::expr enforceVectorType(
     const std::function<smt::expr(const Type&)> &enforceElem) const override;
   void print(std::ostream &os) const override;
+
+  // range of vscale values the type checker enumerates
+  static void setVScaleRange(unsigned min, unsigned max);
+  // vscale picked by the last fixup
+  static unsigned getVScale();
 };
 
 

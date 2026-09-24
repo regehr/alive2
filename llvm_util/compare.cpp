@@ -76,16 +76,24 @@ Results verify(llvm::Function &F1, llvm::Function &F2,
   if (print_transform)
     r.t.print(out, {});
 
-  {
-    auto types = verifier.getTypings();
-    if (!types) {
-      r.status = Results::TYPE_CHECKER_FAILED;
-      return r;
-    }
-    assert(types.hasSingleTyping());
+  auto types = verifier.getTypings();
+  if (!types) {
+    r.status = Results::TYPE_CHECKER_FAILED;
+    return r;
   }
 
-  r.errs = verifier.verify();
+  // with a symbolic vscale, there is one typing per vscale value
+  for (; types; ++types) {
+    verifier.fixupTypes(types);
+    if (!types.hasSingleTyping())
+      out << "Checking vscale = " << IR::VectorType::getVScale() << '\n';
+    r.errs = verifier.verify();
+    if (r.errs)
+      break;
+  }
+  if (types.hasError())
+    return Results::Error("Could not solve typing constraints\n");
+
   if (r.errs) {
     r.status = r.errs.isUnsound() ? Results::UNSOUND : Results::FAILED_TO_PROVE;
   } else {

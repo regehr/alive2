@@ -34,6 +34,20 @@ if (!std::has_single_bit(unsigned(opt_single_vscale))) {
 }
 config::vscale_value = opt_single_vscale;
 
+if (opt_max_vscale.getNumOccurrences()) {
+  if (opt_single_vscale.getNumOccurrences()) {
+    cerr << "Alive2: " LLVM_ARGS_PREFIX "single-vscale and "
+            LLVM_ARGS_PREFIX "max-vscale are mutually exclusive" << endl;
+    exit(1);
+  }
+  if (!std::has_single_bit(unsigned(opt_max_vscale))) {
+    cerr << "Alive2: " LLVM_ARGS_PREFIX
+            "max-vscale must be a positive power of two!" << endl;
+    exit(1);
+  }
+  config::max_vscale = opt_max_vscale;
+}
+
 if ((config::disallow_ub_exploitation = opt_disallow_ub_exploitation)) {
   config::disable_undef_input = true;
   config::disable_poison_input = true;
