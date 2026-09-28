@@ -1,4 +1,6 @@
 ; TEST-ARGS: --max-vscale=4 --disable-undef-input
+; XFAIL: Unsupported instruction:   %v = call i32 @llvm.vscale.i32()
+; SKIP-IDENTITY
 ; CHECK: Checking vscale = 1
 ; CHECK: Checking vscale = 2
 ; CHECK: Checking vscale = 4

@@ -1632,14 +1632,8 @@ public:
       case llvm::Attribute::ByVal: {
         attrs.set(ParamAttrs::ByVal);
         auto ty = aset.getByValType();
-        auto asz = DL().getTypeAllocSize(ty);
-        auto size = asz.getKnownMinValue();
-        if (asz.isScalable()) {
-          // TODO: scalable byval with a symbolic vscale
-          if (config::max_vscale)
-            return false;
-          size *= uint64_t(config::vscale_value);
-        }
+        // the IR verifier rejects scalable byval types
+        uint64_t size = DL().getTypeAllocSize(ty).getFixedValue();
         attrs.blockSize = max(attrs.blockSize, size);
 
         attrs.set(ParamAttrs::Align);

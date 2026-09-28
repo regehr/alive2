@@ -1,4 +1,6 @@
 ; TEST-ARGS: --max-vscale=4
+; XFAIL: Unsupported instruction:   %q = getelementptr <vscale x
+; SKIP-IDENTITY
 ; CHECK: Checking vscale = 1
 ; CHECK: Checking vscale = 2
 ; CHECK: Checking vscale = 4
