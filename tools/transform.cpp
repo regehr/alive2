@@ -1506,8 +1506,11 @@ Errors TransformVerify::verify() const {
 }
 
 
-TypingAssignments::TypingAssignments(const expr &e) : s(true), sneg(true) {
-  if (e.isTrue()) {
+TypingAssignments::TypingAssignments(const expr &e, string &&unsupported)
+  : s(true), sneg(true), unsupported(std::move(unsupported)) {
+  if (!this->unsupported.empty()) {
+    is_unsat = true;
+  } else if (e.isTrue()) {
     has_only_one_solution = true;
   } else {
     EnableSMTQueriesTMP tmp;
@@ -1534,12 +1537,15 @@ void TypingAssignments::operator++(void) {
 TypingAssignments TransformVerify::getTypings() const {
   auto c = t.src.getTypeConstraints() && t.tgt.getTypeConstraints();
 
-  if (config::max_vscale) {
+  if (config::max_vscale && VectorType::mentionsVScale(c)) {
     // vscale_range is an assumption made by the source function
-    unsigned max = t.src.getVScaleMax();
-    c &= VectorType::vscaleRangeConstraint(c, t.src.getVScaleMin(),
-                                           max ? min(max, config::max_vscale)
-                                               : config::max_vscale);
+    unsigned vmin = t.src.getVScaleMin(), vmax = t.src.getVScaleMax();
+    vmax = vmax ? min(vmax, config::max_vscale) : config::max_vscale;
+    if (vmin > vmax)
+      return { false, "vscale_range minimum (" + to_string(vmin) +
+                      ") exceeds the maximum vscale (" +
+                      to_string(config::max_vscale) + ")\n" };
+    c &= VectorType::vscaleRangeConstraint(vmin, vmax);
   }
 
   if (t.precondition)

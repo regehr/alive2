@@ -38,16 +38,21 @@ class TypingAssignments {
   smt::Result r;
   bool has_only_one_solution = false;
   bool is_unsat = false;
+  std::string unsupported;
 
 public:
-  TypingAssignments(const smt::expr &e);
+  TypingAssignments(const smt::expr &e, std::string &&unsupported = {});
   bool operator!() const { return !(bool)*this; }
   operator bool() const;
   void operator++(void);
   bool hasSingleTyping() const { return has_only_one_solution; }
   bool hasError() const {
-    return !has_only_one_solution && !r.isSat() && !r.isUnsat();
+    return unsupported.empty() && !has_only_one_solution && !r.isSat() &&
+           !r.isUnsat();
   }
+  // non-empty if the options exclude every typing, e.g., --max-vscale is
+  // below the source's vscale_range
+  const std::string& unsupportedReason() const { return unsupported; }
 
   friend class TransformVerify;
 };

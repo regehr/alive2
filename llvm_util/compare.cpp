@@ -77,6 +77,8 @@ Results verify(llvm::Function &F1, llvm::Function &F2,
     r.t.print(out, {});
 
   auto types = verifier.getTypings();
+  if (!types.unsupportedReason().empty())
+    return Results::Error(string(types.unsupportedReason()));
   if (!types) {
     r.status = Results::TYPE_CHECKER_FAILED;
     return r;

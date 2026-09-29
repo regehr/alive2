@@ -365,9 +365,9 @@ public:
     const std::function<smt::expr(const Type&)> &enforceElem) const override;
   void print(std::ostream &os) const override;
 
-  // restricts vscale to [min, max] if the constraints mention it
-  static smt::expr vscaleRangeConstraint(const smt::expr &constraints,
-                                         unsigned min, unsigned max);
+  // whether the type constraints involve a symbolic vscale
+  static bool mentionsVScale(const smt::expr &constraints);
+  static smt::expr vscaleRangeConstraint(unsigned min, unsigned max);
   // vscale picked by the last fixup
   static unsigned getVScale();
 };

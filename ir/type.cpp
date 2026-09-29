@@ -1118,12 +1118,12 @@ static expr vscaleVar() {
   return expr::mkVar("vscale", var_elements_bits);
 }
 
-expr VectorType::vscaleRangeConstraint(const expr &constraints, unsigned min,
-                                       unsigned max) {
+bool VectorType::mentionsVScale(const expr &constraints) {
+  return constraints.vars().count(vscaleVar());
+}
+
+expr VectorType::vscaleRangeConstraint(unsigned min, unsigned max) {
   auto vscale = vscaleVar();
-  // don't introduce vscale into programs without symbolic scalable vectors
-  if (!constraints.vars().count(vscale))
-    return true;
   return vscale.uge(min) && vscale.ule(max);
 }
 

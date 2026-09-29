@@ -321,6 +321,10 @@ struct TVLegacyPass final : public llvm::ModulePass {
 
     {
       auto types = verifier.getTypings();
+      if (!types.unsupportedReason().empty()) {
+        *out << "ERROR: " << types.unsupportedReason() << '\n';
+        goto done;
+      }
       if (!types) {
         if (config::quiet)
           t.print(*out);
