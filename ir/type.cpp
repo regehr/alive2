@@ -1112,15 +1112,19 @@ void ArrayType::print(ostream &os) const {
 }
 
 
-static unsigned vscale_min = 1, vscale_max = 0, vscale_fixed = 0;
+static unsigned vscale_fixed = 0;
 
 static expr vscaleVar() {
   return expr::mkVar("vscale", var_elements_bits);
 }
 
-void VectorType::setVScaleRange(unsigned min, unsigned max) {
-  vscale_min = min;
-  vscale_max = max;
+expr VectorType::vscaleRangeConstraint(const expr &constraints, unsigned min,
+                                       unsigned max) {
+  auto vscale = vscaleVar();
+  // don't introduce vscale into programs without symbolic scalable vectors
+  if (!constraints.vars().count(vscale))
+    return true;
+  return vscale.uge(min) && vscale.ule(max);
 }
 
 unsigned VectorType::getVScale() {
@@ -1214,10 +1218,8 @@ expr VectorType::getTypeConstraints() const {
 
   if (hasSymbolicVScale()) {
     // the constructor sized children for vscale <= max_vscale
-    assert(vscale_max <= util::config::max_vscale);
     auto vscale = vscaleVar();
-    r &= vscale.isPowerOf2() && vscale.uge(vscale_min) &&
-         vscale.ule(vscale_max);
+    r &= vscale.isPowerOf2() && vscale.ule(util::config::max_vscale);
   }
   return r;
 }

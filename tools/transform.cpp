@@ -1532,15 +1532,15 @@ void TypingAssignments::operator++(void) {
 }
 
 TypingAssignments TransformVerify::getTypings() const {
+  auto c = t.src.getTypeConstraints() && t.tgt.getTypeConstraints();
+
   if (config::max_vscale) {
     // vscale_range is an assumption made by the source function
     unsigned max = t.src.getVScaleMax();
-    VectorType::setVScaleRange(t.src.getVScaleMin(),
-                               max ? min(max, config::max_vscale)
-                                   : config::max_vscale);
+    c &= VectorType::vscaleRangeConstraint(c, t.src.getVScaleMin(),
+                                           max ? min(max, config::max_vscale)
+                                               : config::max_vscale);
   }
-
-  auto c = t.src.getTypeConstraints() && t.tgt.getTypeConstraints();
 
   if (t.precondition)
     c &= t.precondition->getTypeConstraints();
