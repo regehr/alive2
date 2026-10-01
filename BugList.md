@@ -180,3 +180,5 @@ Please contact us or submit a PR if something is missing or inaccurate.
 44. rem/div-related miscompile from riscv64 and aarch64 backends (https://github.com/llvm/llvm-project/issues/145360)
 45. riscv64 and aarch64 backends propagating range metadata too aggressively (https://github.com/llvm/llvm-project/issues/145363)
 46. risc-v backend miscompile of cttz-related optimization (https://github.com/llvm/llvm-project/issues/155014)
+47. inconsistent NaN boxing on 64-bit RISC-V (https://github.com/llvm/llvm-project/issues/225455)
+48. risc-v 64-bit backend miscompile of alloca with gigantic alignment (https://github.com/llvm/llvm-project/issues/228084)
