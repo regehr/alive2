@@ -681,13 +681,22 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
           [](ostream&, const Model&){}, "Target has reachable unreachable");
   }
 
+  // The checks below are split for better error messages, but each quantifies
+  // over the source's nondeterminism separately. Refinement requires a single
+  // source execution to account for all of target's behavior, so we collect
+  // the violations of each check and verify their disjunction at the end.
+  OrExpr violations;
+
+  // avoid false-positives in refinement query 1 due to bounded unrolling
+  expr no_tgt_sink = !tgt_state.sinkDomain(true);
   {
-    // avoid false-positives in refinement query 1 due to bounded unrolling
     expr pre_old = pre;
-    pre &= !tgt_state.sinkDomain(true);
+    pre &= no_tgt_sink;
 
     // 1. Check UB
-    CHECK(fndom_a.notImplies(fndom_b),
+    expr ub_violation = fndom_a.notImplies(fndom_b);
+    violations.add(ub_violation);
+    CHECK(std::move(ub_violation),
           "ub", [](ostream&, const Model&){},
           "Source is more defined than target");
 
@@ -702,6 +711,7 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
     } else {
       dom_constr = (fndom_a && fndom_b) && retdom_a != retdom_b;
     }
+    violations.add(dom_constr);
 
     CHECK(std::move(dom_constr),
           "retdom", [](ostream&, const Model&){},
@@ -730,6 +740,7 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
     dom &= fndom_a && fndom_b;
 
   if (!config::disallow_ub_exploitation) {
+    violations.add(dom && !poison_cnstr);
     CHECK(dom && !poison_cnstr,
           "poison", print_value, "Target is more poisonous than source");
   }
@@ -742,6 +753,8 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
     CHECK(retdom_b && encode_undef_refinement(tgt_state, src_state, type,bp,ap),
           "undef_tgt", print_value, "Target returns undef");
   } else {
+    // Not added to violations: this is a property over all of source's
+    // executions rather than a per-execution violation.
     CHECK(dom && encode_undef_refinement(src_state, tgt_state, type, ap, bp),
           "undef", print_value, "Target's return value is more undefined");
   }
@@ -778,9 +791,18 @@ check_refinement(Errors &errs, const Transform &t, State &src_state,
       << Byte(tgt_mem, m[tgt_mem.raw_load(p2, undef).byte()]);
   };
 
+  violations.add(dom && !(value_cnstr && memory_cnstr0));
   CHECK(dom && !(memory_cnstr0.isTrue() ? memory_cnstr0
                                         : value_cnstr && memory_cnstr0),
         "memory", print_ptr_load, "Mismatch in memory");
+
+  // 7. Check that a single source execution accounts for all of the above.
+  // Without quantified vars this is implied by the individual checks.
+  if (!qvars.empty()) {
+    pre &= no_tgt_sink;
+    CHECK(std::move(violations)(), "refinement", [](ostream&, const Model&){},
+          "No single source execution matches the target's behavior");
+  }
 
 #undef CHECK
 }
