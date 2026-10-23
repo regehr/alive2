@@ -245,7 +245,7 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
     llvm::FunctionAnalysisManager FAM;
     llvm::CGSCCAnalysisManager CGAM;
     llvm::ModuleAnalysisManager MAM;
-    llvm::PassBuilder PB;
+    llvm::PassBuilder PB(srcModule->getContext());
     llvm::ModulePassManager MPM;
 
     PB.registerModuleAnalyses(MAM);
