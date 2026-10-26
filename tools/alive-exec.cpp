@@ -128,29 +128,30 @@ StateValue exec(llvm::Function &F, llvm::TargetLibraryInfoWrapperPass &TLI) {
         bool jumped = false;
         for (auto &dst : jmp->targets()) {
           expr cond = state.getJumpCond(*curr_bb, dst);
+          Result r;
           {
             SolverPush push(solver);
             solver.add(cond);
-            auto r = solver.check("jump condition");
-            if (error(r))
-              return {};
-
-            if (r.isSat()) {
-              if (!config::quiet)
-                cout << "  >> Jump to " << dst.getName() << "\n\n";
-              curr_bb = &dst;
-              state.startBB(dst);
-              It = dst.instrs().begin();
-              jumped = true;
-              break;
-            }
-            continue;
+            r = solver.check("jump condition");
           }
-          solver.add(cond);
-          if (!jumped) {
-            cerr << "ERROR: All jump destinations are unreachable!\n\n";
+          if (error(r))
             return {};
-          }
+          if (!r.isSat())
+            continue;
+
+          // commit to this path so later queries agree with the branch taken
+          solver.add(cond);
+          if (!config::quiet)
+            cout << "  >> Jump to " << dst.getName() << "\n\n";
+          curr_bb = &dst;
+          state.startBB(dst);
+          It = dst.instrs().begin();
+          jumped = true;
+          break;
+        }
+        if (!jumped) {
+          cerr << "ERROR: All jump destinations are unreachable!\n\n";
+          return {};
         }
         continue;
       }
@@ -165,16 +166,23 @@ StateValue exec(llvm::Function &F, llvm::TargetLibraryInfoWrapperPass &TLI) {
         return {};
       }
 
-      if (!config::quiet) {
-        cout << name;
-        if (name[0] == '%') {
-          auto v = eval(r, val.val);
+      if (name[0] == '%') {
+        // commit to this value so that later uses see the same choice
+        auto v = eval(r, val.val);
+        solver.add(val.val.non_poison == v.non_poison);
+        if (!v.non_poison.isFalse())
+          solver.add(val.val.value == v.value);
+
+        if (!config::quiet) {
+          cout << name;
           if (v.non_poison.isFalse())
             cout << " = poison";
           else
             cout << " = " << v.value;
+          cout << '\n';
         }
-        cout << '\n';
+      } else if (!config::quiet) {
+        cout << name << '\n';
       }
 
       // move to the next instruction
