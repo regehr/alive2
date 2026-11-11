@@ -11,6 +11,7 @@
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCTargetOptions.h"
 #include "llvm/MC/MCTargetOptionsCommandFlags.h"
+#include "llvm/Support/LibraryOptionsContext.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
@@ -27,9 +28,20 @@ using namespace llvm;
 using namespace lifter;
 
 // do not delete this line, it's not as dead as it looks
-mc::RegisterMCTargetOptionsFlags MOF;
+static mc::RegisterMCToolOptions MOF;
 
 namespace lifter {
+
+cl::LibraryOptionsContext &libraryOptions() {
+  static cl::LibraryOptionsContext Ctx;
+  return Ctx;
+}
+
+MCTargetOptions getMCTargetOptions() {
+  auto Options = mc::getMCTargetOptions(libraryOptions());
+  Options.LibraryOptions = &libraryOptions();
+  return Options;
+}
 
 void addDebugInfo(Function *srcFn,
                   unordered_map<unsigned, Instruction *> &lineMap) {
