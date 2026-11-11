@@ -106,14 +106,17 @@ Results verify(llvm::Function &F1, llvm::Function &F2,
   }
 
   // with a symbolic vscale, there is one typing per vscale value
+  Errors warnings;
   for (; types; ++types) {
     verifier.fixupTypes(types);
     if (!types.hasSingleTyping())
       out << "Checking vscale = " << IR::VectorType::getVScale() << '\n';
     r.errs = verifier.verify();
+    warnings.addWarnings(r.errs);
     if (r.errs)
       break;
   }
+  r.errs.addWarnings(warnings);
   if (types.hasError())
     return Results::Error("Could not solve typing constraints\n");
 

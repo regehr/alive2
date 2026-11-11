@@ -34,6 +34,7 @@ public:
   void add(std::string &&str, bool is_unsound);
   void add(AliveException &&e);
   void addWarning(const char *str);
+  void addWarnings(const Errors &other);
 
   void clear();
 

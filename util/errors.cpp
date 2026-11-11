@@ -37,6 +37,10 @@ void Errors::addWarning(const char *str) {
   warnings.emplace(str);
 }
 
+void Errors::addWarnings(const Errors &other) {
+  warnings.insert(other.warnings.begin(), other.warnings.end());
+}
+
 void Errors::clear() {
   errs.clear();
   warnings.clear();
