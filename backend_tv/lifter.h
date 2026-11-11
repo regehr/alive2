@@ -10,10 +10,25 @@
 namespace llvm {
 class Constant;
 class Function;
+class MCTargetOptions;
 class VectorType;
+namespace cl {
+class LibraryOptionsContext;
+}
 } // namespace llvm
 
 namespace lifter {
+
+/*
+ * the context that holds the values of LLVM's per-context library
+ * options, such as the MC flags
+ */
+llvm::cl::LibraryOptionsContext &libraryOptions();
+
+/*
+ * the MC target options given on the command line
+ */
+llvm::MCTargetOptions getMCTargetOptions();
 
 /*
  * add debug into to an IR file that will help the lifter figure out

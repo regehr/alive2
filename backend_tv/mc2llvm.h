@@ -112,7 +112,7 @@ public:
                                         DefaultFeatures)},
         DL{srcFn->getParent()->getDataLayout()},
         MCII{Targ->createMCInstrInfo()}, MRI{Targ->createMCRegInfo(DefaultTT)},
-        MCOptions{llvm::mc::InitMCTargetOptionsFromFlags()},
+        MCOptions{lifter::getMCTargetOptions()},
         MAI{Targ->createMCAsmInfo(*MRI, DefaultTT, MCOptions)},
         MCCtx{std::make_unique<llvm::MCContext>(
             DefaultTT, *MAI, *MRI, *STI, &SrcMgr)},

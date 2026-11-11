@@ -351,7 +351,8 @@ version )EOF";
   Usage += alive_version;
 
   llvm::cl::HideUnrelatedOptions(alive_cmdargs);
-  llvm::cl::ParseCommandLineOptions(argc, argv, Usage);
+  llvm::cl::parseCommandLineOptions(lifter::libraryOptions(),
+                                    llvm::ArrayRef(argv, argc), Usage);
 
   auto srcModule = openInputFile(Context, opt_file);
   if (!srcModule.get()) {
