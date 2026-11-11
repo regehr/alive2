@@ -62,7 +62,9 @@ public:
   TransformVerify(Transform &t, bool check_each_var);
   std::pair<std::unique_ptr<IR::State>,std::unique_ptr<IR::State>> exec() const;
   util::Errors verify() const;
-  TypingAssignments getTypings() const;
+  // vscale_max == 0 means unbounded
+  TypingAssignments getTypings(unsigned vscale_min = 1,
+                               unsigned vscale_max = 0) const;
   void fixupTypes(const TypingAssignments &ty);
 };
 

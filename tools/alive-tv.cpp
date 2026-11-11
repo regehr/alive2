@@ -25,6 +25,7 @@
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include <bit>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -61,6 +62,12 @@ llvm::cl::opt<std::string> opt_src_fn(LLVM_ARGS_PREFIX "src-fn",
 llvm::cl::opt<std::string> opt_tgt_fn(LLVM_ARGS_PREFIX"tgt-fn",
   llvm::cl::desc("Name of tgt function (without @)"),
   llvm::cl::cat(alive_cmdargs), llvm::cl::init("tgt"));
+
+llvm::cl::opt<unsigned> opt_max_vscale(LLVM_ARGS_PREFIX "max-vscale",
+  llvm::cl::desc("Check scalable vectors at every power-of-two vscale up to "
+                 "this value (default=off)"),
+  llvm::cl::init(0), llvm::cl::value_desc("value"),
+  llvm::cl::cat(alive_cmdargs));
 
 llvm::cl::opt<string>
     optPass(LLVM_ARGS_PREFIX "passes",
@@ -118,6 +125,18 @@ and "tgt5" will unused.
 
   llvm::cl::HideUnrelatedOptions(alive_cmdargs);
   llvm::cl::ParseCommandLineOptions(argc, argv, Usage);
+
+  if (opt_max_vscale.getNumOccurrences()) {
+    if (opt_single_vscale.getNumOccurrences()) {
+      cerr << "Alive2: single-vscale and max-vscale are mutually exclusive\n";
+      return 1;
+    }
+    if (!std::has_single_bit(unsigned(opt_max_vscale))) {
+      cerr << "Alive2: max-vscale must be a positive power of two!\n";
+      return 1;
+    }
+    config::max_vscale = opt_max_vscale;
+  }
 
   auto M1 = openInputFile(Context, opt_file1);
   if (!M1.get()) {

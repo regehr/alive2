@@ -1531,8 +1531,14 @@ void TypingAssignments::operator++(void) {
   }
 }
 
-TypingAssignments TransformVerify::getTypings() const {
+TypingAssignments TransformVerify::getTypings(unsigned vscale_min,
+                                              unsigned vscale_max) const {
   auto c = t.src.getTypeConstraints() && t.tgt.getTypeConstraints();
+
+  // only constrain vscale if it is used, so that functions without scalable
+  // vectors have a single typing; the type constraints bound it by max_vscale
+  if (VectorType::mentionsVScale(c))
+    c &= VectorType::vscaleRangeConstraint(vscale_min, vscale_max);
 
   if (t.precondition)
     c &= t.precondition->getTypeConstraints();

@@ -220,7 +220,8 @@ Type* llvm_type2alive(const llvm::Type *ty) {
         return nullptr;
       uint64_t count = elems;
       if (vty->isScalableTy())
-        count *= util::config::vscale_value;
+        count *= util::config::max_vscale ? util::config::max_vscale
+                                          : util::config::vscale_value;
       if (!count || count > max_vector_elements) {
         *out << "ERROR: Vector type is too large\n";
         return nullptr;
@@ -309,6 +310,12 @@ Value* get_operand(llvm::Value *v,
 
   auto ty = llvm_type2alive(v->getType());
   if (!ty)
+    return nullptr;
+
+  // TODO: scalable constants with a symbolic vscale
+  if (util::config::max_vscale &&
+      isa<llvm::ScalableVectorType>(v->getType()) &&
+      isa<llvm::Constant>(v) && !isa<llvm::UndefValue>(v))
     return nullptr;
 
   // automatic splat of constant values

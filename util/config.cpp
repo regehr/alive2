@@ -25,6 +25,7 @@ unsigned tgt_unroll_cnt = 0;
 unsigned max_offset_bits = 64;
 unsigned max_sizet_bits = 64;
 unsigned vscale_value = 2;
+unsigned max_vscale = 0;
 
 ostream &dbg() {
   return *debug_os;

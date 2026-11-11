@@ -43,6 +43,31 @@ Results verify(llvm::Function &F1, llvm::Function &F2,
                llvm::TargetLibraryInfoWrapperPass &TLI,
                smt::smt_initializer &smt_init, ostream &out,
                bool print_transform, bool always_verify) {
+  // Check before translation and the syntactic-equality shortcut: Alive IR
+  // does not print vscale_range, and changing the range is unsupported.
+  auto vscale_range = F1.getFnAttribute(llvm::Attribute::VScaleRange);
+  if (vscale_range != F2.getFnAttribute(llvm::Attribute::VScaleRange))
+    return Results::Error("Unsupported change to vscale_range\n");
+
+  unsigned vscale_min = 1, vscale_max = 0;
+  if (vscale_range.isValid()) {
+    vscale_min = vscale_range.getVScaleRangeMin();
+    vscale_max = vscale_range.getVScaleRangeMax().value_or(0);
+  }
+
+  if (config::max_vscale && vscale_min > config::max_vscale)
+    return Results::Error(
+      "vscale_range minimum (" + to_string(vscale_min) +
+      ") exceeds the maximum vscale (" + to_string(config::max_vscale) + ")\n");
+
+  if (!config::max_vscale &&
+      (config::vscale_value < vscale_min ||
+       (vscale_max && config::vscale_value > vscale_max)))
+    return Results::Error(
+      "single-vscale (" + to_string(config::vscale_value) +
+      ") is outside vscale_range(" + to_string(vscale_min) + "," +
+      to_string(vscale_max) + ")\n");
+
   auto fn1 = llvm2alive(F1, TLI.getTLI(F1), true);
   if (!fn1)
     return Results::Error("Could not translate '" + F1.getName().str() +
@@ -76,16 +101,24 @@ Results verify(llvm::Function &F1, llvm::Function &F2,
   if (print_transform)
     r.t.print(out, {});
 
-  {
-    auto types = verifier.getTypings();
-    if (!types) {
-      r.status = Results::TYPE_CHECKER_FAILED;
-      return r;
-    }
-    assert(types.hasSingleTyping());
+  auto types = verifier.getTypings(vscale_min, vscale_max);
+  if (!types) {
+    r.status = Results::TYPE_CHECKER_FAILED;
+    return r;
   }
 
-  r.errs = verifier.verify();
+  // with a symbolic vscale, there is one typing per vscale value
+  for (; types; ++types) {
+    verifier.fixupTypes(types);
+    if (!types.hasSingleTyping())
+      out << "Checking vscale = " << IR::VectorType::getVScale() << '\n';
+    r.errs = verifier.verify();
+    if (r.errs)
+      break;
+  }
+  if (types.hasError())
+    return Results::Error("Could not solve typing constraints\n");
+
   if (r.errs) {
     r.status = r.errs.isUnsound() ? Results::UNSOUND : Results::FAILED_TO_PROVE;
   } else {
@@ -150,9 +183,14 @@ bool Verifier::compareFunctions(llvm::Function &F1, llvm::Function &F2) {
     r = verify(F2, F1, TLI, smt_init, out, false, always_verify);
     switch (r.status) {
     case Results::ERROR:
+      out << "Failed to verify the reverse transformation\n"
+             "ERROR: " << r.error << '\n';
+      return true;
+
     case Results::TYPE_CHECKER_FAILED:
-      UNREACHABLE();
-      break;
+      out << "Failed to verify the reverse transformation\n"
+             "ERROR: program doesn't type check!\n\n";
+      return true;
 
     case Results::SYNTACTIC_EQ:
     case Results::CORRECT:

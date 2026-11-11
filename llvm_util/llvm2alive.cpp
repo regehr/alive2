@@ -674,8 +674,12 @@ public:
 
       auto stride = I.getSequentialElementStride(DL());
       auto size = stride.getKnownMinValue();
-      if (stride.isScalable())
+      if (stride.isScalable()) {
+        // TODO: scalable stride with a symbolic vscale
+        if (config::max_vscale)
+          return error(i);
         size *= uint64_t(config::vscale_value);
+      }
       gep->addIdx(size, *op);
     }
     return gep;
@@ -1245,7 +1249,8 @@ public:
     }
     case llvm::Intrinsic::vscale: {
       auto ty = llvm_type2alive(i.getType());
-      if (!ty)
+      // TODO: llvm.vscale with a symbolic vscale
+      if (!ty || config::max_vscale)
         return error(i);
       llvm::Constant *constant;
       if (ty->bits() < 32 && (config::vscale_value >> ty->bits()) != 0)
@@ -1367,6 +1372,9 @@ public:
   }
 
   RetTy visitShuffleVectorInst(llvm::ShuffleVectorInst &i) {
+    // TODO: scalable shufflevector with a symbolic vscale
+    if (i.getType()->isScalableTy() && config::max_vscale)
+      return error(i);
     PARSE_BINOP();
     vector<unsigned> mask;
 
