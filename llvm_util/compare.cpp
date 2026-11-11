@@ -183,11 +183,13 @@ bool Verifier::compareFunctions(llvm::Function &F1, llvm::Function &F2) {
     case Results::ERROR:
       out << "Failed to verify the reverse transformation\n"
              "ERROR: " << r.error << '\n';
+      ++num_errors;
       return true;
 
     case Results::TYPE_CHECKER_FAILED:
       out << "Failed to verify the reverse transformation\n"
              "ERROR: program doesn't type check!\n\n";
+      ++num_errors;
       return true;
 
     case Results::SYNTACTIC_EQ:
