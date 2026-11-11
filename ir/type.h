@@ -340,9 +340,6 @@ class VectorType final : public AggregateType {
   bool scalable = false;
   unsigned min_elements = 0;
 
-  // with -max-vscale, the element count of a scalable vector is
-  // min_elements * vscale, where vscale is a type variable shared by all
-  // scalable vectors
   bool hasSymbolicVScale() const;
 
 public:
@@ -365,11 +362,8 @@ public:
     const std::function<smt::expr(const Type&)> &enforceElem) const override;
   void print(std::ostream &os) const override;
 
-  // whether the type constraints involve a symbolic vscale
   static bool mentionsVScale(const smt::expr &constraints);
-  // max == 0 means unbounded
   static smt::expr vscaleRangeConstraint(unsigned min, unsigned max);
-  // vscale picked by the last fixup
   static unsigned getVScale();
 };
 

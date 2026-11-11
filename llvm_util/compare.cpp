@@ -43,8 +43,6 @@ Results verify(llvm::Function &F1, llvm::Function &F2,
                llvm::TargetLibraryInfoWrapperPass &TLI,
                smt::smt_initializer &smt_init, ostream &out,
                bool print_transform, bool always_verify) {
-  // Check before translation and the syntactic-equality shortcut: Alive IR
-  // does not print vscale_range, and changing the range is unsupported.
   auto vscale_range = F1.getFnAttribute(llvm::Attribute::VScaleRange);
   if (vscale_range != F2.getFnAttribute(llvm::Attribute::VScaleRange))
     return Results::Error("Unsupported change to vscale_range\n");
