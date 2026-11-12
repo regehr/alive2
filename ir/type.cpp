@@ -1140,7 +1140,6 @@ VectorType::VectorType(string &&name, unsigned elements, Type &elementTy,
   assert(elements != 0);
   if (scalable) {
     min_elements = elements;
-    // with a symbolic vscale, allocate children for the largest vscale
     elements *= util::config::max_vscale ? util::config::max_vscale
                                          : util::config::vscale_value;
   }
