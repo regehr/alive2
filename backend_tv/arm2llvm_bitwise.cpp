@@ -400,7 +400,7 @@ void arm2llvm::lift_sbfm(unsigned opcode) {
     auto pos = size - immr;
     auto width = imms + 1;
     assert(width != 64);
-    *out << "sbfiz with size = " << size << ", width = " << width << "\n";
+    debug() << "sbfiz with size = " << size << ", width = " << width << "\n";
     auto mask = ((uint64_t)1 << width) - 1;
     auto mask_comp = ~mask;
     if (size == 32)

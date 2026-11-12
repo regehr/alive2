@@ -36,7 +36,7 @@ Function *mc2llvm::copyFunctionToTarget(Function *f, const Twine &name) {
 }
 
 Constant *mc2llvm::lazyAddGlobal(string newGlobal) {
-  *out << "  lazyAddGlobal '" << newGlobal << "'\n";
+  debug() << "  lazyAddGlobal '" << newGlobal << "'\n";
 
   {
     // These are names the backend synthesizes -- lowering llvm.memset to a
@@ -59,14 +59,14 @@ Constant *mc2llvm::lazyAddGlobal(string newGlobal) {
   // is the global the address of a function?
   if (newGlobal == liftedFn->getName()) {
     // pointer to the function we're lifting into is a special case
-    *out << "  yay it's me!\n";
+    debug() << "  yay it's me!\n";
     return liftedFn;
   }
   for (auto &f : *srcFn->getParent()) {
     auto name = f.getName();
     if (name != newGlobal)
       continue;
-    *out << "  creating function '" << newGlobal << "'\n";
+    debug() << "  creating function '" << newGlobal << "'\n";
     return copyFunctionToTarget(&f, newGlobal);
   }
 
@@ -80,9 +80,9 @@ Constant *mc2llvm::lazyAddGlobal(string newGlobal) {
     string name{demangle(g.name)};
     if (name != newGlobal)
       continue;
-    *out << "creating lifted global " << name << " from the assembly\n";
+    debug() << "creating lifted global " << name << " from the assembly\n";
     auto size = g.data.size();
-    *out << "  section = " << g.section << "\n";
+    debug() << "  section = " << g.section << "\n";
 
     vector<Type *> tys;
     vector<Constant *> vals;
@@ -93,7 +93,7 @@ Constant *mc2llvm::lazyAddGlobal(string newGlobal) {
         vals.push_back(ConstantInt::get(getIntTy(8), (uint8_t)get<char>(data)));
       } else if (holds_alternative<OffsetSym>(data)) {
         auto s = get<OffsetSym>(data);
-        *out << "  it's a symbol named " << s.sym << "\n";
+        debug() << "  it's a symbol named " << s.sym << "\n";
         auto res = LLVMglobals.find(s.sym);
         Constant *con;
         if (res == LLVMglobals.end()) {
@@ -109,7 +109,7 @@ Constant *mc2llvm::lazyAddGlobal(string newGlobal) {
             }
           }
           if (!found) {
-            *out << "  breaking recursive loop by deferring " << s.sym << "\n";
+            debug() << "  breaking recursive loop by deferring " << s.sym << "\n";
             auto *dummy =
                 new GlobalVariable(*LiftedModule, getIntTy(8), false,
                                    GlobalValue::LinkageTypes::ExternalLinkage,
@@ -118,7 +118,7 @@ Constant *mc2llvm::lazyAddGlobal(string newGlobal) {
             con = dummy;
           }
         } else {
-          *out << "  found it using regular lookup\n";
+          debug() << "  found it using regular lookup\n";
           con = res->second;
         }
         Constant *offset = getUnsignedIntConst(s.offset, 64);
@@ -150,8 +150,8 @@ Constant *mc2llvm::lazyAddGlobal(string newGlobal) {
     string name{srcFnGlobal.getName()};
     if (name != newGlobal)
       continue;
-    *out << "creating declaration for global variable " << name << "\n";
-    *out << "  linkage = " << srcFnGlobal.getLinkage() << "\n";
+    debug() << "creating declaration for global variable " << name << "\n";
+    debug() << "  linkage = " << srcFnGlobal.getLinkage() << "\n";
     auto *glob = new GlobalVariable(*LiftedModule, srcFnGlobal.getValueType(),
                                     srcFnGlobal.isConstant(),
                                     GlobalValue::LinkageTypes::ExternalLinkage,
@@ -181,7 +181,7 @@ Constant *mc2llvm::lazyAddGlobal(string newGlobal) {
 
 Constant *mc2llvm::lookupGlobal(const string &nm) {
   auto name = demangle(nm);
-  *out << "lookupGlobal '" << name << "'\n";
+  debug() << "lookupGlobal '" << name << "'\n";
 
   auto glob = LLVMglobals.find(name);
   if (glob != LLVMglobals.end())
@@ -198,7 +198,7 @@ Constant *mc2llvm::lookupGlobal(const string &nm) {
   // of stuff reachable from the function we're lifting, and nothing
   // else.
   while (!deferredGlobs.empty()) {
-    *out << "  processing a deferred global\n";
+    debug() << "  processing a deferred global\n";
     auto def = deferredGlobs.at(0);
     deferredGlobs.erase(deferredGlobs.begin());
     auto g2 = lazyAddGlobal(def.name);
@@ -246,8 +246,8 @@ std::tuple<string, long> mc2llvm::getOffset(const string &var) {
   if (std::regex_search(var, m, offset)) {
     auto root = m[1];
     auto offset = m[2];
-    *out << "  root = " << root << "\n";
-    *out << "  offset = " << offset << "\n";
+    debug() << "  root = " << root << "\n";
+    debug() << "  offset = " << offset << "\n";
     return make_tuple(root, stol(offset));
   } else {
     return make_tuple(var, 0);
@@ -268,7 +268,7 @@ string mc2llvm::demangle(const string &name) {
 pair<std::string, uint16_t> mc2llvm::MCExprToName(const MCExpr *expr) {
   auto sr = dyn_cast<MCSymbolRefExpr>(expr);
   if (sr) {
-    *out << "raw symbol ref expr\n";
+    debug() << "raw symbol ref expr\n";
     return make_pair(demangle((string)sr->getSymbol().getName()), NO_SPECIFIER);
   }
   auto spec = dyn_cast<MCSpecifierExpr>(expr);
@@ -299,7 +299,7 @@ std::string mc2llvm::mapExprVar(const MCExpr *expr) {
 pair<Value *, uint16_t> mc2llvm::getExprVar(const MCExpr *expr) {
   auto [name, specifier] = MCExprToName(expr);
 
-  *out << "getExprVar = " << name << "\n";
+  debug() << "getExprVar = " << name << "\n";
 
   Value *globalVar = lookupGlobal(name);
   if (!globalVar) {
@@ -590,7 +590,7 @@ Value *mc2llvm::guardIntegerABI(Value *value, Value *valid) {
 }
 
 void mc2llvm::doDirectCall() {
-  *out << "in doDirectCall\n";
+  debug() << "in doDirectCall\n";
 
   auto &op0 = CurInst->getOperand(0);
   assert(op0.isExpr());
@@ -598,14 +598,14 @@ void mc2llvm::doDirectCall() {
   assert(expr);
   string calleeName = (string)expr->getName();
 
-  *out << " callee is " << calleeName << "\n";
+  debug() << " callee is " << calleeName << "\n";
 
   if (calleeName == "__stack_chk_fail") {
     createTrap();
     return;
   }
 
-  *out << "lifting a direct call, callee is: '" << calleeName << "'\n";
+  debug() << "lifting a direct call, callee is: '" << calleeName << "'\n";
   // Not necessarily a function: src can do `call void @g0()' where @g0 is a
   // global variable, which is a call through a constant pointer. Handled
   // below, alongside the signature choice.
@@ -676,19 +676,19 @@ void mc2llvm::storeToMemoryValOffset(Value *base, Value *offset, uint64_t size,
 }
 
 void mc2llvm::liftInst(MCInst &I) {
-  *out << "mcinst: " << I.getOpcode() << " = ";
+  debug() << "mcinst: " << I.getOpcode() << " = ";
   PrevInst = CurInst;
   CurInst = &I;
 
   std::string sss;
   llvm::raw_string_ostream ss{sss};
   I.dump_pretty(ss, InstPrinter);
-  *out << sss << " = " << std::flush;
-  if (I.getOpcode() != sentinelNOP()) {
+  debug() << sss << " = " << std::flush;
+  if (debugOut && I.getOpcode() != sentinelNOP()) {
     InstPrinter->printInst(&I, 100, "", *STI.get(), outs());
     outs().flush();
   }
-  *out << std::endl;
+  debug() << std::endl;
 
   lift(I);
 }
@@ -813,7 +813,7 @@ pair<Function *, Function *> mc2llvm::run() {
       auto bb = BasicBlock::Create(Ctx, mbb.getName(), liftedFn);
       BBs.push_back(make_pair(bb, &mbb));
     }
-    *out << insts << " assembly instructions\n";
+    debug() << insts << " assembly instructions\n";
     out->flush();
   }
 
@@ -840,7 +840,7 @@ pair<Function *, Function *> mc2llvm::run() {
 
   platformInit();
 
-  *out << "\n\nlifting assembly instructions to LLVM\n";
+  debug() << "\n\nlifting assembly instructions to LLVM\n";
 
   for (auto &[llvm_bb, mc_bb] : BBs) {
     LLVMBB = llvm_bb;
@@ -853,15 +853,15 @@ pair<Function *, Function *> mc2llvm::run() {
         IA->isConditionalBranch(mc_instrs.back()))
       fallthroughBlocks.insert(LLVMBB);
 
-    *out << "entering new bb\n";
+    debug() << "entering new bb\n";
 
     for (auto &inst : mc_instrs) {
       llvmInstNum = 0;
-      *out << asmInstNum << " : about to lift opcode " << inst.getOpcode()
+      debug() << asmInstNum << " : about to lift opcode " << inst.getOpcode()
            << " " << (string)InstPrinter->getOpcodeName(inst.getOpcode())
            << "\n";
       liftInst(inst);
-      *out << "    lifted\n";
+      debug() << "    lifted\n";
       ++asmInstNum;
     }
 
@@ -904,13 +904,13 @@ pair<Function *, Function *> mc2llvm::run() {
       for (auto *succ : successors(bb))
         worklist.push_back(succ);
   }
-  *out << asmInstNum << " assembly instructions\n";
+  debug() << asmInstNum << " assembly instructions\n";
 
-  *out << "encoding counts: ";
+  debug() << "encoding counts: ";
   for (auto &[enc, count] : encodingCounts) {
-    *out << enc << '=' << count << ',';
+    debug() << enc << '=' << count << ',';
   }
-  *out << '\n';
+  debug() << '\n';
 
   // enabled this if we're emitting broken functions
   if (false)
@@ -1213,7 +1213,7 @@ void mc2llvm::checkSupport(Function *srcFn) {
   for (auto ty : typeSet)
     checkTypeSupport(ty);
 
-  *out << llvmInstCount << " LLVM instructions in source function\n";
+  debug() << llvmInstCount << " LLVM instructions in source function\n";
 }
 
 void mc2llvm::nameGlobals(Module *M) {

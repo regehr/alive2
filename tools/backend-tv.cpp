@@ -81,6 +81,13 @@ llvm::cl::opt<bool> opt_skip_verification(
         "Perform lifting but skip the refinement check (default=false)"),
     llvm::cl::cat(alive_cmdargs), llvm::cl::init(false));
 
+llvm::cl::opt<bool> opt_terse(
+    LLVM_ARGS_PREFIX "terse",
+    llvm::cl::desc("Report only the assembly, the refinement check and any "
+                   "errors, without the lifter's progress trace "
+                   "(default=false)"),
+    llvm::cl::cat(alive_cmdargs), llvm::cl::init(false));
+
 // FIXME -- this needs to be turned off by default
 llvm::cl::opt<bool> opt_internalize(
     LLVM_ARGS_PREFIX "internalize",
@@ -125,6 +132,27 @@ llvm::cl::opt<string> opt_asm_input(
                    "lifting the LLVM IR. This is only for testing. "
                    "(default=no asm input)"),
     llvm::cl::cat(alive_cmdargs));
+
+// prints the assembly code. backend-tv emits debug info which we don't print
+// when --terse is set.
+void printAsm(llvm::StringRef Asm) {
+  bool inDebugSection = false;
+  while (!Asm.empty()) {
+    auto eol = Asm.find('\n');
+    auto line = eol == llvm::StringRef::npos ? Asm : Asm.take_front(eol + 1);
+    Asm = Asm.drop_front(line.size());
+    if (opt_terse) {
+      auto directive = line.trim();
+      auto name = directive.take_until(llvm::isSpace);
+      if (name == ".section")
+        inDebugSection =
+            directive.drop_front(name.size()).ltrim().starts_with(".debug_");
+      if (inDebugSection || name == ".loc" || name == ".file")
+        continue;
+    }
+    out->write(line.data(), line.size());
+  }
+}
 
 llvm::ExitOnError ExitOnErr;
 llvm::Triple DefaultTT;
@@ -192,7 +220,7 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
   }
 
   for (auto &global : srcModule->globals()) {
-    *out << global.getName().str();
+    lifter::debug() << global.getName().str();
     if (global.isThreadLocal()) {
       *out << "\nERROR: thread_local not supported\n\n";
       exit(-1);
@@ -295,10 +323,7 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
   }
 
   *out << "\n\n------------ Assembly: ------------\n\n";
-  for (auto it = AsmBuffer->getBuffer().begin();
-       it != AsmBuffer->getBuffer().end(); ++it) {
-    *out << *it;
-  }
+  printAsm(AsmBuffer->getBuffer());
   *out << "-------------" << std::endl;
 
   if (opt_asm_only)
@@ -324,7 +349,7 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
   if (!opt_skip_verification)
     verifier.compareFunctions(*F1, *F2);
 
-  *out << "done comparing functions\n";
+  lifter::debug() << "done comparing functions\n";
   out->flush();
 }
 
@@ -333,13 +358,6 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
 unique_ptr<Cache> cache;
 
 int main(int argc, char **argv) {
-
-  if (true) {
-    // FIXME remove when done debugging
-    for (int i = 0; i < argc; ++i)
-      cout << "'" << argv[i] << "' ";
-    cout << endl;
-  }
 
   llvm::InitLLVM X(argc, argv);
   llvm::EnableDebugBuffering = true;
@@ -354,6 +372,13 @@ version )EOF";
   llvm::cl::parseCommandLineOptions(lifter::libraryOptions(),
                                     llvm::ArrayRef(argv, argc), Usage);
 
+  if (!opt_terse) {
+    // FIXME remove when done debugging
+    for (int i = 0; i < argc; ++i)
+      cout << "'" << argv[i] << "' ";
+    cout << endl;
+  }
+
   auto srcModule = openInputFile(Context, opt_file);
   if (!srcModule.get()) {
     cerr << "Could not read bitcode from '" << opt_file << "'\n";
@@ -362,6 +387,9 @@ version )EOF";
 
 #define ARGS_MODULE_VAR srcModule
 #include "llvm_util/cmd_args_def.h"
+
+  if (!opt_terse)
+    lifter::debugOut = out;
 
   // if src is always UB we end up with weird effects such as targets
   // that never reach a return instruction. let's just weed these out
