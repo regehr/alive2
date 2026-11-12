@@ -122,8 +122,7 @@ Constant *mc2llvm::lazyAddGlobal(string newGlobal) {
           con = res->second;
         }
         Constant *offset = getUnsignedIntConst(s.offset, 64);
-        Constant *ptr =
-            ConstantExpr::getGetElementPtr(getIntTy(8), con, offset);
+        Constant *ptr = ConstantExpr::getPtrAdd(con, offset);
         tys.push_back(PointerType::get(Ctx, 0));
         vals.push_back(ptr);
       } else {
