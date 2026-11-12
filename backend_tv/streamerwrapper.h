@@ -191,7 +191,7 @@ public:
 
   virtual bool emitSymbolAttribute(llvm::MCSymbol *Symbol,
                                    llvm::MCSymbolAttr Attribute) override {
-    *out << "[emitSymbolAttribute '" << Symbol->getName().str() << "']\n";
+    debug() << "[emitSymbolAttribute '" << Symbol->getName().str() << "']\n";
     if (false) {
       *out << "  Common? " << Symbol->isCommon() << "\n";
       *out << "  Variable? " << Symbol->isVariable() << "\n";
@@ -201,7 +201,7 @@ public:
 
   virtual void emitSymbolDesc(llvm::MCSymbol *Symbol,
                               unsigned DescValue) override {
-    *out << "[emitSymbolDesc '" << Symbol->getName().str() << "']\n";
+    debug() << "[emitSymbolDesc '" << Symbol->getName().str() << "']\n";
   }
 
   virtual void emitCommonSymbol(llvm::MCSymbol *Symbol, uint64_t Size,
@@ -216,12 +216,12 @@ public:
                             llvm::MCSymbol *Symbol = nullptr, uint64_t Size = 0,
                             llvm::Align ByteAlignment = llvm::Align(1),
                             llvm::SMLoc Loc = llvm::SMLoc()) override {
-    *out << "[emitZerofill " << Size << " bytes]\n";
+    debug() << "[emitZerofill " << Size << " bytes]\n";
   }
 
   virtual void emitELFSize(llvm::MCSymbol *Symbol,
                            const llvm::MCExpr *Value) override {
-    *out << "[emitELFSize '" << Symbol->getName().str() << "']\n";
+    debug() << "[emitELFSize '" << Symbol->getName().str() << "']\n";
     addConstant();
   }
 
@@ -233,13 +233,13 @@ public:
   virtual void emitValueToAlignment(llvm::Align Alignment, int64_t Fill = 0,
                                     uint8_t FillLen = 1,
                                     unsigned MaxBytesToEmit = 0) override {
-    *out << "[emitValueToAlignment= " << Alignment.value() << "]\n";
+    debug() << "[emitValueToAlignment= " << Alignment.value() << "]\n";
     curAlign = Alignment;
   }
 
   virtual void emitAssignment(llvm::MCSymbol *Symbol,
                               const llvm::MCExpr *Value) override {
-    *out << "[emitAssignment]\n";
+    debug() << "[emitAssignment]\n";
   }
 
   virtual void emitDwarfLocDirective(unsigned FileNo, unsigned Line,
@@ -247,7 +247,7 @@ public:
                                      unsigned Isa, unsigned Discriminator,
                                      llvm::StringRef FileName,
                                      llvm::StringRef Comment) override {
-    *out << "[dwarf loc directive: line = " << Line << "]\n";
+    debug() << "[dwarf loc directive: line = " << Line << "]\n";
     curDebugLine = Line;
   }
 

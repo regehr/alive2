@@ -3133,7 +3133,7 @@ void arm2llvm::lift_addp(unsigned opcode) {
   auto concV = createBitCast(conc, concTy);
   Value *res = getUndefVec(numElts, eltSize);
   for (unsigned e = 0; e < numElts; ++e) {
-    *out << "e = " << e << "\n";
+    debug() << "e = " << e << "\n";
     auto elt1 = createExtractElement(concV, 2 * e);
     auto elt2 = createExtractElement(concV, (2 * e) + 1);
     auto sum = createAdd(elt1, elt2);

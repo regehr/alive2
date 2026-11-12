@@ -26,7 +26,7 @@ arm2llvm::arm2llvm(Function *srcFn, unique_ptr<MemoryBuffer> MB,
   assert(disjoint(instrs_32, instrs_64));
   assert(disjoint(instrs_32, instrs_128));
   assert(disjoint(instrs_64, instrs_128));
-  *out << (instrs_32.size() + instrs_64.size() + instrs_128.size())
+  debug() << (instrs_32.size() + instrs_64.size() + instrs_128.size())
        << " AArch64 instructions supported\n";
 }
 
@@ -608,7 +608,7 @@ Value *arm2llvm::makeLoadWithOffset(Value *base, Value *offset, int size) {
   // Load Value val in the pointer returned by the GEP instruction
   Value *loaded = createLoad(getIntTy(8 * size), ptr);
 
-  *out << "[makeLoadWithOffset size = " << size << "]\n";
+  debug() << "[makeLoadWithOffset size = " << size << "]\n";
 
   // FIXME -- this code should not be needed, the ABI guarantees
   // that loading an i1 should have the rest of the bits clear
@@ -1051,7 +1051,7 @@ uint64_t arm2llvm::AdvSIMDExpandImm(unsigned op, unsigned cmode,
 
 vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy,
                                      const CallInst &llvmCI) {
-  *out << "entering marshallArgs()\n";
+  debug() << "entering marshallArgs()\n";
   assert(fTy);
   if (fTy->getReturnType()->isStructTy()) {
     *out << "\nERROR: we don't support structures in return values yet\n\n";
@@ -1077,7 +1077,7 @@ vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy,
       exit(-1);
     }
     auto loc = CC.assignArg(argTy);
-    *out << "  " << getBitWidth(argTy) << "-bit arg at " << toString(loc)
+    debug() << "  " << getBitWidth(argTy) << "-bit arg at " << toString(loc)
          << "\n";
     if (!canPlace(loc)) {
       *out << "\nERROR: we don't support a call argument passed at "
@@ -1136,13 +1136,13 @@ vector<Value *> arm2llvm::marshallArgs(FunctionType *fTy,
     }
     args.push_back(param);
   }
-  *out << "marshalled up " << args.size() << " arguments\n";
+  debug() << "marshalled up " << args.size() << " arguments\n";
   return args;
 }
 
 void arm2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
                       const string &calleeName) {
-  *out << "entering doCall()\n";
+  debug() << "entering doCall()\n";
 
   for (auto &arg : FC.getFunctionType()->params()) {
     if (auto vTy = dyn_cast<VectorType>(arg))
@@ -3330,7 +3330,7 @@ void arm2llvm::platformInit() {
   createRegStorage(AArch64::C, 1, "C");
   createRegStorage(AArch64::V, 1, "V");
 
-  *out << "about to do callee-side ABI stuff\n";
+  debug() << "about to do callee-side ABI stuff\n";
 
   // implement the callee side of the ABI: put each of the source
   // function's arguments where a caller would have left it. CCAssigner
@@ -3342,7 +3342,7 @@ void arm2llvm::platformInit() {
                               srcArg = srcFn->arg_begin();
        arg != E; ++arg, ++srcArg) {
     auto loc = CC.assignArg(arg->getType());
-    *out << "  processing " << getBitWidth(arg) << "-bit arg at "
+    debug() << "  processing " << getBitWidth(arg) << "-bit arg at "
          << toString(loc);
     auto *val =
         enforceSExtZExt(arg, srcArg->hasSExtAttr(), srcArg->hasZExtAttr());
@@ -3372,10 +3372,10 @@ void arm2llvm::platformInit() {
         createStore(limbVals[i], addr);
       }
     }
-    *out << "\n";
+    debug() << "\n";
   }
 
-  *out << "done with callee-side ABI stuff\n";
+  debug() << "done with callee-side ABI stuff\n";
 }
 
 void arm2llvm::checkArgSupport(Argument &arg) {}

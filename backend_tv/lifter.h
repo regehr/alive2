@@ -31,6 +31,12 @@ llvm::cl::LibraryOptionsContext &libraryOptions();
 llvm::MCTargetOptions getMCTargetOptions();
 
 /*
+ * debug() writes to debugOut unless --terse is set
+ */
+extern std::ostream *debugOut;
+std::ostream &debug();
+
+/*
  * add debug into to an IR file that will help the lifter figure out
  * which LLVM instruction each asm instruction came from
  */

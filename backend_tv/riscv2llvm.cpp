@@ -234,7 +234,7 @@ Value *riscv2llvm::getIndexedElement(unsigned idx, unsigned eltSize,
 
 vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
                                        const CallInst &llvmCI) {
-  *out << "entering marshallArgs()\n";
+  debug() << "entering marshallArgs()\n";
   assert(fTy);
   if (fTy->getReturnType()->isStructTy()) {
     *out << "\nERROR: we don't support structures in return values yet\n\n";
@@ -260,7 +260,7 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
       exit(-1);
     }
     auto loc = CC.assignArg(argTy);
-    *out << "  " << getBitWidth(argTy) << "-bit arg at " << toString(loc)
+    debug() << "  " << getBitWidth(argTy) << "-bit arg at " << toString(loc)
          << "\n";
     if (!canPlace(loc)) {
       *out << "\nERROR: we don't support a call argument passed at "
@@ -325,12 +325,12 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
     }
     args.push_back(param);
   }
-  *out << "marshalled up " << args.size() << " arguments\n";
+  debug() << "marshalled up " << args.size() << " arguments\n";
   return args;
 }
 
 void riscv2llvm::doIndirectCall() {
-  *out << "in doIndirectCall\n";
+  debug() << "in doIndirectCall\n";
 
   auto llvmInst = getCurLLVMInst();
   if (!llvmInst) {
@@ -381,7 +381,7 @@ void riscv2llvm::doIndirectCall() {
 
 void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
                         const string &calleeName) {
-  *out << "entering doCall()\n";
+  debug() << "entering doCall()\n";
   assert(llvmCI);
 
   // Establish the ABI precondition before abstracting either a normal or a
@@ -405,7 +405,7 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
       calleeName == "llvm.memset.p0.i32" ||
       calleeName == "llvm.memcpy.p0.p0.i64" ||
       calleeName == "llvm.memmove.p0.p0.i64") {
-    *out << "adding constant Boolean as args[3]\n";
+    debug() << "adding constant Boolean as args[3]\n";
     args[3] = getBoolConst(false);
     // the assembly called libc memset/memcpy/memmove, which return their
     // destination argument; we model them with LLVM intrinsics that return
@@ -638,7 +638,7 @@ void riscv2llvm::platformInit() {
   // allocate floating-point control and status register
   createRegStorage(RISCV::FCSR, 32, "FCSR");
 
-  *out << "created scalar registers\n";
+  debug() << "created scalar registers\n";
 
   // TODO vector registers
 
@@ -651,7 +651,7 @@ void riscv2llvm::platformInit() {
   // handled in updateReg()
   createStore(getUnsignedIntConst(0, 64), RegFile[RISCV::X0]);
 
-  *out << "about to do callee-side ABI stuff\n";
+  debug() << "about to do callee-side ABI stuff\n";
 
   // implement the callee side of the ABI: put each of the source
   // function's arguments where a caller would have left it. CCAssigner
@@ -667,7 +667,7 @@ void riscv2llvm::platformInit() {
                               srcArg = srcFn->arg_begin();
        arg != E; ++arg, ++srcArg) {
     auto loc = CC.assignArg(arg->getType());
-    *out << "  processing " << getBitWidth(arg) << "-bit arg at "
+    debug() << "  processing " << getBitWidth(arg) << "-bit arg at "
          << toString(loc);
     auto *argTy = arg->getType();
 
@@ -714,10 +714,10 @@ void riscv2llvm::platformInit() {
         }
       }
     }
-    *out << "\n";
+    debug() << "\n";
   }
 
-  *out << "done with callee-side ABI stuff\n";
+  debug() << "done with callee-side ABI stuff\n";
 }
 
 /*

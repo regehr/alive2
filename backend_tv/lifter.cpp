@@ -32,6 +32,13 @@ static mc::RegisterMCToolOptions MOF;
 
 namespace lifter {
 
+std::ostream *debugOut = nullptr;
+
+std::ostream &debug() {
+  static std::ostream discard(nullptr);
+  return debugOut ? *debugOut : discard;
+}
+
 cl::LibraryOptionsContext &libraryOptions() {
   static cl::LibraryOptionsContext Ctx;
   return Ctx;
@@ -106,8 +113,8 @@ liftFunc(Function *srcFn, unique_ptr<MemoryBuffer> MB,
 
   auto tgtModule = tgtFn->getParent();
 
-  *out << "\n\nabout to optimize lifted code:\n\n";
-  *out << moduleToString(tgtModule) << std::endl;
+  debug() << "\n\nabout to optimize lifted code:\n\n";
+  debug() << moduleToString(tgtModule) << std::endl;
 
   auto err = llvm_util::optimize_module(*tgtModule, optimize_tgt);
   if (!err.empty()) {
@@ -120,8 +127,8 @@ liftFunc(Function *srcFn, unique_ptr<MemoryBuffer> MB,
   // machine values as freeze poison, which LLVM could otherwise refine to zero.
   lifter->fixupOptimizedTgt(tgtFn);
 
-  *out << "\n\noptimized lifted code:\n\n";
-  *out << moduleToString(tgtModule) << std::endl;
+  debug() << "\n\noptimized lifted code:\n\n";
+  debug() << moduleToString(tgtModule) << std::endl;
 
   return make_pair(adjustedSrc, tgtFn);
 }

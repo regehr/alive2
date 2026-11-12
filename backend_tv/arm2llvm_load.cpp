@@ -890,7 +890,7 @@ void arm2llvm::lift_ldr1(unsigned opcode) {
 
   MCOperand &op2 = CurInst->getOperand(2);
   if (op2.isExpr()) {
-    *out << "[operand 2 is expr]\n";
+    debug() << "[operand 2 is expr]\n";
     auto [globalVar, specifier] = getExprVar(op2.getExpr());
     if (isGOT(specifier)) {
       Value *ptrToInt = createPtrToInt(globalVar, getIntTy(size * 8));
@@ -900,7 +900,7 @@ void arm2llvm::lift_ldr1(unsigned opcode) {
       updateOutputReg(loaded, sExt);
     }
   } else {
-    *out << "[operand 2 is not expr]\n";
+    debug() << "[operand 2 is not expr]\n";
     auto [base, imm] = getParamsLoadImmed();
     auto loaded = makeLoadWithOffset(base, imm * size, size);
     updateOutputReg(loaded, sExt);

@@ -19,7 +19,7 @@ void MCFunction::checkEntryBlock(unsigned jumpOpcode) {
 void MCStreamerWrapper::emitInstruction(const MCInst &Inst,
                                         const MCSubtargetInfo & /* unused */) {
 
-  *out << "MCStreamerWrapper got opcode = " << Inst.getOpcode() << "\n";
+  debug() << "MCStreamerWrapper got opcode = " << Inst.getOpcode() << "\n";
 
   assert(prev_line != ASMLine::none);
 
@@ -42,39 +42,39 @@ void MCStreamerWrapper::emitInstruction(const MCInst &Inst,
       if (expr->getKind() == MCExpr::ExprKind::SymbolRef) {
         const MCSymbolRefExpr &SRE = cast<MCSymbolRefExpr>(*expr);
         const MCSymbol &Sym = SRE.getSymbol();
-        *out << "target label : " << (string)Sym.getName()
+        debug() << "target label : " << (string)Sym.getName()
              << ", offset=" << to_string(Sym.getOffset())
              << '\n'; // FIXME remove when done
       }
     }
   }
 
-  *out << cnt++ << "  : ";
+  debug() << cnt++ << "  : ";
   std::string sss;
   llvm::raw_string_ostream ss(sss);
   // Inst.dump_pretty(ss, IP, " ", MRI);
-  *out << sss;
+  debug() << sss;
   if (IA.isBranch(Inst))
-    *out << ": branch ";
+    debug() << ": branch ";
   if (IA.isConditionalBranch(Inst))
-    *out << ": conditional branch ";
+    debug() << ": conditional branch ";
   if (IA.isUnconditionalBranch(Inst))
-    *out << ": unconditional branch ";
+    debug() << ": unconditional branch ";
   if (IA.isTerminator(Inst))
-    *out << ": terminator ";
-  *out << "\n";
+    debug() << ": terminator ";
+  debug() << "\n";
 }
 
 void MCStreamerWrapper::emitValueImpl(const MCExpr *Value, unsigned Size,
                                       SMLoc Loc) {
   if (curSec.starts_with(".debug")) {
-    *out << "skipping emitValue in debug section\n";
+    debug() << "skipping emitValue in debug section\n";
     return;
   }
   if (auto SR = dyn_cast<MCSymbolRefExpr>(Value)) {
     const MCSymbol &Sym = SR->getSymbol();
     std::string name{Sym.getName()};
-    *out << "[emitValue MCSymbolRefExpr= " << name << "]\n";
+    debug() << "[emitValue MCSymbolRefExpr= " << name << "]\n";
     OffsetSym s{name, 0};
     curROData.push_back(RODataItem{s});
   } else if (auto CE = dyn_cast<MCConstantExpr>(Value)) {
@@ -86,7 +86,7 @@ void MCStreamerWrapper::emitValueImpl(const MCExpr *Value, unsigned Size,
     UE->dump();
     assert(false && "handle this");
   } else if (auto BE = dyn_cast<MCBinaryExpr>(Value)) {
-    *out << "[emitValue MCBinaryExpr]\n";
+    debug() << "[emitValue MCBinaryExpr]\n";
     auto *LHS = dyn_cast<MCSymbolRefExpr>(BE->getLHS());
     auto *RHS = dyn_cast<MCConstantExpr>(BE->getRHS());
     if (!LHS || !RHS) {
@@ -114,10 +114,10 @@ void MCStreamerWrapper::emitLabel(MCSymbol *Symbol, SMLoc Loc) {
   auto sp = getCurrentSection();
   std::string secName = sp.first->getName().str();
   std::string lab = Symbol->getName().str();
-  *out << "[emitLabel '" << lab << "' in section '" << secName << "']\n";
+  debug() << "[emitLabel '" << lab << "' in section '" << secName << "']\n";
 
   if (secName.starts_with(".debug")) {
-    *out << "  skipping debug stuff\n";
+    debug() << "  skipping debug stuff\n";
     curSec = (std::string)sp.first->getName();
     return;
   }
@@ -142,7 +142,7 @@ void MCStreamerWrapper::emitLabel(MCSymbol *Symbol, SMLoc Loc) {
 }
 
 void MCStreamerWrapper::generateSuccessors() {
-  *out << "generating basic block successors" << '\n';
+  debug() << "generating basic block successors" << '\n';
   for (unsigned i = 0; i < MF.BBs.size(); ++i) {
     auto &cur_bb = MF.BBs[i];
     MCBasicBlock *next_bb_ptr = nullptr;
@@ -150,7 +150,7 @@ void MCStreamerWrapper::generateSuccessors() {
       next_bb_ptr = &MF.BBs[i + 1];
 
     if (cur_bb.empty()) {
-      *out << "generateSuccessors, encountered basic block with 0 instructions"
+      debug() << "generateSuccessors, encountered basic block with 0 instructions"
            << '\n';
       continue;
     }
@@ -177,7 +177,7 @@ void MCStreamerWrapper::generateSuccessors() {
       if (target_bb) {
         cur_bb.addSucc(target_bb);
       } else {
-        *out << "looks like a tail call to " << target << "\n";
+        debug() << "looks like a tail call to " << target << "\n";
       }
     } else if (IA.isReturn(last_mc_instr)) {
       continue;
@@ -201,12 +201,12 @@ void MCStreamerWrapper::emitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
       .data = data,
   };
   MF.MCglobals.emplace_back(g);
-  *out << "[emitCommonSymbol = " << name << "]\n";
+  debug() << "[emitCommonSymbol = " << name << "]\n";
 }
 
 void MCStreamerWrapper::emitBytes(StringRef Data) {
   auto len = Data.size();
-  *out << "[emitBytes " << len << " bytes]\n";
+  debug() << "[emitBytes " << len << " bytes]\n";
   for (unsigned i = 0; i < len; ++i) {
     auto rod = RODataItem{Data[i]};
     curROData.push_back(rod);
@@ -219,7 +219,7 @@ void MCStreamerWrapper::emitFill(const MCExpr &NumBytes, uint64_t FillValue,
   if (ce) {
     assert(FillValue < 256);
     auto bytes = ce->getValue();
-    *out << "[emitFill value = " << FillValue << ", size = " << bytes << "]\n";
+    debug() << "[emitFill value = " << FillValue << ", size = " << bytes << "]\n";
     for (int i = 0; i < bytes; ++i) {
       auto rod = RODataItem{(char)FillValue};
       curROData.push_back(rod);
