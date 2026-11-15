@@ -167,16 +167,17 @@ void riscv2llvm::checkStackAlignment() {
 
 void riscv2llvm::updateFPReg(Value *V, uint64_t Reg) {
   auto W = getBitWidth(V);
-  if (W == 128)
+  if (W == 128) {
     createStore(V, lookupFPReg(Reg));
-
-  // NaN-box smaller FP types
-  auto bits = createBitCast(V, getIntTy(W));
-  auto extended = createZExt(bits, getIntTy(128));
-  auto maskAP = llvm::APInt::getHighBitsSet(128, 128 - W);
-  auto mask = llvm::ConstantInt::get(Ctx, maskAP);
-  auto nanBoxed = createOr(mask, extended);
-  createStore(nanBoxed, lookupFPReg(Reg));
+  } else {
+    // NaN-box smaller FP types
+    auto bits = createBitCast(V, getIntTy(W));
+    auto extended = createZExt(bits, getIntTy(128));
+    auto maskAP = llvm::APInt::getHighBitsSet(128, 128 - W);
+    auto mask = llvm::ConstantInt::get(Ctx, maskAP);
+    auto nanBoxed = createOr(mask, extended);
+    createStore(nanBoxed, lookupFPReg(Reg));
+  }
 }
 
 Value *riscv2llvm::canonicalizeNaN(Value *V) {
