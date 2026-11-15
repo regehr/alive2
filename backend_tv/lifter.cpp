@@ -27,9 +27,6 @@ using namespace std;
 using namespace llvm;
 using namespace lifter;
 
-// do not delete this line, it's not as dead as it looks
-static mc::RegisterMCToolOptions MOF;
-
 namespace lifter {
 
 std::ostream *debugOut = nullptr;

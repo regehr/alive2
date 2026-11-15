@@ -23,6 +23,7 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
+#include "llvm/MC/MCTargetOptionsCommandFlags.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/InitLLVM.h"
@@ -370,6 +371,7 @@ version )EOF";
 
   llvm::cl::HideUnrelatedOptions(alive_cmdargs);
   llvm::cl::parseCommandLineOptions(lifter::libraryOptions(),
+                                    llvm::mc::getToolOptions(),
                                     llvm::ArrayRef(argv, argc), Usage);
 
   if (!opt_terse) {
