@@ -387,11 +387,15 @@ void riscv2llvm::lift(MCInst &I) {
       auto specifier = rvExpr->getSpecifier();
       switch (specifier) {
       case ELF::R_RISCV_HI20:
-        // FIXME: this is loading the high 20 bits of an address. we
-        // (unsoundly) ignore this for now -- but we'll want to
-        // connect this up with the lo part that comes (sometimes a
-        // number of instructions) later. this will be easy as long as
-        // the pair are always in the same basic block.
+        // %lo consumers (ADDI, loads, stores) take their address from the
+        // symbol, not from the base register, so the value written here
+        // matters only if rd is used some other way. Write an arbitrary
+        // value so that any such use makes verification fail instead of
+        // silently reading a stale register.
+        // FIXME: model the high bits exactly and have %lo consumers check
+        // that their base register holds the matching %hi.
+        updateOutputReg(
+            new FreezeInst(PoisonValue::get(i64ty), nextName(), LLVMBB));
         break;
       default:
         *out << "unknown specifier: "
