@@ -1,4 +1,4 @@
-; TEST-ARGS: -test-replace-ptrtoint
+; TEST-ARGS: -terse -test-replace-ptrtoint
 ; should collapse into gep
 define ptr @f(ptr %p, i64 %idx) {
     %i1 = ptrtoint ptr %p to i64

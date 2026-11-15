@@ -1,4 +1,4 @@
-; TEST-ARGS: -test-replace-ptrtoint
+; TEST-ARGS: -terse -test-replace-ptrtoint
 
 define ptr @g(ptr noundef %p, i64 noundef %idx1, i64 noundef %idx2) {
     %i1 = ptrtoint ptr %p to i64
