@@ -1,4 +1,17 @@
-# arm-tv
+# backend-tv
+
+## quick start
+
+The simplest thing is to build a no-ASLP version of backend-tv:
+```
+./build_no_aslp.sh
+```
+
+Then run respectively the RV64 and AArch64 test suites:
+```
+./riscv-tests.sh
+./arm-tests.sh
+```
 
 ## building
 
