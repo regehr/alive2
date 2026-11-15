@@ -791,7 +791,7 @@ void riscv2llvm::checkTypeSupport(Type *ty) {
     *out << "\nERROR: vectors not yet supported\n\n";
     exit(-1);
   }
-  // RVA22U64 gives us Zfhmin (so f16 arithmetic is promoted to f32) but
+  // RVA23U64 gives us Zfhmin (so f16 arithmetic is promoted to f32) but
   // neither Q nor bfloat, and those get turned into libcalls such as
   // __addtf3 that we cannot lift; reject them up front instead
   if (ty->isFloatingPointTy() &&
