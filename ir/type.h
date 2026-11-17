@@ -291,8 +291,6 @@ public:
                      bool fromInt = false) const;
   Type& getChild(unsigned index) const { return *children[index]; }
   bool isPadding(unsigned i) const { return is_padding[i]; }
-  // Count padding preceding the given non-padding element index.
-  unsigned countPaddings(unsigned to_idx) const;
   // Maps an index that ignores paddings to the index in children.
   unsigned paddedIndex(unsigned idx) const;
 

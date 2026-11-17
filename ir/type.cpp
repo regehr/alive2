@@ -818,13 +818,6 @@ unsigned AggregateType::numPaddingsConst() const {
   return std::count(is_padding.begin(), is_padding.end(), true);
 }
 
-unsigned AggregateType::countPaddings(unsigned to_idx) const {
-  unsigned count = 0;
-  for (unsigned i = 0; i <= to_idx + count; ++i)
-    count += is_padding[i];
-  return count;
-}
-
 unsigned AggregateType::paddedIndex(unsigned idx) const {
   unsigned seen = 0;
   for (unsigned i = 0; i < elements; ++i) {
