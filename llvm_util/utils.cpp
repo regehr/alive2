@@ -190,7 +190,7 @@ Type* llvm_type2alive(const llvm::Type *ty) {
         // Round to bytes after evaluating vscale, including for i1 vectors.
         auto sz = llvm::divideCeil(getConcreteSize(DL->getTypeSizeInBits(e)), 8);
         auto ofs_next = getConcreteSize(i + 1 == strty->getNumElements() ?
-                DL->getTypeAllocSize(const_cast<llvm::StructType *>(strty)) :
+                layout->getSizeInBytes() :
                 layout->getElementOffset(i + 1));
         assert(ofs + sz <= ofs_next);
 
