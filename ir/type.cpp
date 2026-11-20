@@ -1138,7 +1138,7 @@ expr VectorType::vscaleRangeConstraint(unsigned min, unsigned max) {
   auto vscale = vscaleVar();
   expr r = vscale.uge(min);
   if (max)
-    r &= vscale.ule(max);
+    r &= vscale.ule_extend(max);
   return r;
 }
 
