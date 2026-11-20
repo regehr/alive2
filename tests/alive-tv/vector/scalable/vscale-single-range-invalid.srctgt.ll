@@ -8,18 +8,18 @@
 ; CHECK-NOT: Transformation seems to be correct!
 ; CHECK-NOT: These functions seem to be equivalent!
 
-; Check both bounds before the syntactic-equality shortcut, even without
-; scalable vector operations. An unbounded maximum still has a lower bound.
-define i32 @src_lower(i32 %x) vscale_range(8,0) {
-  ret i32 %x
+; Check both bounds before the syntactic-equality shortcut. An unbounded
+; maximum still has a lower bound.
+define <vscale x 2 x i8> @src_lower(<vscale x 2 x i8> %x) vscale_range(8,0) {
+  ret <vscale x 2 x i8> %x
 }
-define i32 @tgt_lower(i32 %x) vscale_range(8,0) {
-  ret i32 %x
+define <vscale x 2 x i8> @tgt_lower(<vscale x 2 x i8> %x) vscale_range(8,0) {
+  ret <vscale x 2 x i8> %x
 }
 
-define i32 @src_upper(i32 %x) vscale_range(1,2) {
-  ret i32 %x
+define <vscale x 2 x i8> @src_upper(<vscale x 2 x i8> %x) vscale_range(1,2) {
+  ret <vscale x 2 x i8> %x
 }
-define i32 @tgt_upper(i32 %x) vscale_range(1,2) {
-  ret i32 %x
+define <vscale x 2 x i8> @tgt_upper(<vscale x 2 x i8> %x) vscale_range(1,2) {
+  ret <vscale x 2 x i8> %x
 }

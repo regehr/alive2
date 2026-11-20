@@ -7,6 +7,9 @@
 #include "smt/smt.h"
 #include "tools/transform.h"
 #include "util/config.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 
 #include <sstream>
 #include <utility>
@@ -39,32 +42,67 @@ struct Results {
   }
 };
 
+// Returns true if the semantics of F may depend on the value of vscale.
+// Functions that don't are verified identically at every vscale, so the
+// vscale_range checks below don't apply to them. LLVM has no such query.
+// Type::isScalableTy() looks through arrays and structs, and constant
+// expressions can't hide a scalable type (constant GEPs over scalable types
+// are rejected), so checking value types is enough, except for llvm.vscale
+// and instructions with a pointer result over a scalable element type.
+bool usesVScale(const llvm::Function &F) {
+  for (auto &arg : F.args()) {
+    if (arg.getType()->isScalableTy())
+      return true;
+  }
+  for (auto &I : llvm::instructions(F)) {
+    if (I.getType()->isScalableTy() ||
+        llvm::any_of(I.operands(), [](const llvm::Use &op) {
+          return op->getType()->isScalableTy();
+        }))
+      return true;
+    if (auto *ii = llvm::dyn_cast<llvm::IntrinsicInst>(&I);
+        ii && ii->getIntrinsicID() == llvm::Intrinsic::vscale)
+      return true;
+    if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&I);
+        alloca && alloca->isScalable())
+      return true;
+    if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(&I);
+        gep && gep->getSourceElementType()->isScalableTy())
+      return true;
+  }
+  return false;
+}
+
 Results verify(llvm::Function &F1, llvm::Function &F2,
                llvm::TargetLibraryInfoWrapperPass &TLI,
                smt::smt_initializer &smt_init, ostream &out,
                bool print_transform, bool always_verify) {
-  auto vscale_range = F1.getFnAttribute(llvm::Attribute::VScaleRange);
-  if (vscale_range != F2.getFnAttribute(llvm::Attribute::VScaleRange))
-    return Results::Error("Unsupported change to vscale_range\n");
-
   unsigned vscale_min = 1, vscale_max = 0;
-  if (vscale_range.isValid()) {
-    vscale_min = vscale_range.getVScaleRangeMin();
-    vscale_max = vscale_range.getVScaleRangeMax().value_or(0);
+
+  if (usesVScale(F1) || usesVScale(F2)) {
+    auto vscale_range = F1.getFnAttribute(llvm::Attribute::VScaleRange);
+    if (vscale_range != F2.getFnAttribute(llvm::Attribute::VScaleRange))
+      return Results::Error("Unsupported change to vscale_range\n");
+
+    if (vscale_range.isValid()) {
+      vscale_min = vscale_range.getVScaleRangeMin();
+      vscale_max = vscale_range.getVScaleRangeMax().value_or(0);
+    }
+
+    if (config::max_vscale && vscale_min > config::max_vscale)
+      return Results::Error(
+        "vscale_range minimum (" + to_string(vscale_min) +
+        ") exceeds the maximum vscale (" + to_string(config::max_vscale) +
+        ")\n");
+
+    if (!config::max_vscale &&
+        (config::vscale_value < vscale_min ||
+         (vscale_max && config::vscale_value > vscale_max)))
+      return Results::Error(
+        "single-vscale (" + to_string(config::vscale_value) +
+        ") is outside vscale_range(" + to_string(vscale_min) + "," +
+        to_string(vscale_max) + ")\n");
   }
-
-  if (config::max_vscale && vscale_min > config::max_vscale)
-    return Results::Error(
-      "vscale_range minimum (" + to_string(vscale_min) +
-      ") exceeds the maximum vscale (" + to_string(config::max_vscale) + ")\n");
-
-  if (!config::max_vscale &&
-      (config::vscale_value < vscale_min ||
-       (vscale_max && config::vscale_value > vscale_max)))
-    return Results::Error(
-      "single-vscale (" + to_string(config::vscale_value) +
-      ") is outside vscale_range(" + to_string(vscale_min) + "," +
-      to_string(vscale_max) + ")\n");
 
   auto fn1 = llvm2alive(F1, TLI.getTLI(F1), true);
   if (!fn1)

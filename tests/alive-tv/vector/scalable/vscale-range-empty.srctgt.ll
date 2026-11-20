@@ -4,11 +4,11 @@
 ; CHECK-NOT: Transformation seems to be correct!
 ; CHECK-NOT: Checking vscale =
 
-; Equal ranges can still exclude every requested scale, even without a
-; scalable vector type. Reject this before entering the type checker.
-define i32 @src(i32 %x) vscale_range(8,8) {
-  ret i32 %x
+; Equal ranges can still exclude every requested scale. Reject this before
+; entering the type checker.
+define <vscale x 2 x i8> @src(<vscale x 2 x i8> %x) vscale_range(8,8) {
+  ret <vscale x 2 x i8> %x
 }
-define i32 @tgt(i32 %x) vscale_range(8,8) {
-  ret i32 %x
+define <vscale x 2 x i8> @tgt(<vscale x 2 x i8> %x) vscale_range(8,8) {
+  ret <vscale x 2 x i8> %x
 }

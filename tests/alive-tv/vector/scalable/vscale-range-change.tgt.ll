@@ -1,3 +1,3 @@
-define i32 @f(i32 %x) vscale_range(2,4) {
-  ret i32 %x
+define <vscale x 2 x i8> @f(<vscale x 2 x i8> %x) vscale_range(2,4) {
+  ret <vscale x 2 x i8> %x
 }

@@ -4,7 +4,7 @@
 ; CHECK-NOT: Checking vscale =
 
 ; The printed Alive IR is identical: reject the changed range before the
-; syntactic-equality shortcut, even without scalable vector operations.
-define i32 @f(i32 %x) vscale_range(1,4) {
-  ret i32 %x
+; syntactic-equality shortcut.
+define <vscale x 2 x i8> @f(<vscale x 2 x i8> %x) vscale_range(1,4) {
+  ret <vscale x 2 x i8> %x
 }
