@@ -42,13 +42,6 @@ struct Results {
   }
 };
 
-// Returns true if the semantics of F may depend on the value of vscale.
-// Functions that don't are verified identically at every vscale, so the
-// vscale_range checks below don't apply to them. LLVM has no such query.
-// Type::isScalableTy() looks through arrays and structs, and constant
-// expressions can't hide a scalable type (constant GEPs over scalable types
-// are rejected), so checking value types is enough, except for llvm.vscale
-// and instructions with a pointer result over a scalable element type.
 bool usesVScale(const llvm::Function &F) {
   for (auto &arg : F.args()) {
     if (arg.getType()->isScalableTy())
