@@ -109,7 +109,7 @@ Results verify(llvm::Function &F1, llvm::Function &F2,
   Errors warnings;
   for (; types; ++types) {
     verifier.fixupTypes(types);
-    if (!types.hasSingleTyping())
+    if (print_transform && !types.hasSingleTyping())
       out << "Checking vscale = " << IR::VectorType::getVScale() << '\n';
     r.errs = verifier.verify();
     warnings.addWarnings(r.errs);
