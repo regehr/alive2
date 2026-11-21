@@ -8,8 +8,7 @@
 ; CHECK-NOT: Checking vscale =
 
 ; Reject both narrowing and widening, including changes outside the tested
-; scales. (Functions that don't depend on vscale are exempt; see
-; vscale-range-scalar.srctgt.ll.)
+; scales. (Functions that don't depend on vscale are exempt.)
 define <vscale x 2 x i8> @src_lower(<vscale x 2 x i8> %x) vscale_range(1,4) {
   ret <vscale x 2 x i8> %x
 }
