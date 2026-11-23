@@ -53,11 +53,20 @@ if (!report_dir_created && !opt_report_dir.empty()) {
   fname.replace_extension(".txt");
   fs::path path = fs::path(opt_report_dir.getValue()) / fname.filename();
 
-  if (!opt_overwrite_reports) {
+  auto stem = fname.stem();
+  if (stem.compare("-") == 0 || stem.compare("<stdin>") == 0)
+    stem = "in";
+
+  if (opt_deterministic_report_names) {
+    // Identical input + identical command line (e.g., a duplicated RUN line)
+    // gets a numeric suffix rather than clobbering the earlier report.
+    auto base = stem.string() + "_" + report_name_hash(*ARGS_MODULE_VAR);
+    path.replace_filename(base + ".txt");
+    for (unsigned i = 1; !opt_overwrite_reports && fs::exists(path); ++i)
+      path.replace_filename(base + "_" + to_string(i) + ".txt");
+  } else if (!opt_overwrite_reports) {
     do {
-      auto newname = fname.stem();
-      if (newname.compare("-") == 0 || newname.compare("<stdin>") == 0)
-        newname = "in";
+      auto newname = stem;
       newname += "_" + get_random_str(8) + ".txt";
       path.replace_filename(newname);
     } while (fs::exists(path));

@@ -3,8 +3,15 @@
 
 #include "util/config.h"
 #include "util/random.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/xxhash.h"
+#include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <string_view>
 
 namespace fs = std::filesystem;
 
@@ -148,6 +155,52 @@ llvm::cl::opt<bool> opt_save_ir(LLVM_ARGS_PREFIX "save-ir",
 llvm::cl::opt<bool> opt_overwrite_reports(LLVM_ARGS_PREFIX "overwrite-reports",
   llvm::cl::desc("Overwrite existing report files"),
   llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
+
+llvm::cl::opt<bool> opt_deterministic_report_names(
+  LLVM_ARGS_PREFIX "deterministic-report-names",
+  llvm::cl::desc("Name report files after a hash of the input module and the "
+                 "command line instead of a random string, so that reports "
+                 "from different runs can be matched up"),
+  llvm::cl::init(false), llvm::cl::cat(alive_cmdargs));
+
+// Hash of the input module's IR plus the command line, used to give report
+// files stable names. Arguments that are expected to differ between two
+// otherwise-identical runs (the executable path, plugin paths, and Alive2's
+// own options) are left out.
+std::string report_name_hash(const llvm::Module &M) {
+  std::string data;
+  llvm::raw_string_ostream os(data);
+  M.print(os, nullptr);
+  os << '\0';
+
+#ifdef __linux__
+  std::ifstream cmdline("/proc/self/cmdline");
+  std::string arg;
+  bool first = true, skip_next = false;
+  while (std::getline(cmdline, arg, '\0')) {
+    if (first) { first = false; continue; } // argv[0]
+    if (skip_next) { skip_next = false; continue; }
+    std::string_view a(arg);
+    if (a.starts_with("--"))
+      a.remove_prefix(1);
+    if (a == "-load" || a == "-load-pass-plugin") {
+      skip_next = true;
+      continue;
+    }
+    if (a.starts_with("-load=") || a.starts_with("-load-pass-plugin="))
+      continue;
+    if (!std::string_view(LLVM_ARGS_PREFIX).empty() &&
+        a.starts_with("-" LLVM_ARGS_PREFIX))
+      continue;
+    os << arg << '\0';
+  }
+#endif
+
+  char buf[17];
+  snprintf(buf, sizeof(buf), "%016llx",
+           (unsigned long long)llvm::xxh3_64bits(llvm::StringRef(data)));
+  return buf;
+}
 
 llvm::cl::opt<bool> opt_cache(LLVM_ARGS_PREFIX "cache",
   llvm::cl::init(false),
