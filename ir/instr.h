@@ -1348,6 +1348,35 @@ public:
 };
 
 
+// llvm.vector.splice.left / llvm.vector.splice.right, which take a
+// (possibly non-constant) i32 offset
+class VectorSplice final : public Instr {
+public:
+  enum Dir { Left, Right };
+
+private:
+  Value *v1, *v2, *offset;
+  Dir dir;
+
+public:
+  VectorSplice(Type &type, std::string &&name, Value &v1, Value &v2,
+               Value &offset, Dir dir)
+    : Instr(type, std::move(name)), v1(&v1), v2(&v2), offset(&offset),
+      dir(dir) {}
+
+  Dir getDir() const { return dir; }
+  std::vector<Value*> operands() const override;
+  bool propagatesPoison() const override;
+  bool hasSideEffects() const override;
+  void rauw(const Value &what, Value &with) override;
+  void print(std::ostream &os) const override;
+  StateValue toSMT(State &s) const override;
+  smt::expr getTypeConstraints(const Function &f) const override;
+  std::unique_ptr<Instr>
+    dup(Function &f, const std::string &suffix) const override;
+};
+
+
 const ConversionOp *isCast(ConversionOp::Op op, const Value &v);
 Value *isNoOp(const Value &v);
 }

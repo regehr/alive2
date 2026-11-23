@@ -1258,6 +1258,24 @@ public:
       ret = make_unique<UnaryOp>(*ty, value_name(i), *val, UnaryOp::Copy);
       break;
     }
+    case llvm::Intrinsic::vector_reverse: {
+      PARSE_UNOP();
+      unsigned n = ty->getAsAggregateType()->numElementsConst();
+      vector<unsigned> mask;
+      for (unsigned j = 0; j < n; ++j)
+        mask.push_back(n - 1 - j);
+      ret = make_unique<ShuffleVector>(*ty, value_name(i), *val, *val,
+                                       std::move(mask));
+      break;
+    }
+    case llvm::Intrinsic::vector_splice_left:
+    case llvm::Intrinsic::vector_splice_right: {
+      PARSE_TRIOP();
+      auto dir = i.getIntrinsicID() == llvm::Intrinsic::vector_splice_left
+                   ? VectorSplice::Left : VectorSplice::Right;
+      ret = make_unique<VectorSplice>(*ty, value_name(i), *a, *b, *c, dir);
+      break;
+    }
 
     // do nothing intrinsics
     case llvm::Intrinsic::dbg_declare:

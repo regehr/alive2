@@ -5266,6 +5266,74 @@ unique_ptr<Instr> ShuffleVector::dup(Function &f, const string &suffix) const {
 }
 
 
+vector<Value*> VectorSplice::operands() const {
+  return { v1, v2, offset };
+}
+
+bool VectorSplice::propagatesPoison() const {
+  // lane poison does not propagate to all lanes
+  return false;
+}
+
+bool VectorSplice::hasSideEffects() const {
+  return false;
+}
+
+void VectorSplice::rauw(const Value &what, Value &with) {
+  RAUW(v1);
+  RAUW(v2);
+  RAUW(offset);
+}
+
+void VectorSplice::print(ostream &os) const {
+  os << getName() << " = vector.splice." << (dir == Left ? "left " : "right ")
+     << *v1 << ", " << *v2 << ", " << *offset;
+}
+
+StateValue VectorSplice::toSMT(State &s) const {
+  auto &a = s[*v1];
+  auto &b = s[*v2];
+  auto &[off, off_np] = s[*offset];
+  auto vty = getType().getAsAggregateType();
+  unsigned n = vty->numElementsConst();
+  auto &elemTy = vty->getChild(0);
+
+  // Elements are laid out from the most significant bits down, so splicing
+  // is a left shift of concat(v1, v2) followed by taking the upper half.
+  // splice.right(k) == splice.left(n - k).
+  // If off > n, the result is poison, so we don't care about wrap-around
+  // and truncation below. Otherwise, k <= n and k * elem_bits fits in the
+  // concatenation's width.
+  expr k = dir == Left ? off : expr::mkUInt(n, off) - off;
+
+  auto splice = [&](const expr &x, const expr &y, unsigned elem_bits) {
+    expr cat = x.concat(y);
+    unsigned w = cat.bits();
+    expr amt = k.zextOrTrunc(w) * expr::mkUInt(elem_bits, w);
+    return (cat << amt).extract(w - 1, w / 2);
+  };
+
+  expr val = splice(a.value, b.value, elemTy.bits());
+  expr np  = splice(a.non_poison, b.non_poison, elemTy.np_bits(false));
+  return { std::move(val),
+           expr::mkIf(off_np && off.ule(n), std::move(np),
+                      vty->getDummyValue(false).non_poison) };
+}
+
+expr VectorSplice::getTypeConstraints(const Function &f) const {
+  return Value::getTypeConstraints() &&
+         getType().enforceVectorType() &&
+         getType() == v1->getType() &&
+         getType() == v2->getType() &&
+         offset->getType().enforceIntType(32);
+}
+
+unique_ptr<Instr> VectorSplice::dup(Function &f, const string &suffix) const {
+  return make_unique<VectorSplice>(getType(), getName() + suffix,
+                                   *v1, *v2, *offset, dir);
+}
+
+
 const ConversionOp* isCast(ConversionOp::Op op, const Value &v) {
   auto c = dynamic_cast<const ConversionOp*>(&v);
   return (c && c->getOp() == op) ? c : nullptr;
