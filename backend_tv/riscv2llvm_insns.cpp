@@ -179,6 +179,8 @@ void riscv2llvm::lift(MCInst &I) {
     I = uncompressedInst;
   }
 
+  enterVTypeBlock();
+
   auto opcode = I.getOpcode();
   // StringRef instStr = InstPrinter->getOpcodeName(opcode);
   auto newbb = BasicBlock::Create(Ctx, "lifter_" + nextName(), liftedFn);
@@ -1503,6 +1505,9 @@ void riscv2llvm::lift(MCInst &I) {
   }
 
   default:
-    visitError();
+    // vector instructions, and the vector CSR reads, are in
+    // riscv2llvm_vector.cpp
+    if (!liftVector(opcode))
+      visitError();
   }
 }

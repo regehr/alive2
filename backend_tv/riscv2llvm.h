@@ -35,12 +35,52 @@
 #include "backend_tv/riscv2llvm.h"
 #include "backend_tv/streamerwrapper.h"
 
+#include <cstdint>
+#include <map>
+#include <optional>
 #include <string>
 
 namespace lifter {
 
 class riscv2llvm final : public mc2llvm {
   llvm::Value *initialFPReg[32]{nullptr};
+
+  // RVV state. VLEN, the width of each vector register in bits, is fixed
+  // for the whole run at 64 * vscale (LLVM's RVV mapping), and is set in
+  // platformInit(). Each of V0-V31 is backed by an iVLEN alloca.
+  unsigned VLEN{0};
+
+  // a vector register operand names one register, an LMUL>1 group (VnM2,
+  // VnM4, VnM8), or a segment tuple; all of these cover a contiguous run
+  // of architectural registers starting at `first`
+  struct VRegRange {
+    unsigned first;
+    unsigned count;
+  };
+
+  // vtype is tracked statically: most RVV instructions take their element
+  // width and register grouping from vtype rather than from their encoding,
+  // and the lifter has to know these to pick LLVM types. a program point's
+  // vtype is the immediate of the vset{i}vli that reaches it on every path,
+  // or unknown (after entry, a call, vsetvl, or a merge of differing
+  // settings). vector instructions at a point with unknown vtype are not
+  // lifted. see riscv2llvm_vector.cpp
+  struct VConfig {
+    unsigned vtype;
+    unsigned SEW;
+    int LMULLog2;
+    bool tailAgnostic;
+    bool maskAgnostic;
+  };
+  static constexpr int64_t VTypeUnknown = -1;
+  static constexpr int64_t VTypeUnreached = -2;
+  std::map<const MCBasicBlock *, int64_t> vtypeIn;
+  int64_t curVType{VTypeUnknown};
+  const MCBasicBlock *curVTypeBB{nullptr};
+
+  // inactive element accesses are redirected here, so that a vector memory
+  // instruction touches memory only for its active elements
+  llvm::Value *vScratch{nullptr};
 
   void updateOutputReg(llvm::Value *V, bool SExt = false) override;
 
@@ -112,6 +152,47 @@ class riscv2llvm final : public mc2llvm {
   llvm::Value *getPointerOperand();
   std::vector<llvm::Value *> marshallArgs(llvm::FunctionType *fTy,
                                         const llvm::CallInst &llvmCI);
+
+  // RVV register file helpers. Groups are named by the index (0-31) of
+  // their first register; EMUL is passed as log2(EMUL), -3 through 3.
+  bool isVReg(unsigned Reg);
+  VRegRange vregRange(unsigned Reg);
+  llvm::Value *lookupVReg(unsigned idx);
+  llvm::Value *lookupVCSR(unsigned Reg);
+  llvm::Value *getVLENB();
+  unsigned numVElts(unsigned EEW, int EMULLog2);
+  unsigned numVRegs(int EMULLog2);
+  void checkVGroup(unsigned first, unsigned EEW, int EMULLog2);
+  llvm::Value *readVRegs(unsigned first, unsigned count, unsigned EEW);
+  void writeVRegs(unsigned first, unsigned count, llvm::Value *vec);
+  llvm::Value *readVGroup(unsigned first, unsigned EEW, int EMULLog2);
+  llvm::Value *readVMask(unsigned idx, unsigned numElts);
+  llvm::Value *createUnknownBoolVec(unsigned numElts);
+  llvm::Value *createBodyMask(llvm::Value *vl, unsigned numElts);
+  void writeVGroup(unsigned first, unsigned EEW, int EMULLog2,
+                   llvm::Value *result, llvm::Value *vl, llvm::Value *mask,
+                   bool tailAgnostic, bool maskAgnostic);
+  void writeVMask(unsigned idx, llvm::Value *result, llvm::Value *vl,
+                  llvm::Value *mask, bool maskAgnostic);
+
+  // static vtype tracking and RVV instruction lifting
+  // (riscv2llvm_vector.cpp)
+  void computeVTypeDataflow();
+  int64_t vtypeTransfer(const llvm::MCInst &I, int64_t in);
+  std::optional<VConfig> decodeVType(uint64_t vtype);
+  void enterVTypeBlock();
+  VConfig getVConfig();
+  [[noreturn]] void vectorError(const std::string &msg);
+  void invalidateVectorState();
+  llvm::Value *readVL();
+  llvm::Value *computeVL(llvm::Value *avl, unsigned vlmax);
+  llvm::Value *createVSplat(llvm::Value *scalar, unsigned numElts);
+  llvm::Value *readVMaskOperand(int idx, unsigned numElts);
+  void assertVAligned(llvm::Value *ptr, unsigned bytes, llvm::Value *cond);
+  void liftVSet(unsigned opcode);
+  void liftVUnitStride(unsigned EEW, bool isStore);
+  void liftVWholeRegLoadStore(unsigned nregs, unsigned EEW, bool isStore);
+  bool liftVector(unsigned opcode);
 
 public:
   riscv2llvm(llvm::Function *srcFn, std::unique_ptr<llvm::MemoryBuffer> MB,

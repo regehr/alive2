@@ -5,6 +5,7 @@
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/BinaryFormat/ELF.h"
+#include "util/config.h"
 
 #include <cmath>
 #include <cstdint>
@@ -203,12 +204,319 @@ unsigned riscv2llvm::getRegSize(unsigned Reg) {
     return 128;
   if (Reg == RISCV::FCSR)
     return 32;
+  if (Reg == RISCV::VL || Reg == RISCV::VTYPE || Reg == RISCV::VLENB)
+    return 64;
+  if (Reg == RISCV::VXRM)
+    return 2;
+  if (Reg == RISCV::VXSAT)
+    return 1;
+  if (isVReg(Reg))
+    return vregRange(Reg).count * VLEN;
   assert(false && "unhandled register");
+}
+
+/*
+ * RVV register file
+ *
+ * each of V0-V31 is an iVLEN alloca. elements are packed starting at the
+ * least significant bit, and an LMUL>1 group continues into the next
+ * higher-numbered register, so a group's contents are the concatenation
+ * of its registers with the lowest-numbered one in the low bits. LLVM's
+ * little-endian bitcasts between iN and <K x iM> put element 0 in the low
+ * bits too, so the typed views below are plain bitcasts.
+ *
+ * vstart is not modeled: the psABI guarantees it is zero on entry and
+ * after calls, compiled code does not write it, and every lifted vector
+ * instruction assumes it is zero.
+ */
+
+bool riscv2llvm::isVReg(unsigned Reg) {
+  if (Reg >= RISCV::V0 && Reg <= RISCV::V31)
+    return true;
+  for (MCRegister Sub : MRI->subregs(Reg))
+    if (Sub.id() >= RISCV::V0 && Sub.id() <= RISCV::V31)
+      return true;
+  return false;
+}
+
+riscv2llvm::VRegRange riscv2llvm::vregRange(unsigned Reg) {
+  if (Reg >= RISCV::V0 && Reg <= RISCV::V31)
+    return {Reg - RISCV::V0, 1};
+  // groups and tuples: find the architectural registers they cover,
+  // rather than depending on the order of the generated enum
+  unsigned lo = 32, hi = 0, n = 0;
+  for (MCRegister Sub : MRI->subregs(Reg)) {
+    unsigned id = Sub.id();
+    if (id < RISCV::V0 || id > RISCV::V31)
+      continue;
+    unsigned idx = id - RISCV::V0;
+    lo = std::min(lo, idx);
+    hi = std::max(hi, idx);
+    ++n;
+  }
+  assert(n > 0 && "not a vector register");
+  assert(hi - lo + 1 == n && "vector register group is not contiguous");
+  return {lo, n};
+}
+
+Value *riscv2llvm::lookupVReg(unsigned idx) {
+  assert(idx < 32);
+  return RegFile[RISCV::V0 + idx];
+}
+
+Value *riscv2llvm::lookupVCSR(unsigned Reg) {
+  assert(Reg == RISCV::VL || Reg == RISCV::VTYPE || Reg == RISCV::VXRM ||
+         Reg == RISCV::VXSAT);
+  return RegFile[Reg];
+}
+
+// vlenb is a read-only design-time constant, so it has no storage
+Value *riscv2llvm::getVLENB() {
+  return getUnsignedIntConst(VLEN / 8, 64);
+}
+
+unsigned riscv2llvm::numVRegs(int EMULLog2) {
+  return EMULLog2 > 0 ? 1u << EMULLog2 : 1u;
+}
+
+// the number of EEW-bit elements in a group with the given EMUL: this is
+// VLMAX when EEW = SEW and EMUL = LMUL. it is zero when a fractional
+// group is too small to hold even one element
+unsigned riscv2llvm::numVElts(unsigned EEW, int EMULLog2) {
+  unsigned bits = EMULLog2 >= 0 ? VLEN << EMULLog2 : VLEN >> -EMULLog2;
+  return bits / EEW;
+}
+
+// reject the register-group shapes that the spec makes reserved or that
+// RVA23U64 does not support, rather than modeling them
+void riscv2llvm::checkVGroup(unsigned first, unsigned EEW, int EMULLog2) {
+  auto fail = [&](const char *why) {
+    *out << "\nERROR: unsupported vector register group: " << why << "\n\n";
+    exit(-1);
+  };
+  if (EEW != 8 && EEW != 16 && EEW != 32 && EEW != 64)
+    fail("element width must be 8, 16, 32, or 64 bits");
+  if (EMULLog2 < -3 || EMULLog2 > 3)
+    fail("EMUL must be between 1/8 and 8");
+  if (first >= 32 || first % numVRegs(EMULLog2) != 0)
+    fail("register group is misaligned");
+  if (numVElts(EEW, EMULLog2) == 0)
+    fail("fractional group holds no whole element");
+}
+
+// `count` consecutive registers as one vector of iEEW elements. registers
+// are combined with shufflevectors rather than wide integer arithmetic,
+// which is much easier on the solver
+Value *riscv2llvm::readVRegs(unsigned first, unsigned count, unsigned EEW) {
+  assert(count >= 1 && first + count <= 32);
+  assert(VLEN % EEW == 0);
+  auto perReg = getVecTy(EEW, VLEN / EEW);
+  vector<Value *> parts;
+  for (unsigned i = 0; i < count; ++i)
+    parts.push_back(createBitCast(
+        createLoad(getIntTy(VLEN), lookupVReg(first + i)), perReg));
+  // count is a power of two, so this concatenates equal-sized halves
+  while (parts.size() > 1) {
+    vector<Value *> next;
+    auto len = cast<FixedVectorType>(parts[0]->getType())->getNumElements();
+    SmallVector<int> concat;
+    for (unsigned j = 0; j < 2 * len; ++j)
+      concat.push_back(j);
+    for (unsigned i = 0; i < parts.size(); i += 2)
+      next.push_back(createShuffleVector(parts[i], parts[i + 1], concat));
+    parts = std::move(next);
+  }
+  return parts[0];
+}
+
+// the inverse of readVRegs(); `vec` is any vector of integers that is
+// exactly `count` registers wide
+void riscv2llvm::writeVRegs(unsigned first, unsigned count, Value *vec) {
+  assert(count >= 1 && first + count <= 32);
+  auto *vecTy = cast<FixedVectorType>(vec->getType());
+  auto eltW = getBitWidth(vecTy->getElementType());
+  unsigned len = vecTy->getNumElements();
+  assert(eltW * len == count * VLEN);
+  unsigned perReg = len / count;
+  for (unsigned i = 0; i < count; ++i) {
+    Value *slice = vec;
+    if (count > 1) {
+      SmallVector<int> idx;
+      for (unsigned j = 0; j < perReg; ++j)
+        idx.push_back(i * perReg + j);
+      slice = createShuffleVector(vec, idx);
+    }
+    createStore(createBitCast(slice, getIntTy(VLEN)), lookupVReg(first + i));
+  }
+}
+
+// a group as a vector of numVElts(EEW, EMUL) iEEW elements; a fractional
+// group is the low elements of one register
+Value *riscv2llvm::readVGroup(unsigned first, unsigned EEW, int EMULLog2) {
+  checkVGroup(first, EEW, EMULLog2);
+  auto n = numVElts(EEW, EMULLog2);
+  auto regs = numVRegs(EMULLog2);
+  auto vec = readVRegs(first, regs, EEW);
+  if (n == regs * VLEN / EEW)
+    return vec;
+  SmallVector<int> low;
+  for (unsigned i = 0; i < n; ++i)
+    low.push_back(i);
+  return createShuffleVector(vec, low);
+}
+
+// a mask is always held in one register, with bit i belonging to element i
+Value *riscv2llvm::readVMask(unsigned idx, unsigned numElts) {
+  assert(numElts >= 1 && numElts <= VLEN);
+  Value *bits = createLoad(getIntTy(VLEN), lookupVReg(idx));
+  bits = createTrunc(bits, getIntTy(numElts));
+  return createBitCast(bits, getVecTy(1, numElts));
+}
+
+// an arbitrary, independently chosen boolean per element
+Value *riscv2llvm::createUnknownBoolVec(unsigned numElts) {
+  return createBitCast(createUnknownInt(numElts), getVecTy(1, numElts));
+}
+
+// lane i is a body element iff i < vl. vstart is assumed to be zero, so
+// there are no prestart elements
+Value *riscv2llvm::createBodyMask(Value *vl, unsigned numElts) {
+  assert(vl->getType()->isIntegerTy(64));
+  vector<Constant *> lanes;
+  for (unsigned i = 0; i < numElts; ++i)
+    lanes.push_back(getUnsignedIntConst(i, 64));
+  auto laneIdx = ConstantVector::get(lanes);
+  auto vecTy = getVecTy(64, numElts);
+  Value *vlVec = createInsertElement(PoisonValue::get(vecTy), vl, 0);
+  vlVec = createShuffleVector(vlVec, SmallVector<int>(numElts, 0));
+  return createICmp(ICmpInst::ICMP_ULT, laneIdx, vlVec);
+}
+
+/*
+ * write `result`, a vector of numVElts(EEW, EMUL) elements, to a group,
+ * applying the RVV element policies:
+ *
+ * - active elements (body, and enabled in `mask` if there is one) get the
+ *   new value
+ * - inactive elements follow the mask policy, tail elements follow the
+ *   tail policy; with a fractional EMUL, the rest of the register past
+ *   VLMAX is also tail
+ * - undisturbed elements keep their old value; agnostic elements either
+ *   keep their old value or become all ones, chosen independently for each
+ *   element. in the target this is a nondeterministic choice, so the
+ *   lifted code has to be correct for every combination
+ * - if vl = 0, nothing is written, not even agnostic tail elements
+ *
+ * `mask` is a vector of numVElts(EEW, EMUL) i1s, or null if unmasked
+ */
+void riscv2llvm::writeVGroup(unsigned first, unsigned EEW, int EMULLog2,
+                             Value *result, Value *vl, Value *mask,
+                             bool tailAgnostic, bool maskAgnostic) {
+  checkVGroup(first, EEW, EMULLog2);
+  auto n = numVElts(EEW, EMULLog2);
+  auto regs = numVRegs(EMULLog2);
+  auto total = regs * VLEN / EEW;
+  auto vecTy = getVecTy(EEW, total);
+  assert(result->getType() == getVecTy(EEW, n));
+  assert(!mask || mask->getType() == getVecTy(1, n));
+
+  auto old = readVRegs(first, regs, EEW);
+
+  // widen to cover the whole register; the extra lanes are all past VLMAX,
+  // and so past vl, which means they are never selected from these values
+  if (total != n) {
+    SmallVector<int> widen;
+    for (unsigned i = 0; i < total; ++i)
+      widen.push_back(i < n ? int(i) : PoisonMaskElem);
+    result = createShuffleVector(result, widen);
+    if (mask)
+      mask = createShuffleVector(mask, widen);
+  }
+
+  auto inBody = createBodyMask(vl, total);
+  // select rather than and, so the poison lanes of a widened mask are
+  // never looked at
+  Value *active =
+      mask ? createSelect(inBody, mask,
+                          Constant::getNullValue(getVecTy(1, total)))
+           : inBody;
+
+  Value *agnostic = nullptr;
+  if (tailAgnostic || (mask && maskAgnostic))
+    agnostic = createSelect(createUnknownBoolVec(total), old,
+                            getAllOnesConst(vecTy));
+  Value *tailVal = tailAgnostic ? agnostic : old;
+  Value *notActive = tailVal;
+  if (mask) {
+    Value *inactiveVal = maskAgnostic ? agnostic : old;
+    notActive = createSelect(inBody, inactiveVal, tailVal);
+  }
+  auto merged = createSelect(active, result, notActive);
+
+  auto vlIsZero =
+      createICmp(ICmpInst::ICMP_EQ, vl, getUnsignedIntConst(0, 64));
+  writeVRegs(first, regs, createSelect(vlIsZero, old, merged));
+}
+
+/*
+ * write `result`, a vector of VLMAX i1s, to the mask register `idx`
+ *
+ * mask destinations are always tail agnostic, and the spec gives their
+ * tail more freedom than other agnostic elements: it may also receive the
+ * value the instruction would have computed with vl = VLMAX, and for some
+ * instructions any bit of the register may be overwritten. rather than
+ * model those cases one by one, a tail bit here is entirely arbitrary,
+ * which covers all of them. inactive body bits follow the mask policy as
+ * usual, and nothing is written when vl = 0
+ */
+void riscv2llvm::writeVMask(unsigned idx, Value *result, Value *vl,
+                            Value *mask, bool maskAgnostic) {
+  auto *resTy = cast<FixedVectorType>(result->getType());
+  assert(resTy->getElementType()->isIntegerTy(1));
+  unsigned n = resTy->getNumElements();
+  assert(n >= 1 && n <= VLEN);
+  assert(!mask || mask->getType() == resTy);
+
+  auto oldBits = createLoad(getIntTy(VLEN), lookupVReg(idx));
+  auto boolsTy = getVecTy(1, VLEN);
+  auto old = createBitCast(oldBits, boolsTy);
+
+  if (n != VLEN) {
+    SmallVector<int> widen;
+    for (unsigned i = 0; i < VLEN; ++i)
+      widen.push_back(i < n ? int(i) : PoisonMaskElem);
+    result = createShuffleVector(result, widen);
+    if (mask)
+      mask = createShuffleVector(mask, widen);
+  }
+
+  auto inBody = createBodyMask(vl, VLEN);
+  Value *active =
+      mask ? createSelect(inBody, mask, Constant::getNullValue(boolsTy))
+           : inBody;
+
+  Value *notActive = createUnknownBoolVec(VLEN);
+  if (mask) {
+    // a one-bit agnostic element either keeps its old value or becomes 1
+    Value *inactiveVal =
+        maskAgnostic ? createSelect(createUnknownBoolVec(VLEN), old,
+                                    getAllOnesConst(boolsTy))
+                     : static_cast<Value *>(old);
+    notActive = createSelect(inBody, inactiveVal, notActive);
+  }
+  auto merged = createSelect(active, result, notActive);
+  Value *newBits = createBitCast(merged, oldBits->getType());
+
+  auto vlIsZero =
+      createICmp(ICmpInst::ICMP_EQ, vl, getUnsignedIntConst(0, 64));
+  createStore(createSelect(vlIsZero, oldBits, newBits), lookupVReg(idx));
 }
 
 void riscv2llvm::updateOutputReg(Value *V, bool SExt) {
   auto W = getBitWidth(V);
   auto outputReg = CurInst->getOperand(0).getReg();
+  assert(!isVReg(outputReg) &&
+         "vector results are written with writeVGroup or writeVMask");
   if (V->getType()->isFloatingPointTy()) {
     updateFPReg(V, outputReg);
   } else {
@@ -455,6 +763,9 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
     }
   }
 
+  // nor does it preserve any of the vector state
+  invalidateVectorState();
+
   if (returnsDestPtr) {
     updateReg(args[0], RISCV::X10);
     return;
@@ -641,7 +952,34 @@ void riscv2llvm::platformInit() {
 
   debug() << "created scalar registers\n";
 
-  // TODO vector registers
+  // RVV. VLEN is fixed for this run at 64 * vscale, matching LLVM's
+  // mapping of scalable types onto RVV. RVA23U64 includes Zvl128b, and the
+  // architecture caps VLEN at 2^16
+  VLEN = 64 * util::config::vscale_value;
+  if (VLEN < 128 || VLEN > 65536) {
+    *out << "\nERROR: RVA23U64 needs 128 <= VLEN <= 65536, that is, a vscale "
+            "between 2 and 1024, but vscale is "
+         << util::config::vscale_value << "\n\n";
+    exit(-1);
+  }
+
+  // the vector registers; the psABI makes them all caller-saved, so their
+  // values on entry are arbitrary
+  for (unsigned i = 0; i < 32; ++i)
+    createRegStorage(RISCV::V0 + i, VLEN, "V" + to_string(i));
+
+  // vl, vtype, vxrm, and vxsat are unspecified on entry. vlenb is a
+  // constant (see getVLENB()) and vstart is not modeled
+  createRegStorage(RISCV::VL, 64, "VL");
+  createRegStorage(RISCV::VTYPE, 64, "VTYPE");
+  createRegStorage(RISCV::VXRM, 2, "VXRM");
+  createRegStorage(RISCV::VXSAT, 1, "VXSAT");
+
+  vScratch = createAlloca(getIntTy(64), getUnsignedIntConst(1, 64), "vscratch");
+
+  computeVTypeDataflow();
+
+  debug() << "created vector registers, VLEN = " << VLEN << "\n";
 
   auto paramBase =
       createGEP(i8ty, stackMem, {getUnsignedIntConst(stackBytes, 64)}, "");
