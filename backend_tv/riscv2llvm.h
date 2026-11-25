@@ -192,6 +192,39 @@ class riscv2llvm final : public mc2llvm {
   void liftVSet(unsigned opcode);
   void liftVUnitStride(unsigned EEW, bool isStore);
   void liftVWholeRegLoadStore(unsigned nregs, unsigned EEW, bool isStore);
+
+  // single-width integer arithmetic: vd[i] = vs2[i] op src[i]
+  enum class VIntOp {
+    Add,
+    Sub,
+    RSub,
+    And,
+    Or,
+    Xor,
+    Sll,
+    Srl,
+    Sra,
+    MinU,
+    Min,
+    MaxU,
+    Max,
+    Mul,
+    MulH,
+    MulHU,
+    MulHSU,
+    DivU,
+    Div,
+    RemU,
+    Rem,
+  };
+  std::optional<unsigned> vgroupOperand(int idx);
+  void rejectMaskedV0(unsigned first, bool isDest);
+  llvm::Value *readVOperand(int idx, const VConfig &cfg, bool zextImm);
+  llvm::Value *createVIntOp(VIntOp op, llvm::Value *a, llvm::Value *b);
+  void liftVIntBinary(VIntOp op);
+  void liftVIntCompare(llvm::CmpInst::Predicate pred);
+  void liftVMerge();
+
   bool liftVector(unsigned opcode);
 
 public:

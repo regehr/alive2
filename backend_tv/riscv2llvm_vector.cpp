@@ -374,6 +374,239 @@ void riscv2llvm::liftVWholeRegLoadStore(unsigned nregs, unsigned EEW,
   }
 }
 
+/*
+ * integer arithmetic
+ *
+ * these all have the operand layout (vd, vs2, vs1 | rs1 | imm, vm), and
+ * every source and the destination have EEW = SEW and EMUL = LMUL, except
+ * that a compare's destination is a mask
+ */
+
+// the lowest-numbered register of a vector register group operand, or
+// nullopt if the operand is a scalar register or an immediate
+optional<unsigned> riscv2llvm::vgroupOperand(int idx) {
+  auto &op = CurInst->getOperand(idx);
+  if (!op.isReg() || !isVReg(op.getReg()))
+    return nullopt;
+  return vregRange(op.getReg()).first;
+}
+
+// a masked instruction reads v0 as a mask, with EEW = 1. also reading it
+// as a data source is reserved, because one register would be read with two
+// EEWs. so is writing a data result to a group that includes it. groups are
+// aligned, so a group includes v0 exactly when it starts there
+void riscv2llvm::rejectMaskedV0(unsigned first, bool isDest) {
+  if (first != 0)
+    return;
+  if (isDest)
+    vectorError("masked vector instruction whose destination group includes "
+                "v0, which is reserved");
+  vectorError("masked vector instruction that also reads v0 as data, which "
+              "is reserved");
+}
+
+// operand `idx` as a vector of VLMAX SEW-bit elements. it is a register
+// group, an x register whose low SEW bits are used (XLEN >= SEW), or a
+// 5-bit immediate. the immediate is sign-extended to SEW bits unless
+// `zextImm` is set; the MC layer already gives a uimm5 as 0-31 and a simm5
+// as -16-15
+Value *riscv2llvm::readVOperand(int idx, const VConfig &cfg, bool zextImm) {
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto &op = CurInst->getOperand(idx);
+  if (op.isImm())
+    return getElemSplat(n, cfg.SEW, op.getImm(), /*isSigned=*/!zextImm);
+  if (auto first = vgroupOperand(idx))
+    return readVGroup(*first, cfg.SEW, cfg.LMULLog2);
+  auto x = readFromRegOperand(idx, getIntTy(64));
+  return createVSplat(createTrunc(x, getIntTy(cfg.SEW)), n);
+}
+
+// elementwise `a op b`, where `a` comes from vs2. every lane is computed,
+// including inactive and tail lanes whose results writeVGroup() discards,
+// so nothing here may be UB for any input
+Value *riscv2llvm::createVIntOp(VIntOp op, Value *a, Value *b) {
+  auto *vecTy = cast<FixedVectorType>(a->getType());
+  assert(b->getType() == vecTy);
+  unsigned SEW = getBitWidth(vecTy->getElementType());
+  unsigned n = vecTy->getNumElements();
+
+  switch (op) {
+  case VIntOp::Add:
+    return createAdd(a, b);
+  case VIntOp::Sub:
+    return createSub(a, b);
+  case VIntOp::RSub:
+    return createSub(b, a);
+  case VIntOp::And:
+    return createAnd(a, b);
+  case VIntOp::Or:
+    return createOr(a, b);
+  case VIntOp::Xor:
+    return createXor(a, b);
+
+  // only the low lg2(SEW) bits of the shift amount are used
+  case VIntOp::Sll:
+    return createMaskedShl(a, b);
+  case VIntOp::Srl:
+    return createMaskedLShr(a, b);
+  case VIntOp::Sra:
+    return createMaskedAShr(a, b);
+
+  case VIntOp::MinU:
+    return createUMin(a, b);
+  case VIntOp::Min:
+    return createSMin(a, b);
+  case VIntOp::MaxU:
+    return createUMax(a, b);
+  case VIntOp::Max:
+    return createSMax(a, b);
+
+  case VIntOp::Mul:
+    return createMul(a, b);
+
+  // the high half of the 2*SEW-bit product. for vmulhsu, vs2 is signed
+  // and the other operand is unsigned
+  case VIntOp::MulH:
+  case VIntOp::MulHU:
+  case VIntOp::MulHSU: {
+    auto wideTy = getVecTy(2 * SEW, n);
+    bool aSigned = op != VIntOp::MulHU;
+    bool bSigned = op == VIntOp::MulH;
+    Value *wa = aSigned ? createSExt(a, wideTy) : createZExt(a, wideTy);
+    Value *wb = bSigned ? createSExt(b, wideTy) : createZExt(b, wideTy);
+    auto hi = createRawLShr(createMul(wa, wb), ConstantInt::get(wideTy, SEW));
+    return createTrunc(hi, vecTy);
+  }
+
+  // these never trap and behave like the scalar M-extension divides: the
+  // quotient of division by zero is all ones and the remainder is the
+  // dividend; on signed overflow (INT_MIN / -1) the quotient is INT_MIN
+  // and the remainder is 0. LLVM's divides are UB in exactly these lanes,
+  // so their divisor is replaced by 1 there. dividing by 1 already gives
+  // the right overflow results, and the divide-by-zero lanes are fixed up
+  // afterwards
+  case VIntOp::DivU:
+  case VIntOp::Div:
+  case VIntOp::RemU:
+  case VIntOp::Rem: {
+    bool isSigned = op == VIntOp::Div || op == VIntOp::Rem;
+    bool isDiv = op == VIntOp::DivU || op == VIntOp::Div;
+    auto byZero =
+        createICmp(ICmpInst::ICMP_EQ, b, Constant::getNullValue(vecTy));
+    Value *unsafe = byZero;
+    if (isSigned) {
+      auto isMin = createICmp(
+          ICmpInst::ICMP_EQ, a,
+          ConstantInt::get(vecTy, APInt::getSignedMinValue(SEW)));
+      auto isMinusOne =
+          createICmp(ICmpInst::ICMP_EQ, b, getAllOnesConst(vecTy));
+      unsafe = createOr(byZero, createAnd(isMin, isMinusOne));
+    }
+    auto safeB = createSelect(unsafe, ConstantInt::get(vecTy, 1), b);
+    Value *res;
+    if (op == VIntOp::DivU)
+      res = createUDiv(a, safeB);
+    else if (op == VIntOp::Div)
+      res = createSDiv(a, safeB);
+    else if (op == VIntOp::RemU)
+      res = createURem(a, safeB);
+    else
+      res = createSRem(a, safeB);
+    Value *ifZero = isDiv ? static_cast<Value *>(getAllOnesConst(vecTy)) : a;
+    return createSelect(byZero, ifZero, res);
+  }
+  }
+  assert(false && "unhandled VIntOp");
+  return nullptr;
+}
+
+// vop.vv vd, vs2, vs1, vm / vop.vx vd, vs2, rs1, vm / vop.vi vd, vs2, imm, vm
+void riscv2llvm::liftVIntBinary(VIntOp op) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto vd = vregRange(CurInst->getOperand(0).getReg()).first;
+  auto vs2 = vregRange(CurInst->getOperand(1).getReg()).first;
+  auto mask = readVMaskOperand(3, n);
+  if (mask) {
+    rejectMaskedV0(vd, /*isDest=*/true);
+    rejectMaskedV0(vs2, /*isDest=*/false);
+    if (auto vs1 = vgroupOperand(2))
+      rejectMaskedV0(*vs1, /*isDest=*/false);
+  }
+  // all the operands have the same EEW, so any overlap between the
+  // destination and the sources is allowed
+  bool zextImm =
+      op == VIntOp::Sll || op == VIntOp::Srl || op == VIntOp::Sra;
+  auto a = readVGroup(vs2, cfg.SEW, cfg.LMULLog2);
+  auto b = readVOperand(2, cfg, zextImm);
+  writeVGroup(vd, cfg.SEW, cfg.LMULLog2, createVIntOp(op, a, b), readVL(),
+              mask, cfg.tailAgnostic, cfg.maskAgnostic);
+}
+
+// vmsCC.vv vd, vs2, vs1, vm / .vx vd, vs2, rs1, vm / .vi vd, vs2, simm5, vm
+//
+// the result is a mask, so the destination is a single register and is
+// always tail agnostic (writeVMask() handles that). its EEW is 1, narrower
+// than the sources, so it may overlap a source group only at that group's
+// lowest-numbered register, and in that case the instruction is also mask
+// agnostic whatever vma says. unlike other masked instructions, a compare
+// may write v0. the immediate is sign-extended even for the unsigned
+// compares
+void riscv2llvm::liftVIntCompare(CmpInst::Predicate pred) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto vd = vregRange(CurInst->getOperand(0).getReg()).first;
+  auto vs2 = vregRange(CurInst->getOperand(1).getReg()).first;
+  auto vs1 = vgroupOperand(2);
+  auto mask = readVMaskOperand(3, n);
+  if (mask) {
+    rejectMaskedV0(vs2, /*isDest=*/false);
+    if (vs1)
+      rejectMaskedV0(*vs1, /*isDest=*/false);
+  }
+
+  bool overlap = false;
+  unsigned groupRegs = numVRegs(cfg.LMULLog2);
+  auto checkOverlap = [&](unsigned first) {
+    if (vd < first || vd >= first + groupRegs)
+      return;
+    if (vd != first)
+      vectorError("compare whose destination overlaps a source group other "
+                  "than at its lowest-numbered register, which is reserved");
+    overlap = true;
+  };
+  checkOverlap(vs2);
+  if (vs1)
+    checkOverlap(*vs1);
+
+  auto a = readVGroup(vs2, cfg.SEW, cfg.LMULLog2);
+  auto b = readVOperand(2, cfg, /*zextImm=*/false);
+  writeVMask(vd, createICmp(pred, a, b), readVL(), mask,
+             cfg.maskAgnostic || overlap);
+}
+
+// vmerge.vvm vd, vs2, vs1, v0 / .vxm vd, vs2, rs1, v0 / .vim vd, vs2, imm, v0
+//
+// vd[i] = v0.mask[i] ? src[i] : vs2[i] for every body element. this is
+// encoded as a masked instruction, so the usual v0 restrictions apply, but
+// no body element is inactive: only the tail policy matters
+void riscv2llvm::liftVMerge() {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto vd = vregRange(CurInst->getOperand(0).getReg()).first;
+  auto vs2 = vregRange(CurInst->getOperand(1).getReg()).first;
+  assert(CurInst->getOperand(3).getReg() == RISCV::V0);
+  rejectMaskedV0(vd, /*isDest=*/true);
+  rejectMaskedV0(vs2, /*isDest=*/false);
+  if (auto vs1 = vgroupOperand(2))
+    rejectMaskedV0(*vs1, /*isDest=*/false);
+  auto sel = readVMask(0, n);
+  auto a = readVGroup(vs2, cfg.SEW, cfg.LMULLog2);
+  auto b = readVOperand(2, cfg, /*zextImm=*/false);
+  writeVGroup(vd, cfg.SEW, cfg.LMULLog2, createSelect(sel, b, a), readVL(),
+              nullptr, cfg.tailAgnostic, cfg.maskAgnostic);
+}
+
 // returns false if the opcode is not one of ours
 bool riscv2llvm::liftVector(unsigned opcode) {
   switch (opcode) {
@@ -425,6 +658,80 @@ bool riscv2llvm::liftVector(unsigned opcode) {
                 cfg.tailAgnostic, cfg.maskAgnostic);
     return true;
   }
+
+#define VINT_VV(NAME, OP)                                                      \
+  case RISCV::NAME##_VV:                                                       \
+    liftVIntBinary(VIntOp::OP);                                                \
+    return true;
+#define VINT_VX(NAME, OP)                                                      \
+  case RISCV::NAME##_VX:                                                       \
+    liftVIntBinary(VIntOp::OP);                                                \
+    return true;
+#define VINT_VI(NAME, OP)                                                      \
+  case RISCV::NAME##_VI:                                                       \
+    liftVIntBinary(VIntOp::OP);                                                \
+    return true;
+#define VINT_VV_VX(NAME, OP) VINT_VV(NAME, OP) VINT_VX(NAME, OP)
+#define VINT_VV_VX_VI(NAME, OP) VINT_VV_VX(NAME, OP) VINT_VI(NAME, OP)
+    VINT_VV_VX_VI(VADD, Add)
+    VINT_VV_VX(VSUB, Sub)
+    VINT_VX(VRSUB, RSub)
+    VINT_VI(VRSUB, RSub)
+    VINT_VV_VX_VI(VAND, And)
+    VINT_VV_VX_VI(VOR, Or)
+    VINT_VV_VX_VI(VXOR, Xor)
+    VINT_VV_VX_VI(VSLL, Sll)
+    VINT_VV_VX_VI(VSRL, Srl)
+    VINT_VV_VX_VI(VSRA, Sra)
+    VINT_VV_VX(VMINU, MinU)
+    VINT_VV_VX(VMIN, Min)
+    VINT_VV_VX(VMAXU, MaxU)
+    VINT_VV_VX(VMAX, Max)
+    VINT_VV_VX(VMUL, Mul)
+    VINT_VV_VX(VMULH, MulH)
+    VINT_VV_VX(VMULHU, MulHU)
+    VINT_VV_VX(VMULHSU, MulHSU)
+    VINT_VV_VX(VDIVU, DivU)
+    VINT_VV_VX(VDIV, Div)
+    VINT_VV_VX(VREMU, RemU)
+    VINT_VV_VX(VREM, Rem)
+#undef VINT_VV_VX_VI
+#undef VINT_VV_VX
+#undef VINT_VI
+#undef VINT_VX
+#undef VINT_VV
+
+#define VCMP(NAME, PRED)                                                       \
+  case RISCV::NAME:                                                            \
+    liftVIntCompare(ICmpInst::PRED);                                           \
+    return true;
+    VCMP(VMSEQ_VV, ICMP_EQ)
+    VCMP(VMSEQ_VX, ICMP_EQ)
+    VCMP(VMSEQ_VI, ICMP_EQ)
+    VCMP(VMSNE_VV, ICMP_NE)
+    VCMP(VMSNE_VX, ICMP_NE)
+    VCMP(VMSNE_VI, ICMP_NE)
+    VCMP(VMSLTU_VV, ICMP_ULT)
+    VCMP(VMSLTU_VX, ICMP_ULT)
+    VCMP(VMSLT_VV, ICMP_SLT)
+    VCMP(VMSLT_VX, ICMP_SLT)
+    VCMP(VMSLEU_VV, ICMP_ULE)
+    VCMP(VMSLEU_VX, ICMP_ULE)
+    VCMP(VMSLEU_VI, ICMP_ULE)
+    VCMP(VMSLE_VV, ICMP_SLE)
+    VCMP(VMSLE_VX, ICMP_SLE)
+    VCMP(VMSLE_VI, ICMP_SLE)
+    VCMP(VMSGTU_VX, ICMP_UGT)
+    VCMP(VMSGTU_VI, ICMP_UGT)
+    VCMP(VMSGT_VX, ICMP_SGT)
+    VCMP(VMSGT_VI, ICMP_SGT)
+#undef VCMP
+
+  case RISCV::VMERGE_VVM:
+  case RISCV::VMERGE_VXM:
+  case RISCV::VMERGE_VIM:
+    liftVMerge();
+    return true;
 
   case RISCV::VLE8_V:
     liftVUnitStride(8, false);
