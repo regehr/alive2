@@ -217,13 +217,38 @@ class riscv2llvm final : public mc2llvm {
     RemU,
     Rem,
   };
+  // a vector register operand, for checking the overlap rules: the first
+  // register of its group, its EEW (1 for a mask), and its EMUL
+  struct VOperand {
+    unsigned first;
+    unsigned EEW;
+    int EMULLog2;
+  };
   std::optional<unsigned> vgroupOperand(int idx);
-  void rejectMaskedV0(unsigned first, bool isDest);
+  VOperand vopAt(int idx, unsigned EEW, int EMULLog2);
+  void addVSrc(std::vector<VOperand> &srcs, int idx, unsigned EEW,
+               int EMULLog2);
+  bool checkVOverlap(VOperand dest, const std::vector<VOperand> &srcs,
+                     bool readsV0Mask);
+  void checkVWidenable(const VConfig &cfg);
+  llvm::Value *createVExt(llvm::Value *v, unsigned bits, bool isSigned);
   llvm::Value *readVOperand(int idx, const VConfig &cfg, bool zextImm);
   llvm::Value *createVIntOp(VIntOp op, llvm::Value *a, llvm::Value *b);
   void liftVIntBinary(VIntOp op);
   void liftVIntCompare(llvm::CmpInst::Predicate pred);
   void liftVMerge();
+
+  // widening add, subtract, and multiply; U is unsigned, SU is signed vs2
+  // times unsigned vs1/rs1
+  enum class VWideOp { AddU, Add, SubU, Sub, MulU, Mul, MulSU };
+  enum class VMacOp { Macc, Nmsac, Madd, Nmsub };
+  void liftVWidenBinary(VWideOp op, bool wideVs2);
+  void liftVExtend(unsigned factor, bool isSigned);
+  void liftVNarrowShift(bool isArith);
+  void liftVMulAdd(VMacOp op);
+  void liftVWidenMulAdd(bool s1Signed, bool s2Signed);
+  void liftVAdcSbc(bool isSub);
+  void liftVMadcMsbc(bool isSub, bool hasCarryIn);
 
   bool liftVector(unsigned opcode);
 

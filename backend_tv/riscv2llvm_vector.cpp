@@ -391,18 +391,88 @@ optional<unsigned> riscv2llvm::vgroupOperand(int idx) {
   return vregRange(op.getReg()).first;
 }
 
-// a masked instruction reads v0 as a mask, with EEW = 1. also reading it
-// as a data source is reserved, because one register would be read with two
-// EEWs. so is writing a data result to a group that includes it. groups are
-// aligned, so a group includes v0 exactly when it starts there
-void riscv2llvm::rejectMaskedV0(unsigned first, bool isDest) {
-  if (first != 0)
-    return;
-  if (isDest)
-    vectorError("masked vector instruction whose destination group includes "
-                "v0, which is reserved");
-  vectorError("masked vector instruction that also reads v0 as data, which "
-              "is reserved");
+/*
+ * check the register group constraints of an instruction that writes `dest`
+ * and reads `srcs`, plus the mask in v0 if `readsV0Mask`. a mask operand
+ * has EEW = 1 and occupies one register. the rules are in "Vector
+ * Operands" in the ISA manual, and breaking any of them is reserved:
+ *
+ * - each data group must be aligned and well formed (checkVGroup)
+ * - a masked instruction's destination may overlap v0 only if it is a mask
+ * - no register may be read with two different EEWs, counting the v0 mask
+ *   as EEW = 1
+ * - a destination may overlap a source with a different EEW only if the
+ *   destination is narrower and both start at the same register, or the
+ *   destination is wider, the source's EMUL is at least 1, and both end at
+ *   the same register
+ *
+ * returns true if the destination does overlap a source with a different
+ * EEW. the instruction is then mask and tail agnostic, whatever vtype says
+ */
+bool riscv2llvm::checkVOverlap(VOperand dest, const vector<VOperand> &srcs,
+                               bool readsV0Mask) {
+  auto lastReg = [&](const VOperand &o) {
+    return o.first + (o.EEW == 1 ? 1 : numVRegs(o.EMULLog2)) - 1;
+  };
+  auto overlaps = [&](const VOperand &a, const VOperand &b) {
+    return a.first <= lastReg(b) && b.first <= lastReg(a);
+  };
+
+  if (dest.EEW != 1)
+    checkVGroup(dest.first, dest.EEW, dest.EMULLog2);
+  for (auto &s : srcs)
+    if (s.EEW != 1)
+      checkVGroup(s.first, s.EEW, s.EMULLog2);
+
+  if (readsV0Mask) {
+    VOperand v0{0, 1, 0};
+    if (dest.EEW != 1 && overlaps(dest, v0))
+      vectorError("masked vector instruction whose destination group "
+                  "includes v0, which is reserved");
+    for (auto &s : srcs)
+      if (s.EEW != 1 && overlaps(s, v0))
+        vectorError("masked vector instruction that also reads v0 as data, "
+                    "which is reserved");
+  }
+
+  for (size_t i = 0; i < srcs.size(); ++i)
+    for (size_t j = i + 1; j < srcs.size(); ++j)
+      if (srcs[i].EEW != srcs[j].EEW && overlaps(srcs[i], srcs[j]))
+        vectorError("vector register read with two different EEWs, which is "
+                    "reserved");
+
+  bool forcedAgnostic = false;
+  for (auto &s : srcs) {
+    if (s.EEW == dest.EEW || !overlaps(dest, s))
+      continue;
+    bool allowed = dest.EEW < s.EEW
+                       ? dest.first == s.first
+                       : s.EMULLog2 >= 0 && lastReg(dest) == lastReg(s);
+    if (!allowed)
+      vectorError("destination group overlaps a source group with a "
+                  "different EEW in a way that is reserved");
+    forcedAgnostic = true;
+  }
+  return forcedAgnostic;
+}
+
+// widening and narrowing instructions have an operand with EEW = 2 * SEW
+// and EMUL = 2 * LMUL, which has to be a legal width and group size
+void riscv2llvm::checkVWidenable(const VConfig &cfg) {
+  if (cfg.SEW >= 64)
+    vectorError("widening or narrowing instruction with SEW = 64, which is "
+                "reserved");
+  if (cfg.LMULLog2 >= 3)
+    vectorError("widening or narrowing instruction with LMUL = 8, which is "
+                "reserved");
+}
+
+// zero- or sign-extend each element of an integer vector to `bits`
+Value *riscv2llvm::createVExt(Value *v, unsigned bits, bool isSigned) {
+  auto n = cast<FixedVectorType>(v->getType())->getNumElements();
+  auto ty = getVecTy(bits, n);
+  return isSigned ? static_cast<Value *>(createSExt(v, ty))
+                  : static_cast<Value *>(createZExt(v, ty));
 }
 
 // operand `idx` as a vector of VLMAX SEW-bit elements. it is a register
@@ -470,10 +540,8 @@ Value *riscv2llvm::createVIntOp(VIntOp op, Value *a, Value *b) {
   case VIntOp::MulHU:
   case VIntOp::MulHSU: {
     auto wideTy = getVecTy(2 * SEW, n);
-    bool aSigned = op != VIntOp::MulHU;
-    bool bSigned = op == VIntOp::MulH;
-    Value *wa = aSigned ? createSExt(a, wideTy) : createZExt(a, wideTy);
-    Value *wb = bSigned ? createSExt(b, wideTy) : createZExt(b, wideTy);
+    auto wa = createVExt(a, 2 * SEW, /*isSigned=*/op != VIntOp::MulHU);
+    auto wb = createVExt(b, 2 * SEW, /*isSigned=*/op == VIntOp::MulH);
     auto hi = createRawLShr(createMul(wa, wb), ConstantInt::get(wideTy, SEW));
     return createTrunc(hi, vecTy);
   }
@@ -520,69 +588,58 @@ Value *riscv2llvm::createVIntOp(VIntOp op, Value *a, Value *b) {
   return nullptr;
 }
 
+// operand `idx`, a vector register group, with the given EEW and EMUL
+riscv2llvm::VOperand riscv2llvm::vopAt(int idx, unsigned EEW, int EMULLog2) {
+  return {vregRange(CurInst->getOperand(idx).getReg()).first, EEW, EMULLog2};
+}
+
+// add operand `idx` to `srcs` if it is a vector register group rather than
+// a scalar register or an immediate
+void riscv2llvm::addVSrc(vector<VOperand> &srcs, int idx, unsigned EEW,
+                         int EMULLog2) {
+  if (auto first = vgroupOperand(idx))
+    srcs.push_back({*first, EEW, EMULLog2});
+}
+
 // vop.vv vd, vs2, vs1, vm / vop.vx vd, vs2, rs1, vm / vop.vi vd, vs2, imm, vm
 void riscv2llvm::liftVIntBinary(VIntOp op) {
   auto cfg = getVConfig();
   auto n = numVElts(cfg.SEW, cfg.LMULLog2);
-  auto vd = vregRange(CurInst->getOperand(0).getReg()).first;
-  auto vs2 = vregRange(CurInst->getOperand(1).getReg()).first;
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
   auto mask = readVMaskOperand(3, n);
-  if (mask) {
-    rejectMaskedV0(vd, /*isDest=*/true);
-    rejectMaskedV0(vs2, /*isDest=*/false);
-    if (auto vs1 = vgroupOperand(2))
-      rejectMaskedV0(*vs1, /*isDest=*/false);
-  }
-  // all the operands have the same EEW, so any overlap between the
-  // destination and the sources is allowed
+  vector<VOperand> srcs{vopAt(1, S, L)};
+  addVSrc(srcs, 2, S, L);
+  // every operand has EEW = SEW, so no overlap forces agnostic
+  checkVOverlap(vopAt(0, S, L), srcs, mask != nullptr);
   bool zextImm =
       op == VIntOp::Sll || op == VIntOp::Srl || op == VIntOp::Sra;
-  auto a = readVGroup(vs2, cfg.SEW, cfg.LMULLog2);
+  auto a = readVGroup(srcs[0].first, S, L);
   auto b = readVOperand(2, cfg, zextImm);
-  writeVGroup(vd, cfg.SEW, cfg.LMULLog2, createVIntOp(op, a, b), readVL(),
+  writeVGroup(vopAt(0, S, L).first, S, L, createVIntOp(op, a, b), readVL(),
               mask, cfg.tailAgnostic, cfg.maskAgnostic);
 }
 
 // vmsCC.vv vd, vs2, vs1, vm / .vx vd, vs2, rs1, vm / .vi vd, vs2, simm5, vm
 //
 // the result is a mask, so the destination is a single register and is
-// always tail agnostic (writeVMask() handles that). its EEW is 1, narrower
-// than the sources, so it may overlap a source group only at that group's
-// lowest-numbered register, and in that case the instruction is also mask
-// agnostic whatever vma says. unlike other masked instructions, a compare
-// may write v0. the immediate is sign-extended even for the unsigned
-// compares
+// always tail agnostic (writeVMask() handles that). unlike other masked
+// instructions, a compare may write v0. the immediate is sign-extended
+// even for the unsigned compares
 void riscv2llvm::liftVIntCompare(CmpInst::Predicate pred) {
   auto cfg = getVConfig();
   auto n = numVElts(cfg.SEW, cfg.LMULLog2);
-  auto vd = vregRange(CurInst->getOperand(0).getReg()).first;
-  auto vs2 = vregRange(CurInst->getOperand(1).getReg()).first;
-  auto vs1 = vgroupOperand(2);
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
   auto mask = readVMaskOperand(3, n);
-  if (mask) {
-    rejectMaskedV0(vs2, /*isDest=*/false);
-    if (vs1)
-      rejectMaskedV0(*vs1, /*isDest=*/false);
-  }
-
-  bool overlap = false;
-  unsigned groupRegs = numVRegs(cfg.LMULLog2);
-  auto checkOverlap = [&](unsigned first) {
-    if (vd < first || vd >= first + groupRegs)
-      return;
-    if (vd != first)
-      vectorError("compare whose destination overlaps a source group other "
-                  "than at its lowest-numbered register, which is reserved");
-    overlap = true;
-  };
-  checkOverlap(vs2);
-  if (vs1)
-    checkOverlap(*vs1);
-
-  auto a = readVGroup(vs2, cfg.SEW, cfg.LMULLog2);
+  vector<VOperand> srcs{vopAt(1, S, L)};
+  addVSrc(srcs, 2, S, L);
+  auto vd = vopAt(0, 1, 0);
+  bool agnostic = checkVOverlap(vd, srcs, mask != nullptr);
+  auto a = readVGroup(srcs[0].first, S, L);
   auto b = readVOperand(2, cfg, /*zextImm=*/false);
-  writeVMask(vd, createICmp(pred, a, b), readVL(), mask,
-             cfg.maskAgnostic || overlap);
+  writeVMask(vd.first, createICmp(pred, a, b), readVL(), mask,
+             cfg.maskAgnostic || agnostic);
 }
 
 // vmerge.vvm vd, vs2, vs1, v0 / .vxm vd, vs2, rs1, v0 / .vim vd, vs2, imm, v0
@@ -593,18 +650,247 @@ void riscv2llvm::liftVIntCompare(CmpInst::Predicate pred) {
 void riscv2llvm::liftVMerge() {
   auto cfg = getVConfig();
   auto n = numVElts(cfg.SEW, cfg.LMULLog2);
-  auto vd = vregRange(CurInst->getOperand(0).getReg()).first;
-  auto vs2 = vregRange(CurInst->getOperand(1).getReg()).first;
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
   assert(CurInst->getOperand(3).getReg() == RISCV::V0);
-  rejectMaskedV0(vd, /*isDest=*/true);
-  rejectMaskedV0(vs2, /*isDest=*/false);
-  if (auto vs1 = vgroupOperand(2))
-    rejectMaskedV0(*vs1, /*isDest=*/false);
+  vector<VOperand> srcs{vopAt(1, S, L)};
+  addVSrc(srcs, 2, S, L);
+  checkVOverlap(vopAt(0, S, L), srcs, /*readsV0Mask=*/true);
   auto sel = readVMask(0, n);
-  auto a = readVGroup(vs2, cfg.SEW, cfg.LMULLog2);
+  auto a = readVGroup(srcs[0].first, S, L);
   auto b = readVOperand(2, cfg, /*zextImm=*/false);
-  writeVGroup(vd, cfg.SEW, cfg.LMULLog2, createSelect(sel, b, a), readVL(),
+  writeVGroup(vopAt(0, S, L).first, S, L, createSelect(sel, b, a), readVL(),
               nullptr, cfg.tailAgnostic, cfg.maskAgnostic);
+}
+
+/*
+ * widening, narrowing, and extending integer arithmetic. "wide" below
+ * means EEW = 2 * SEW and EMUL = 2 * LMUL
+ */
+
+// vwop.vv vd, vs2, vs1, vm / vwop.vx vd, vs2, rs1, vm: wide = SEW op SEW
+// vwop.wv vd, vs2, vs1, vm / vwop.wx vd, vs2, rs1, vm: wide = wide op SEW
+//
+// the narrow operands are zero- or sign-extended first; for vwmulsu, vs2 is
+// signed and the other operand unsigned. a .vx scalar contributes its low
+// SEW bits, which are then extended like a vector operand
+void riscv2llvm::liftVWidenBinary(VWideOp op, bool wideVs2) {
+  auto cfg = getVConfig();
+  checkVWidenable(cfg);
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW, W = 2 * cfg.SEW;
+  auto L = cfg.LMULLog2, WL = cfg.LMULLog2 + 1;
+  auto mask = readVMaskOperand(3, n);
+  vector<VOperand> srcs{wideVs2 ? vopAt(1, W, WL) : vopAt(1, S, L)};
+  addVSrc(srcs, 2, S, L);
+  auto vd = vopAt(0, W, WL);
+  bool agnostic = checkVOverlap(vd, srcs, mask != nullptr);
+
+  bool aSigned = op == VWideOp::Add || op == VWideOp::Sub ||
+                 op == VWideOp::Mul || op == VWideOp::MulSU;
+  bool bSigned =
+      op == VWideOp::Add || op == VWideOp::Sub || op == VWideOp::Mul;
+  Value *a = wideVs2 ? readVGroup(srcs[0].first, W, WL)
+                     : createVExt(readVGroup(srcs[0].first, S, L), W, aSigned);
+  Value *b = createVExt(readVOperand(2, cfg, /*zextImm=*/false), W, bSigned);
+  Value *res = nullptr;
+  switch (op) {
+  case VWideOp::AddU:
+  case VWideOp::Add:
+    res = createAdd(a, b);
+    break;
+  case VWideOp::SubU:
+  case VWideOp::Sub:
+    res = createSub(a, b);
+    break;
+  case VWideOp::MulU:
+  case VWideOp::Mul:
+  case VWideOp::MulSU:
+    res = createMul(a, b);
+    break;
+  }
+  writeVGroup(vd.first, W, WL, res, readVL(), mask,
+              cfg.tailAgnostic || agnostic, cfg.maskAgnostic || agnostic);
+}
+
+// vzext.vf<factor> vd, vs2, vm / vsext.vf<factor> vd, vs2, vm
+//
+// the source has EEW = SEW / factor and EMUL = LMUL / factor, and the
+// encoding is reserved if either is out of range
+void riscv2llvm::liftVExtend(unsigned factor, bool isSigned) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
+  unsigned EEW = S / factor;
+  int EMULLog2 = L - int(Log2_32(factor));
+  if (EEW < 8)
+    vectorError("integer extension whose source EEW is below 8, which is "
+                "reserved");
+  if (EMULLog2 < -3)
+    vectorError("integer extension whose source EMUL is below 1/8, which is "
+                "reserved");
+  auto mask = readVMaskOperand(2, n);
+  auto vs2 = vopAt(1, EEW, EMULLog2);
+  auto vd = vopAt(0, S, L);
+  bool agnostic = checkVOverlap(vd, {vs2}, mask != nullptr);
+  auto res = createVExt(readVGroup(vs2.first, EEW, EMULLog2), S, isSigned);
+  writeVGroup(vd.first, S, L, res, readVL(), mask,
+              cfg.tailAgnostic || agnostic, cfg.maskAgnostic || agnostic);
+}
+
+// vnsrl.wv vd, vs2, vs1, vm / .wx vd, vs2, rs1, vm / .wi vd, vs2, uimm, vm
+// (and vnsra): SEW = wide >> SEW, using the low lg2(2 * SEW) bits of the
+// shift amount
+void riscv2llvm::liftVNarrowShift(bool isArith) {
+  auto cfg = getVConfig();
+  checkVWidenable(cfg);
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW, W = 2 * cfg.SEW;
+  auto L = cfg.LMULLog2, WL = cfg.LMULLog2 + 1;
+  auto mask = readVMaskOperand(3, n);
+  vector<VOperand> srcs{vopAt(1, W, WL)};
+  addVSrc(srcs, 2, S, L);
+  auto vd = vopAt(0, S, L);
+  bool agnostic = checkVOverlap(vd, srcs, mask != nullptr);
+  auto a = readVGroup(srcs[0].first, W, WL);
+  auto amt = createVExt(readVOperand(2, cfg, /*zextImm=*/true), W,
+                        /*isSigned=*/false);
+  auto shifted = isArith ? createMaskedAShr(a, amt) : createMaskedLShr(a, amt);
+  auto res = createTrunc(shifted, getVecTy(S, n));
+  writeVGroup(vd.first, S, L, res, readVL(), mask,
+              cfg.tailAgnostic || agnostic, cfg.maskAgnostic || agnostic);
+}
+
+/*
+ * multiply-add. the operand layout is (vd, vd, vs1 | rs1, vs2, vm): the
+ * destination also appears as a tied source, and the assembly order of
+ * vs1 and vs2 is the reverse of the other arithmetic instructions
+ */
+
+// vmacc:  vd[i] = +(vs1[i] * vs2[i]) + vd[i]
+// vnmsac: vd[i] = -(vs1[i] * vs2[i]) + vd[i]
+// vmadd:  vd[i] = (vs1[i] * vd[i]) + vs2[i]
+// vnmsub: vd[i] = -(vs1[i] * vd[i]) + vs2[i]
+void riscv2llvm::liftVMulAdd(VMacOp op) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
+  auto mask = readVMaskOperand(4, n);
+  auto vd = vopAt(0, S, L);
+  vector<VOperand> srcs{vd, vopAt(3, S, L)};
+  addVSrc(srcs, 2, S, L);
+  checkVOverlap(vd, srcs, mask != nullptr);
+  auto d = readVGroup(vd.first, S, L);
+  auto s1 = readVOperand(2, cfg, /*zextImm=*/false);
+  auto s2 = readVGroup(srcs[1].first, S, L);
+  Value *res = nullptr;
+  switch (op) {
+  case VMacOp::Macc:
+    res = createAdd(createMul(s1, s2), d);
+    break;
+  case VMacOp::Nmsac:
+    res = createSub(d, createMul(s1, s2));
+    break;
+  case VMacOp::Madd:
+    res = createAdd(createMul(s1, d), s2);
+    break;
+  case VMacOp::Nmsub:
+    res = createSub(s2, createMul(s1, d));
+    break;
+  }
+  writeVGroup(vd.first, S, L, res, readVL(), mask, cfg.tailAgnostic,
+              cfg.maskAgnostic);
+}
+
+// vwmacc{u,su,us}.vv vd, vs1, vs2, vm / .vx vd, rs1, vs2, vm:
+// wide vd[i] += ext(vs1[i] or rs1) * ext(vs2[i]), with the signedness of
+// the two multiplicands given separately
+void riscv2llvm::liftVWidenMulAdd(bool s1Signed, bool s2Signed) {
+  auto cfg = getVConfig();
+  checkVWidenable(cfg);
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW, W = 2 * cfg.SEW;
+  auto L = cfg.LMULLog2, WL = cfg.LMULLog2 + 1;
+  auto mask = readVMaskOperand(4, n);
+  auto vd = vopAt(0, W, WL);
+  vector<VOperand> srcs{vd, vopAt(3, S, L)};
+  addVSrc(srcs, 2, S, L);
+  bool agnostic = checkVOverlap(vd, srcs, mask != nullptr);
+  auto d = readVGroup(vd.first, W, WL);
+  auto s1 = createVExt(readVOperand(2, cfg, /*zextImm=*/false), W, s1Signed);
+  auto s2 = createVExt(readVGroup(srcs[1].first, S, L), W, s2Signed);
+  auto res = createAdd(createMul(s1, s2), d);
+  writeVGroup(vd.first, W, WL, res, readVL(), mask,
+              cfg.tailAgnostic || agnostic, cfg.maskAgnostic || agnostic);
+}
+
+/*
+ * add-with-carry and subtract-with-borrow. the carry or borrow input is
+ * always the mask in v0, and all body elements are written whether or not
+ * the encoding is masked
+ */
+
+// vadc.v{v,x,i}m vd, vs2, src, v0: vd[i] = vs2[i] + src[i] + v0.mask[i]
+// vsbc.v{v,x}m vd, vs2, src, v0:   vd[i] = vs2[i] - src[i] - v0.mask[i]
+void riscv2llvm::liftVAdcSbc(bool isSub) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
+  assert(CurInst->getOperand(3).getReg() == RISCV::V0);
+  vector<VOperand> srcs{vopAt(1, S, L)};
+  addVSrc(srcs, 2, S, L);
+  // this also rejects vd = v0, which the spec singles out as reserved
+  checkVOverlap(vopAt(0, S, L), srcs, /*readsV0Mask=*/true);
+  auto a = readVGroup(srcs[0].first, S, L);
+  auto b = readVOperand(2, cfg, /*zextImm=*/false);
+  auto c = createVExt(readVMask(0, n), S, /*isSigned=*/false);
+  auto res = isSub ? createSub(createSub(a, b), c)
+                   : createAdd(createAdd(a, b), c);
+  writeVGroup(vopAt(0, S, L).first, S, L, res, readVL(), nullptr,
+              cfg.tailAgnostic, cfg.maskAgnostic);
+}
+
+// vmadc.v{v,x,i}m vd, vs2, src, v0 / vmadc.v{v,x,i} vd, vs2, src:
+//   vd.mask[i] = carry_out(vs2[i] + src[i] (+ v0.mask[i]))
+// vmsbc.v{v,x}m vd, vs2, src, v0 / vmsbc.v{v,x} vd, vs2, src:
+//   vd.mask[i] = borrow_out(vs2[i] - src[i] (- v0.mask[i]))
+//
+// the forms with the v0 operand take a carry or borrow input, the others
+// do not. the borrow is 1 iff the untruncated difference is negative.
+// the result is a mask, so it may be written to v0
+void riscv2llvm::liftVMadcMsbc(bool isSub, bool hasCarryIn) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
+  if (hasCarryIn)
+    assert(CurInst->getOperand(3).getReg() == RISCV::V0);
+  vector<VOperand> srcs{vopAt(1, S, L)};
+  addVSrc(srcs, 2, S, L);
+  auto vd = vopAt(0, 1, 0);
+  checkVOverlap(vd, srcs, hasCarryIn);
+  // SEW + 1 bits hold the full sum, and the full subtrahend
+  unsigned X = S + 1;
+  auto a = createVExt(readVGroup(srcs[0].first, S, L), X, /*isSigned=*/false);
+  auto b = createVExt(readVOperand(2, cfg, /*zextImm=*/false), X,
+                      /*isSigned=*/false);
+  Value *c = hasCarryIn
+                 ? createVExt(readVMask(0, n), X, /*isSigned=*/false)
+                 : static_cast<Value *>(Constant::getNullValue(getVecTy(X, n)));
+  Value *out;
+  if (isSub) {
+    out = createICmp(ICmpInst::ICMP_ULT, a, createAdd(b, c));
+  } else {
+    auto sum = createAdd(createAdd(a, b), c);
+    out = createICmp(ICmpInst::ICMP_UGE, sum,
+                     ConstantInt::get(getVecTy(X, n),
+                                      APInt::getOneBitSet(X, S)));
+  }
+  // every body element is active, so the mask policy never applies
+  writeVMask(vd.first, out, readVL(), nullptr, /*maskAgnostic=*/false);
 }
 
 // returns false if the opcode is not one of ours
@@ -731,6 +1017,119 @@ bool riscv2llvm::liftVector(unsigned opcode) {
   case RISCV::VMERGE_VXM:
   case RISCV::VMERGE_VIM:
     liftVMerge();
+    return true;
+
+#define VWIDE(NAME, OP, WIDEVS2)                                               \
+  case RISCV::NAME:                                                            \
+    liftVWidenBinary(VWideOp::OP, WIDEVS2);                                    \
+    return true;
+    VWIDE(VWADDU_VV, AddU, false)
+    VWIDE(VWADDU_VX, AddU, false)
+    VWIDE(VWADD_VV, Add, false)
+    VWIDE(VWADD_VX, Add, false)
+    VWIDE(VWSUBU_VV, SubU, false)
+    VWIDE(VWSUBU_VX, SubU, false)
+    VWIDE(VWSUB_VV, Sub, false)
+    VWIDE(VWSUB_VX, Sub, false)
+    VWIDE(VWADDU_WV, AddU, true)
+    VWIDE(VWADDU_WX, AddU, true)
+    VWIDE(VWADD_WV, Add, true)
+    VWIDE(VWADD_WX, Add, true)
+    VWIDE(VWSUBU_WV, SubU, true)
+    VWIDE(VWSUBU_WX, SubU, true)
+    VWIDE(VWSUB_WV, Sub, true)
+    VWIDE(VWSUB_WX, Sub, true)
+    VWIDE(VWMULU_VV, MulU, false)
+    VWIDE(VWMULU_VX, MulU, false)
+    VWIDE(VWMUL_VV, Mul, false)
+    VWIDE(VWMUL_VX, Mul, false)
+    VWIDE(VWMULSU_VV, MulSU, false)
+    VWIDE(VWMULSU_VX, MulSU, false)
+#undef VWIDE
+
+  case RISCV::VZEXT_VF2:
+    liftVExtend(2, false);
+    return true;
+  case RISCV::VZEXT_VF4:
+    liftVExtend(4, false);
+    return true;
+  case RISCV::VZEXT_VF8:
+    liftVExtend(8, false);
+    return true;
+  case RISCV::VSEXT_VF2:
+    liftVExtend(2, true);
+    return true;
+  case RISCV::VSEXT_VF4:
+    liftVExtend(4, true);
+    return true;
+  case RISCV::VSEXT_VF8:
+    liftVExtend(8, true);
+    return true;
+
+  case RISCV::VNSRL_WV:
+  case RISCV::VNSRL_WX:
+  case RISCV::VNSRL_WI:
+    liftVNarrowShift(false);
+    return true;
+  case RISCV::VNSRA_WV:
+  case RISCV::VNSRA_WX:
+  case RISCV::VNSRA_WI:
+    liftVNarrowShift(true);
+    return true;
+
+#define VMAC(NAME, OP)                                                         \
+  case RISCV::NAME##_VV:                                                       \
+  case RISCV::NAME##_VX:                                                       \
+    liftVMulAdd(VMacOp::OP);                                                   \
+    return true;
+    VMAC(VMACC, Macc)
+    VMAC(VNMSAC, Nmsac)
+    VMAC(VMADD, Madd)
+    VMAC(VNMSUB, Nmsub)
+#undef VMAC
+
+  case RISCV::VWMACCU_VV:
+  case RISCV::VWMACCU_VX:
+    liftVWidenMulAdd(false, false);
+    return true;
+  case RISCV::VWMACC_VV:
+  case RISCV::VWMACC_VX:
+    liftVWidenMulAdd(true, true);
+    return true;
+  case RISCV::VWMACCSU_VV:
+  case RISCV::VWMACCSU_VX:
+    liftVWidenMulAdd(true, false);
+    return true;
+  case RISCV::VWMACCUS_VX:
+    liftVWidenMulAdd(false, true);
+    return true;
+
+  case RISCV::VADC_VVM:
+  case RISCV::VADC_VXM:
+  case RISCV::VADC_VIM:
+    liftVAdcSbc(false);
+    return true;
+  case RISCV::VSBC_VVM:
+  case RISCV::VSBC_VXM:
+    liftVAdcSbc(true);
+    return true;
+  case RISCV::VMADC_VVM:
+  case RISCV::VMADC_VXM:
+  case RISCV::VMADC_VIM:
+    liftVMadcMsbc(false, true);
+    return true;
+  case RISCV::VMADC_VV:
+  case RISCV::VMADC_VX:
+  case RISCV::VMADC_VI:
+    liftVMadcMsbc(false, false);
+    return true;
+  case RISCV::VMSBC_VVM:
+  case RISCV::VMSBC_VXM:
+    liftVMadcMsbc(true, true);
+    return true;
+  case RISCV::VMSBC_VV:
+  case RISCV::VMSBC_VX:
+    liftVMadcMsbc(true, false);
     return true;
 
   case RISCV::VLE8_V:
