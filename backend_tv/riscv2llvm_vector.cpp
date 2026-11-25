@@ -285,21 +285,25 @@ void riscv2llvm::liftVSet(unsigned opcode) {
 }
 
 // vle<eew>.v vd, (rs1), vm / vse<eew>.v vs3, (rs1), vm
+// vlse<eew>.v vd, (rs1), rs2, vm / vsse<eew>.v vs3, (rs1), rs2, vm
 //
 // EEW is encoded in the instruction, and EMUL = (EEW / SEW) * LMUL, so the
-// element count is still VLMAX. only active elements access memory, which
-// is modeled by redirecting each inactive element to a scratch location
-void riscv2llvm::liftVUnitStride(unsigned EEW, bool isStore) {
+// element count is still VLMAX. element i is at rs1 + i * stride, where the
+// stride is EEW / 8 for the unit-stride forms and the signed byte count in
+// rs2 for the strided ones. only active elements access memory, which is
+// modeled by redirecting each inactive element to a scratch location
+void riscv2llvm::liftVLoadStore(unsigned EEW, bool isStore, bool isStrided) {
   auto cfg = getVConfig();
   int EMULLog2 = cfg.LMULLog2 + int(Log2_32(EEW)) - int(Log2_32(cfg.SEW));
   if (EMULLog2 < -3 || EMULLog2 > 3)
-    vectorError("unit-stride access with EMUL out of range, which is "
+    vectorError("vector memory access with EMUL out of range, which is "
                 "reserved");
   auto first = vregRange(CurInst->getOperand(0).getReg()).first;
   checkVGroup(first, EEW, EMULLog2);
   unsigned n = numVElts(EEW, EMULLog2);
+  unsigned bytes = EEW / 8;
 
-  auto mask = readVMaskOperand(2, n);
+  auto mask = readVMaskOperand(isStrided ? 3 : 2, n);
   // for a load, a masked destination may not overlap v0; for a store, v0
   // would be read with two different EEWs. both are reserved
   if (mask && first == 0)
@@ -311,25 +315,56 @@ void riscv2llvm::liftVUnitStride(unsigned EEW, bool isStore) {
   if (mask)
     active = createSelect(active, mask,
                           Constant::getNullValue(getVecTy(1, n)));
+  auto activeBits = createBitCast(active, getIntTy(n));
+
+  auto i64ty = getIntTy(64);
+  auto base = readFromRegOperand(1, PointerType::get(Ctx, 0));
+  Value *stride = isStrided ? readFromRegOperand(2, i64ty)
+                            : getUnsignedIntConst(bytes, 64);
 
   // LLVM only emits element-aligned vector accesses unless it is told the
   // hardware handles misaligned ones, which RVA23U64 does not promise, so
   // a misaligned active element is treated as a fault. all elements of a
-  // unit-stride access share the base address's alignment
-  auto base = readFromRegOperand(1, PointerType::get(Ctx, 0));
-  auto anyActive = createICmp(ICmpInst::ICMP_NE,
-                              createBitCast(active, getIntTy(n)),
-                              getUnsignedIntConst(0, n));
-  assertVAligned(base, EEW / 8, anyActive);
+  // unit-stride access share the base address's alignment; a strided
+  // access is checked element by element below
+  if (!isStrided) {
+    auto anyActive = createICmp(ICmpInst::ICMP_NE, activeBits,
+                                getUnsignedIntConst(0, n));
+    assertVAligned(base, bytes, anyActive);
+  }
+
+  // the element accesses of a strided store are unordered, so where two
+  // active elements overlap, the value left in memory is not determined.
+  // rather than model that, such a store is treated as a fault. this is
+  // conservative: two active elements can only overlap when |stride| is
+  // less than the element size, but not every store like that has an
+  // overlap
+  if (isStrided && isStore) {
+    auto neg = createICmp(ICmpInst::ICMP_SLT, stride,
+                          getUnsignedIntConst(0, 64));
+    auto absStride =
+        createSelect(neg, createSub(getUnsignedIntConst(0, 64), stride),
+                     stride);
+    auto wide = createICmp(ICmpInst::ICMP_UGE, absStride,
+                           getUnsignedIntConst(bytes, 64));
+    auto atMostOne = createICmp(ICmpInst::ICMP_ULE, createCtPop(activeBits),
+                                getUnsignedIntConst(1, n));
+    assertTrue(createOr(wide, atMostOne));
+  }
 
   auto eltTy = getIntTy(EEW);
   auto i8ty = getIntTy(8);
   Value *data = isStore ? readVGroup(first, EEW, EMULLog2)
                         : PoisonValue::get(getVecTy(EEW, n));
   for (unsigned i = 0; i < n; ++i) {
-    auto addr = createGEP(i8ty, base,
-                          {getUnsignedIntConst(i * (EEW / 8), 64)}, nextName());
+    Value *offset = isStrided
+                        ? static_cast<Value *>(createMul(
+                              getUnsignedIntConst(i, 64), stride))
+                        : getUnsignedIntConst(i * bytes, 64);
+    auto addr = createGEP(i8ty, base, {offset}, nextName());
     auto isActive = createExtractElement(active, i);
+    if (isStrided)
+      assertVAligned(addr, bytes, isActive);
     auto ptr = createSelect(isActive, addr, vScratch);
     if (isStore) {
       createStore(createExtractElement(data, i), ptr);
@@ -391,16 +426,52 @@ optional<unsigned> riscv2llvm::vgroupOperand(int idx) {
   return vregRange(op.getReg()).first;
 }
 
+// the last register an operand covers: a mask is one register, and a
+// fractional group occupies (part of) one register
+unsigned riscv2llvm::vopLast(const VOperand &o) {
+  return o.first + (o.EEW == 1 ? 1 : numVRegs(o.EMULLog2)) - 1;
+}
+
+bool riscv2llvm::vopOverlaps(const VOperand &a, const VOperand &b) {
+  return a.first <= vopLast(b) && b.first <= vopLast(a);
+}
+
 /*
- * check the register group constraints of an instruction that writes `dest`
- * and reads `srcs`, plus the mask in v0 if `readsV0Mask`. a mask operand
- * has EEW = 1 and occupies one register. the rules are in "Vector
- * Operands" in the ISA manual, and breaking any of them is reserved:
+ * check the constraints on the sources `srcs` of an instruction, plus the
+ * mask in v0 if `readsV0Mask`. a mask operand has EEW = 1 and occupies one
+ * register. the rules are in "Vector Operands" in the ISA manual, and
+ * breaking any of them is reserved:
  *
  * - each data group must be aligned and well formed (checkVGroup)
- * - a masked instruction's destination may overlap v0 only if it is a mask
  * - no register may be read with two different EEWs, counting the v0 mask
  *   as EEW = 1
+ */
+void riscv2llvm::checkVSources(const vector<VOperand> &srcs,
+                               bool readsV0Mask) {
+  for (auto &s : srcs)
+    if (s.EEW != 1)
+      checkVGroup(s.first, s.EEW, s.EMULLog2);
+
+  if (readsV0Mask) {
+    VOperand v0{0, 1, 0};
+    for (auto &s : srcs)
+      if (s.EEW != 1 && vopOverlaps(s, v0))
+        vectorError("masked vector instruction that also reads v0 as data, "
+                    "which is reserved");
+  }
+
+  for (size_t i = 0; i < srcs.size(); ++i)
+    for (size_t j = i + 1; j < srcs.size(); ++j)
+      if (srcs[i].EEW != srcs[j].EEW && vopOverlaps(srcs[i], srcs[j]))
+        vectorError("vector register read with two different EEWs, which is "
+                    "reserved");
+}
+
+/*
+ * checkVSources(), plus the constraints on the destination `dest`:
+ *
+ * - the destination group must be aligned and well formed
+ * - a masked instruction's destination may overlap v0 only if it is a mask
  * - a destination may overlap a source with a different EEW only if the
  *   destination is narrower and both start at the same register, or the
  *   destination is wider, the source's EMUL is at least 1, and both end at
@@ -411,49 +482,36 @@ optional<unsigned> riscv2llvm::vgroupOperand(int idx) {
  */
 bool riscv2llvm::checkVOverlap(VOperand dest, const vector<VOperand> &srcs,
                                bool readsV0Mask) {
-  auto lastReg = [&](const VOperand &o) {
-    return o.first + (o.EEW == 1 ? 1 : numVRegs(o.EMULLog2)) - 1;
-  };
-  auto overlaps = [&](const VOperand &a, const VOperand &b) {
-    return a.first <= lastReg(b) && b.first <= lastReg(a);
-  };
-
   if (dest.EEW != 1)
     checkVGroup(dest.first, dest.EEW, dest.EMULLog2);
-  for (auto &s : srcs)
-    if (s.EEW != 1)
-      checkVGroup(s.first, s.EEW, s.EMULLog2);
+  checkVSources(srcs, readsV0Mask);
 
-  if (readsV0Mask) {
-    VOperand v0{0, 1, 0};
-    if (dest.EEW != 1 && overlaps(dest, v0))
-      vectorError("masked vector instruction whose destination group "
-                  "includes v0, which is reserved");
-    for (auto &s : srcs)
-      if (s.EEW != 1 && overlaps(s, v0))
-        vectorError("masked vector instruction that also reads v0 as data, "
-                    "which is reserved");
-  }
-
-  for (size_t i = 0; i < srcs.size(); ++i)
-    for (size_t j = i + 1; j < srcs.size(); ++j)
-      if (srcs[i].EEW != srcs[j].EEW && overlaps(srcs[i], srcs[j]))
-        vectorError("vector register read with two different EEWs, which is "
-                    "reserved");
+  if (readsV0Mask && dest.EEW != 1 && vopOverlaps(dest, VOperand{0, 1, 0}))
+    vectorError("masked vector instruction whose destination group "
+                "includes v0, which is reserved");
 
   bool forcedAgnostic = false;
   for (auto &s : srcs) {
-    if (s.EEW == dest.EEW || !overlaps(dest, s))
+    if (s.EEW == dest.EEW || !vopOverlaps(dest, s))
       continue;
     bool allowed = dest.EEW < s.EEW
                        ? dest.first == s.first
-                       : s.EMULLog2 >= 0 && lastReg(dest) == lastReg(s);
+                       : s.EMULLog2 >= 0 && vopLast(dest) == vopLast(s);
     if (!allowed)
       vectorError("destination group overlaps a source group with a "
                   "different EEW in a way that is reserved");
     forcedAgnostic = true;
   }
   return forcedAgnostic;
+}
+
+// the slide-up and register gather instructions may not overlap their
+// destination with any source, even one with the same EEW
+void riscv2llvm::rejectVOverlap(VOperand dest, const vector<VOperand> &srcs) {
+  for (auto &s : srcs)
+    if (vopOverlaps(dest, s))
+      vectorError("destination group overlaps a source group, which is "
+                  "reserved for this instruction");
 }
 
 // widening and narrowing instructions have an operand with EEW = 2 * SEW
@@ -469,8 +527,10 @@ void riscv2llvm::checkVWidenable(const VConfig &cfg) {
 
 // zero- or sign-extend each element of an integer vector to `bits`
 Value *riscv2llvm::createVExt(Value *v, unsigned bits, bool isSigned) {
-  auto n = cast<FixedVectorType>(v->getType())->getNumElements();
-  auto ty = getVecTy(bits, n);
+  auto *vty = cast<FixedVectorType>(v->getType());
+  if (getBitWidth(vty->getElementType()) == bits)
+    return v;
+  auto ty = getVecTy(bits, vty->getNumElements());
   return isSigned ? static_cast<Value *>(createSExt(v, ty))
                   : static_cast<Value *>(createZExt(v, ty));
 }
@@ -893,6 +953,437 @@ void riscv2llvm::liftVMadcMsbc(bool isSub, bool hasCarryIn) {
   writeVMask(vd.first, out, readVL(), nullptr, /*maskAgnostic=*/false);
 }
 
+/*
+ * helpers for the permutation and reduction instructions
+ */
+
+// <0, 1, ..., n-1> as i64s
+Value *riscv2llvm::getVLaneIndices(unsigned n) {
+  vector<Constant *> lanes;
+  for (unsigned i = 0; i < n; ++i)
+    lanes.push_back(getUnsignedIntConst(i, 64));
+  return ConstantVector::get(lanes);
+}
+
+// lane i of the result is src[idx[i]] where inRange[i] is set, and zero
+// elsewhere. idx is a vector of i64s, which only have to be valid lane
+// numbers where inRange is set
+Value *riscv2llvm::createVDynGather(Value *src, Value *idx, Value *inRange) {
+  auto *ty = cast<FixedVectorType>(src->getType());
+  auto zero = Constant::getNullValue(ty->getElementType());
+  auto zeroIdx = getUnsignedIntConst(0, 64);
+  Value *res = PoisonValue::get(ty);
+  for (unsigned i = 0; i < ty->getNumElements(); ++i) {
+    auto inr = createExtractElement(inRange, i);
+    auto safe = createSelect(inr, createExtractElement(idx, i), zeroIdx);
+    auto elt = createSelect(inr, createExtractElement(src, safe), zero);
+    res = createInsertElement(res, elt, i);
+  }
+  return res;
+}
+
+// zero-extend or truncate an integer to 64 bits
+Value *riscv2llvm::createZExtOrTrunc64(Value *v) {
+  auto w = getBitWidth(v);
+  if (w == 64)
+    return v;
+  return w < 64 ? static_cast<Value *>(createZExt(v, getIntTy(64)))
+                : createTrunc(v, getIntTy(64));
+}
+
+// write `scalar` to element 0 of the single register vd, the way vmv.s.x
+// and the reductions do. elements 1 and up are tail, and nothing is
+// written when vl = 0
+void riscv2llvm::writeVElt0(unsigned vd, Value *scalar, const VConfig &cfg) {
+  auto EEW = getBitWidth(scalar);
+  auto vl = readVL();
+  auto vlIsZero =
+      createICmp(ICmpInst::ICMP_EQ, vl, getUnsignedIntConst(0, 64));
+  auto vl1 = createSelect(vlIsZero, getUnsignedIntConst(0, 64),
+                          getUnsignedIntConst(1, 64));
+  writeVGroup(vd, EEW, 0, createVSplat(scalar, VLEN / EEW), vl1, nullptr,
+              cfg.tailAgnostic, cfg.maskAgnostic);
+}
+
+// the active elements of a maskable instruction: the body, restricted by
+// `mask` if it is not null
+Value *riscv2llvm::createActiveMask(Value *mask, unsigned n) {
+  Value *active = createBodyMask(readVL(), n);
+  if (mask)
+    active = createSelect(active, mask,
+                          Constant::getNullValue(getVecTy(1, n)));
+  return active;
+}
+
+/*
+ * mask instructions. a mask has one bit per element, held in a single
+ * register whatever LMUL is, and the element count is VLMAX
+ */
+
+// vm<op>.mm vd, vs2, vs1: always unmasked, and always tail agnostic. the
+// destination may be either source
+void riscv2llvm::liftVMaskLogical(VMaskLogicOp op) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto vd = vregRange(CurInst->getOperand(0).getReg()).first;
+  auto a = readVMask(vregRange(CurInst->getOperand(1).getReg()).first, n);
+  auto b = readVMask(vregRange(CurInst->getOperand(2).getReg()).first, n);
+  auto ones = getAllOnesConst(getVecTy(1, n));
+  auto notV = [&](Value *v) { return createXor(v, ones); };
+  Value *res = nullptr;
+  switch (op) {
+  case VMaskLogicOp::And:
+    res = createAnd(a, b);
+    break;
+  case VMaskLogicOp::Nand:
+    res = notV(createAnd(a, b));
+    break;
+  case VMaskLogicOp::AndN:
+    res = createAnd(a, notV(b));
+    break;
+  case VMaskLogicOp::Xor:
+    res = createXor(a, b);
+    break;
+  case VMaskLogicOp::Or:
+    res = createOr(a, b);
+    break;
+  case VMaskLogicOp::Nor:
+    res = notV(createOr(a, b));
+    break;
+  case VMaskLogicOp::OrN:
+    res = createOr(a, notV(b));
+    break;
+  case VMaskLogicOp::Xnor:
+    res = notV(createXor(a, b));
+    break;
+  }
+  writeVMask(vd, res, readVL(), nullptr, /*maskAgnostic=*/false);
+}
+
+// vcpop.m rd, vs2, vm: the number of active elements of vs2 that are set
+// vfirst.m rd, vs2, vm: the index of the first one, or -1 if there is none
+//
+// both write rd even when vl = 0
+void riscv2llvm::liftVMaskScalar(bool isFirst) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto vs2 = vregRange(CurInst->getOperand(1).getReg()).first;
+  auto active = createActiveMask(readVMaskOperand(2, n), n);
+  auto set = createAnd(readVMask(vs2, n), active);
+  auto bits = createBitCast(set, getIntTy(n));
+  Value *res;
+  if (isFirst) {
+    auto none = createICmp(ICmpInst::ICMP_EQ, bits, getUnsignedIntConst(0, n));
+    res = createSelect(none, getAllOnesConst(64),
+                       createZExtOrTrunc64(createCttz(bits)));
+  } else {
+    res = createZExtOrTrunc64(createCtPop(bits));
+  }
+  updateReg(res, CurInst->getOperand(0).getReg());
+}
+
+// vid.v vd, vm: vd[i] = i, keeping the low SEW bits
+void riscv2llvm::liftVId() {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
+  auto mask = readVMaskOperand(1, n);
+  auto vd = vopAt(0, S, L);
+  checkVOverlap(vd, {}, mask != nullptr);
+  uint64_t lowBits = S == 64 ? ~0ULL : (1ULL << S) - 1;
+  vector<Constant *> ids;
+  for (unsigned i = 0; i < n; ++i)
+    ids.push_back(ConstantInt::get(getIntTy(S), i & lowBits));
+  writeVGroup(vd.first, S, L, ConstantVector::get(ids), readVL(), mask,
+              cfg.tailAgnostic, cfg.maskAgnostic);
+}
+
+/*
+ * scalar moves. these ignore LMUL: the element is always in a single
+ * register, and they are never masked
+ */
+
+// vmv.x.s rd, vs2: rd = sign-extended vs2[0]. this happens even when vl = 0
+void riscv2llvm::liftVMvXS() {
+  auto cfg = getVConfig();
+  auto vs2 = vregRange(CurInst->getOperand(1).getReg()).first;
+  auto reg = createLoad(getIntTy(VLEN), lookupVReg(vs2));
+  auto elt = createTrunc(reg, getIntTy(cfg.SEW));
+  updateReg(createSExt(elt, getIntTy(64)), CurInst->getOperand(0).getReg());
+}
+
+// vmv.s.x vd, rs1: vd[0] = the low SEW bits of rs1. the operands are
+// (vd, vd, rs1), with the destination tied to a source
+void riscv2llvm::liftVMvSX() {
+  auto cfg = getVConfig();
+  auto vd = vregRange(CurInst->getOperand(0).getReg()).first;
+  auto x = readFromRegOperand(2, getIntTy(64));
+  writeVElt0(vd, createTrunc(x, getIntTy(cfg.SEW)), cfg);
+}
+
+/*
+ * slides
+ */
+
+// vslideup.vx/.vi vd, vs2, offset, vm:   vd[i + offset] = vs2[i]
+// vslidedown.vx/.vi vd, vs2, offset, vm: vd[i] = vs2[i + offset], or 0
+//                                        once i + offset >= VLMAX
+//
+// the offset is a 64-bit register, not truncated to SEW, or a zero-extended
+// 5-bit immediate. for vslideup, body elements below the offset are left
+// unchanged whatever the policies say, and the destination may not overlap
+// the source
+void riscv2llvm::liftVSlide(bool up) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
+  auto mask = readVMaskOperand(3, n);
+  auto vd = vopAt(0, S, L);
+  auto vs2 = vopAt(1, S, L);
+  checkVOverlap(vd, {vs2}, mask != nullptr);
+  if (up)
+    rejectVOverlap(vd, {vs2});
+  auto src = readVGroup(vs2.first, S, L);
+
+  Value *res;
+  Value *keep = nullptr;
+  auto &offOp = CurInst->getOperand(2);
+  if (offOp.isImm()) {
+    uint64_t off = offOp.getImm();
+    SmallVector<int> idx;
+    vector<Constant *> keepLanes;
+    for (unsigned i = 0; i < n; ++i) {
+      if (up) {
+        idx.push_back(i >= off ? int(i - off) : PoisonMaskElem);
+        keepLanes.push_back(getBoolConst(i < off));
+      } else {
+        // lane n is lane 0 of the zero vector
+        idx.push_back(i + off < n ? int(i + off) : int(n));
+      }
+    }
+    res = createShuffleVector(src, Constant::getNullValue(src->getType()),
+                              idx);
+    if (up)
+      keep = ConstantVector::get(keepLanes);
+  } else {
+    auto off = createVSplat(readFromRegOperand(2, getIntTy(64)), n);
+    auto lanes = getVLaneIndices(n);
+    if (up) {
+      keep = createICmp(ICmpInst::ICMP_ULT, lanes, off);
+      auto inRange =
+          createXor(keep, getAllOnesConst(getVecTy(1, n)));
+      res = createVDynGather(src, createSub(lanes, off), inRange);
+    } else {
+      // i + offset < n, written so that it cannot wrap
+      vector<Constant *> room;
+      for (unsigned i = 0; i < n; ++i)
+        room.push_back(getUnsignedIntConst(n - i, 64));
+      auto inRange =
+          createICmp(ICmpInst::ICMP_ULT, off, ConstantVector::get(room));
+      res = createVDynGather(src, createAdd(lanes, off), inRange);
+    }
+  }
+  writeVGroup(vd.first, S, L, res, readVL(), mask, cfg.tailAgnostic,
+              cfg.maskAgnostic, keep);
+}
+
+// vslide1up.vx vd, vs2, rs1, vm:   vd[0] = x[rs1], vd[i + 1] = vs2[i]
+// vslide1down.vx vd, vs2, rs1, vm: vd[i] = vs2[i + 1], vd[vl - 1] = x[rs1]
+//
+// the scalar contributes its low SEW bits. vslide1up's destination may
+// not overlap its source
+void riscv2llvm::liftVSlide1(bool up) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
+  auto mask = readVMaskOperand(3, n);
+  auto vd = vopAt(0, S, L);
+  auto vs2 = vopAt(1, S, L);
+  checkVOverlap(vd, {vs2}, mask != nullptr);
+  if (up)
+    rejectVOverlap(vd, {vs2});
+  auto src = readVGroup(vs2.first, S, L);
+  auto x = createVSplat(
+      createTrunc(readFromRegOperand(2, getIntTy(64)), getIntTy(S)), n);
+
+  // lane n of the shuffle input is lane 0 of the splatted scalar
+  SmallVector<int> idx;
+  for (unsigned i = 0; i < n; ++i)
+    idx.push_back(up ? (i == 0 ? int(n) : int(i - 1))
+                     : (i + 1 < n ? int(i + 1) : int(n)));
+  Value *res = createShuffleVector(src, x, idx);
+  auto vl = readVL();
+  if (!up) {
+    // when vl = 0 this compares against 2^64 - 1, which matches no lane,
+    // and nothing is written anyway
+    auto lastBody =
+        createSub(vl, getUnsignedIntConst(1, 64));
+    auto isLast = createICmp(ICmpInst::ICMP_EQ, getVLaneIndices(n),
+                             createVSplat(lastBody, n));
+    res = createSelect(isLast, x, res);
+  }
+  writeVGroup(vd.first, S, L, res, vl, mask, cfg.tailAgnostic,
+              cfg.maskAgnostic);
+}
+
+/*
+ * register gather. the destination may not overlap any source
+ */
+
+// vrgather.vv vd, vs2, vs1, vm:     vd[i] = vs1[i] < VLMAX ? vs2[vs1[i]] : 0
+// vrgatherei16.vv vd, vs2, vs1, vm: the same, with EEW = 16 indices
+// vrgather.vx vd, vs2, rs1, vm:     vd[i] = x < VLMAX ? vs2[x] : 0
+// vrgather.vi vd, vs2, uimm, vm:    vd[i] = uimm < VLMAX ? vs2[uimm] : 0
+//
+// indices are unsigned; the scalar index is all 64 bits of rs1. source
+// elements may be read at any index below VLMAX, whatever vl is
+void riscv2llvm::liftVRGather(bool ei16) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
+  unsigned IEEW = ei16 ? 16 : S;
+  int IEMUL = ei16 ? L + 4 - int(Log2_32(S)) : L;
+  if (IEMUL < -3 || IEMUL > 3)
+    vectorError("vrgatherei16 whose index EMUL is out of range, which is "
+                "reserved");
+  auto mask = readVMaskOperand(3, n);
+  auto vd = vopAt(0, S, L);
+  vector<VOperand> srcs{vopAt(1, S, L)};
+  addVSrc(srcs, 2, IEEW, IEMUL);
+  checkVOverlap(vd, srcs, mask != nullptr);
+  rejectVOverlap(vd, srcs);
+  auto src = readVGroup(srcs[0].first, S, L);
+  auto VLMAX = getUnsignedIntConst(n, 64);
+
+  Value *res;
+  auto &idxOp = CurInst->getOperand(2);
+  if (idxOp.isImm()) {
+    uint64_t i = idxOp.getImm();
+    res = i < n ? createShuffleVector(src, SmallVector<int>(n, int(i)))
+                : static_cast<Value *>(Constant::getNullValue(src->getType()));
+  } else if (srcs.size() == 2) {
+    auto idx = createVExt(readVGroup(srcs[1].first, IEEW, IEMUL), 64,
+                          /*isSigned=*/false);
+    auto inRange = createICmp(ICmpInst::ICMP_ULT, idx, createVSplat(VLMAX, n));
+    res = createVDynGather(src, idx, inRange);
+  } else {
+    auto x = readFromRegOperand(2, getIntTy(64));
+    auto inRange = createICmp(ICmpInst::ICMP_ULT, x, VLMAX);
+    auto safe = createSelect(inRange, x, getUnsignedIntConst(0, 64));
+    auto elt = createSelect(inRange, createExtractElement(src, safe),
+                            getUnsignedIntConst(0, S));
+    res = createVSplat(elt, n);
+  }
+  writeVGroup(vd.first, S, L, res, readVL(), mask, cfg.tailAgnostic,
+              cfg.maskAgnostic);
+}
+
+/*
+ * integer reductions: vd[0] = op(vs1[0], vs2[active elements]). vs1 and vd
+ * hold their scalar in element 0 of a single register, and the rest of vd
+ * is tail. the destination may overlap any source, including v0. nothing
+ * is written when vl = 0
+ */
+
+// vred<op>.vs vd, vs2, vs1, vm
+void riscv2llvm::liftVReduce(VRedOp op) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
+  auto mask = readVMaskOperand(3, n);
+  auto vs2 = vopAt(1, S, L);
+  auto vs1 = vopAt(2, S, 0);
+  checkVSources({vs2, vs1}, mask != nullptr);
+  auto vd = vregRange(CurInst->getOperand(0).getReg()).first;
+
+  // inactive elements are replaced by the operation's identity
+  APInt identity(S, 0);
+  switch (op) {
+  case VRedOp::Sum:
+  case VRedOp::Or:
+  case VRedOp::Xor:
+  case VRedOp::MaxU:
+    break;
+  case VRedOp::And:
+  case VRedOp::MinU:
+    identity = APInt::getAllOnes(S);
+    break;
+  case VRedOp::Max:
+    identity = APInt::getSignedMinValue(S);
+    break;
+  case VRedOp::Min:
+    identity = APInt::getSignedMaxValue(S);
+    break;
+  }
+  auto vecTy = getVecTy(S, n);
+  auto src = createSelect(createActiveMask(mask, n),
+                          readVGroup(vs2.first, S, L),
+                          ConstantInt::get(vecTy, identity));
+
+  Value *acc = createTrunc(createLoad(getIntTy(VLEN), lookupVReg(vs1.first)),
+                           getIntTy(S));
+  for (unsigned i = 0; i < n; ++i) {
+    auto e = createExtractElement(src, i);
+    switch (op) {
+    case VRedOp::Sum:
+      acc = createAdd(acc, e);
+      break;
+    case VRedOp::MaxU:
+      acc = createUMax(acc, e);
+      break;
+    case VRedOp::Max:
+      acc = createSMax(acc, e);
+      break;
+    case VRedOp::MinU:
+      acc = createUMin(acc, e);
+      break;
+    case VRedOp::Min:
+      acc = createSMin(acc, e);
+      break;
+    case VRedOp::And:
+      acc = createAnd(acc, e);
+      break;
+    case VRedOp::Or:
+      acc = createOr(acc, e);
+      break;
+    case VRedOp::Xor:
+      acc = createXor(acc, e);
+      break;
+    }
+  }
+  writeVElt0(vd, acc, cfg);
+}
+
+// vwredsum{u}.vs vd, vs2, vs1, vm: 2*SEW vd[0] = vs1[0] + sum(ext(vs2[*])).
+// vs2 has the usual SEW and LMUL, so unlike other widening instructions,
+// LMUL = 8 is fine
+void riscv2llvm::liftVWidenReduce(bool isSigned) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW, W = 2 * cfg.SEW;
+  auto L = cfg.LMULLog2;
+  if (S >= 64)
+    vectorError("widening reduction with SEW = 64, which is reserved");
+  auto mask = readVMaskOperand(3, n);
+  auto vs2 = vopAt(1, S, L);
+  auto vs1 = vopAt(2, W, 0);
+  checkVSources({vs2, vs1}, mask != nullptr);
+  auto vd = vregRange(CurInst->getOperand(0).getReg()).first;
+  auto src = createSelect(createActiveMask(mask, n),
+                          createVExt(readVGroup(vs2.first, S, L), W, isSigned),
+                          Constant::getNullValue(getVecTy(W, n)));
+  Value *acc = createTrunc(createLoad(getIntTy(VLEN), lookupVReg(vs1.first)),
+                           getIntTy(W));
+  for (unsigned i = 0; i < n; ++i)
+    acc = createAdd(acc, createExtractElement(src, i));
+  writeVElt0(vd, acc, cfg);
+}
+
 // returns false if the opcode is not one of ours
 bool riscv2llvm::liftVector(unsigned opcode) {
   switch (opcode) {
@@ -1132,30 +1623,118 @@ bool riscv2llvm::liftVector(unsigned opcode) {
     liftVMadcMsbc(true, false);
     return true;
 
+#define VMASKLOGIC(NAME, OP)                                                   \
+  case RISCV::NAME##_MM:                                                       \
+    liftVMaskLogical(VMaskLogicOp::OP);                                        \
+    return true;
+    VMASKLOGIC(VMAND, And)
+    VMASKLOGIC(VMNAND, Nand)
+    VMASKLOGIC(VMANDN, AndN)
+    VMASKLOGIC(VMXOR, Xor)
+    VMASKLOGIC(VMOR, Or)
+    VMASKLOGIC(VMNOR, Nor)
+    VMASKLOGIC(VMORN, OrN)
+    VMASKLOGIC(VMXNOR, Xnor)
+#undef VMASKLOGIC
+
+  case RISCV::VCPOP_M:
+    liftVMaskScalar(false);
+    return true;
+  case RISCV::VFIRST_M:
+    liftVMaskScalar(true);
+    return true;
+  case RISCV::VID_V:
+    liftVId();
+    return true;
+
+  case RISCV::VMV_X_S:
+    liftVMvXS();
+    return true;
+  case RISCV::VMV_S_X:
+    liftVMvSX();
+    return true;
+
+  case RISCV::VSLIDEUP_VX:
+  case RISCV::VSLIDEUP_VI:
+    liftVSlide(true);
+    return true;
+  case RISCV::VSLIDEDOWN_VX:
+  case RISCV::VSLIDEDOWN_VI:
+    liftVSlide(false);
+    return true;
+  case RISCV::VSLIDE1UP_VX:
+    liftVSlide1(true);
+    return true;
+  case RISCV::VSLIDE1DOWN_VX:
+    liftVSlide1(false);
+    return true;
+
+  case RISCV::VRGATHER_VV:
+  case RISCV::VRGATHER_VX:
+  case RISCV::VRGATHER_VI:
+    liftVRGather(false);
+    return true;
+  case RISCV::VRGATHEREI16_VV:
+    liftVRGather(true);
+    return true;
+
+#define VRED(NAME, OP)                                                         \
+  case RISCV::NAME##_VS:                                                       \
+    liftVReduce(VRedOp::OP);                                                   \
+    return true;
+    VRED(VREDSUM, Sum)
+    VRED(VREDMAXU, MaxU)
+    VRED(VREDMAX, Max)
+    VRED(VREDMINU, MinU)
+    VRED(VREDMIN, Min)
+    VRED(VREDAND, And)
+    VRED(VREDOR, Or)
+    VRED(VREDXOR, Xor)
+#undef VRED
+  case RISCV::VWREDSUMU_VS:
+    liftVWidenReduce(false);
+    return true;
+  case RISCV::VWREDSUM_VS:
+    liftVWidenReduce(true);
+    return true;
+
   case RISCV::VLE8_V:
-    liftVUnitStride(8, false);
+    liftVLoadStore(8, false, false);
     return true;
   case RISCV::VLE16_V:
-    liftVUnitStride(16, false);
+    liftVLoadStore(16, false, false);
     return true;
   case RISCV::VLE32_V:
-    liftVUnitStride(32, false);
+    liftVLoadStore(32, false, false);
     return true;
   case RISCV::VLE64_V:
-    liftVUnitStride(64, false);
+    liftVLoadStore(64, false, false);
     return true;
   case RISCV::VSE8_V:
-    liftVUnitStride(8, true);
+    liftVLoadStore(8, true, false);
     return true;
   case RISCV::VSE16_V:
-    liftVUnitStride(16, true);
+    liftVLoadStore(16, true, false);
     return true;
   case RISCV::VSE32_V:
-    liftVUnitStride(32, true);
+    liftVLoadStore(32, true, false);
     return true;
   case RISCV::VSE64_V:
-    liftVUnitStride(64, true);
+    liftVLoadStore(64, true, false);
     return true;
+
+#define STRIDED(E)                                                             \
+  case RISCV::VLSE##E##_V:                                                     \
+    liftVLoadStore(E, false, true);                                            \
+    return true;                                                               \
+  case RISCV::VSSE##E##_V:                                                     \
+    liftVLoadStore(E, true, true);                                             \
+    return true;
+    STRIDED(8)
+    STRIDED(16)
+    STRIDED(32)
+    STRIDED(64)
+#undef STRIDED
 
 #define WHOLE_REG_LOAD(N, E)                                                   \
   case RISCV::VL##N##RE##E##_V:                                                \

@@ -407,11 +407,15 @@ Value *riscv2llvm::createBodyMask(Value *vl, unsigned numElts) {
  *   lifted code has to be correct for every combination
  * - if vl = 0, nothing is written, not even agnostic tail elements
  *
- * `mask` is a vector of numVElts(EEW, EMUL) i1s, or null if unmasked
+ * `mask` is a vector of numVElts(EEW, EMUL) i1s, or null if unmasked.
+ * `keep`, if not null, is another such vector: body elements where it is
+ * set keep their old value whatever the mask and the policies say, the way
+ * vslideup leaves the elements below its offset unchanged
  */
 void riscv2llvm::writeVGroup(unsigned first, unsigned EEW, int EMULLog2,
                              Value *result, Value *vl, Value *mask,
-                             bool tailAgnostic, bool maskAgnostic) {
+                             bool tailAgnostic, bool maskAgnostic,
+                             Value *keep) {
   checkVGroup(first, EEW, EMULLog2);
   auto n = numVElts(EEW, EMULLog2);
   auto regs = numVRegs(EMULLog2);
@@ -419,6 +423,7 @@ void riscv2llvm::writeVGroup(unsigned first, unsigned EEW, int EMULLog2,
   auto vecTy = getVecTy(EEW, total);
   assert(result->getType() == getVecTy(EEW, n));
   assert(!mask || mask->getType() == getVecTy(1, n));
+  assert(!keep || keep->getType() == getVecTy(1, n));
 
   auto old = readVRegs(first, regs, EEW);
 
@@ -431,6 +436,8 @@ void riscv2llvm::writeVGroup(unsigned first, unsigned EEW, int EMULLog2,
     result = createShuffleVector(result, widen);
     if (mask)
       mask = createShuffleVector(mask, widen);
+    if (keep)
+      keep = createShuffleVector(keep, widen);
   }
 
   auto inBody = createBodyMask(vl, total);
@@ -451,7 +458,14 @@ void riscv2llvm::writeVGroup(unsigned first, unsigned EEW, int EMULLog2,
     Value *inactiveVal = maskAgnostic ? agnostic : old;
     notActive = createSelect(inBody, inactiveVal, tailVal);
   }
-  auto merged = createSelect(active, result, notActive);
+  Value *merged = createSelect(active, result, notActive);
+  if (keep) {
+    // select on inBody first, so the poison lanes of a widened `keep` are
+    // never looked at
+    auto kept = createSelect(inBody, keep,
+                             Constant::getNullValue(getVecTy(1, total)));
+    merged = createSelect(kept, old, merged);
+  }
 
   auto vlIsZero =
       createICmp(ICmpInst::ICMP_EQ, vl, getUnsignedIntConst(0, 64));

@@ -171,7 +171,8 @@ class riscv2llvm final : public mc2llvm {
   llvm::Value *createBodyMask(llvm::Value *vl, unsigned numElts);
   void writeVGroup(unsigned first, unsigned EEW, int EMULLog2,
                    llvm::Value *result, llvm::Value *vl, llvm::Value *mask,
-                   bool tailAgnostic, bool maskAgnostic);
+                   bool tailAgnostic, bool maskAgnostic,
+                   llvm::Value *keep = nullptr);
   void writeVMask(unsigned idx, llvm::Value *result, llvm::Value *vl,
                   llvm::Value *mask, bool maskAgnostic);
 
@@ -190,7 +191,7 @@ class riscv2llvm final : public mc2llvm {
   llvm::Value *readVMaskOperand(int idx, unsigned numElts);
   void assertVAligned(llvm::Value *ptr, unsigned bytes, llvm::Value *cond);
   void liftVSet(unsigned opcode);
-  void liftVUnitStride(unsigned EEW, bool isStore);
+  void liftVLoadStore(unsigned EEW, bool isStore, bool isStrided);
   void liftVWholeRegLoadStore(unsigned nregs, unsigned EEW, bool isStore);
 
   // single-width integer arithmetic: vd[i] = vs2[i] op src[i]
@@ -228,8 +229,12 @@ class riscv2llvm final : public mc2llvm {
   VOperand vopAt(int idx, unsigned EEW, int EMULLog2);
   void addVSrc(std::vector<VOperand> &srcs, int idx, unsigned EEW,
                int EMULLog2);
+  unsigned vopLast(const VOperand &o);
+  bool vopOverlaps(const VOperand &a, const VOperand &b);
+  void checkVSources(const std::vector<VOperand> &srcs, bool readsV0Mask);
   bool checkVOverlap(VOperand dest, const std::vector<VOperand> &srcs,
                      bool readsV0Mask);
+  void rejectVOverlap(VOperand dest, const std::vector<VOperand> &srcs);
   void checkVWidenable(const VConfig &cfg);
   llvm::Value *createVExt(llvm::Value *v, unsigned bits, bool isSigned);
   llvm::Value *readVOperand(int idx, const VConfig &cfg, bool zextImm);
@@ -249,6 +254,26 @@ class riscv2llvm final : public mc2llvm {
   void liftVWidenMulAdd(bool s1Signed, bool s2Signed);
   void liftVAdcSbc(bool isSub);
   void liftVMadcMsbc(bool isSub, bool hasCarryIn);
+
+  // mask, scalar move, slide, gather, and reduction instructions
+  enum class VMaskLogicOp { And, Nand, AndN, Xor, Or, Nor, OrN, Xnor };
+  enum class VRedOp { Sum, MaxU, Max, MinU, Min, And, Or, Xor };
+  llvm::Value *getVLaneIndices(unsigned n);
+  llvm::Value *createVDynGather(llvm::Value *src, llvm::Value *idx,
+                                llvm::Value *inRange);
+  llvm::Value *createZExtOrTrunc64(llvm::Value *v);
+  llvm::Value *createActiveMask(llvm::Value *mask, unsigned n);
+  void writeVElt0(unsigned vd, llvm::Value *scalar, const VConfig &cfg);
+  void liftVMaskLogical(VMaskLogicOp op);
+  void liftVMaskScalar(bool isFirst);
+  void liftVId();
+  void liftVMvXS();
+  void liftVMvSX();
+  void liftVSlide(bool up);
+  void liftVSlide1(bool up);
+  void liftVRGather(bool ei16);
+  void liftVReduce(VRedOp op);
+  void liftVWidenReduce(bool isSigned);
 
   bool liftVector(unsigned opcode);
 
