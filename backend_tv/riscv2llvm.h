@@ -172,7 +172,8 @@ class riscv2llvm final : public mc2llvm {
   void writeVGroup(unsigned first, unsigned EEW, int EMULLog2,
                    llvm::Value *result, llvm::Value *vl, llvm::Value *mask,
                    bool tailAgnostic, bool maskAgnostic,
-                   llvm::Value *keep = nullptr);
+                   llvm::Value *keep = nullptr,
+                   llvm::Value *bodyLen = nullptr);
   void writeVMask(unsigned idx, llvm::Value *result, llvm::Value *vl,
                   llvm::Value *mask, bool maskAgnostic);
 
@@ -191,7 +192,6 @@ class riscv2llvm final : public mc2llvm {
   llvm::Value *readVMaskOperand(int idx, unsigned numElts);
   void assertVAligned(llvm::Value *ptr, unsigned bytes, llvm::Value *cond);
   void liftVSet(unsigned opcode);
-  void liftVLoadStore(unsigned EEW, bool isStore, bool isStrided);
   void liftVWholeRegLoadStore(unsigned nregs, unsigned EEW, bool isStore);
 
   // single-width integer arithmetic: vd[i] = vs2[i] op src[i]
@@ -255,6 +255,10 @@ class riscv2llvm final : public mc2llvm {
   void liftVAdcSbc(bool isSub);
   void liftVMadcMsbc(bool isSub, bool hasCarryIn);
 
+  enum class VAddrMode { Unit, Strided, Indexed };
+  void liftVMemAccess(VAddrMode mode, unsigned EEW, unsigned nf, bool isStore,
+                      bool ordered);
+
   // mask, scalar move, slide, gather, and reduction instructions
   enum class VMaskLogicOp { And, Nand, AndN, Xor, Or, Nor, OrN, Xnor };
   enum class VRedOp { Sum, MaxU, Max, MinU, Min, And, Or, Xor };
@@ -274,6 +278,10 @@ class riscv2llvm final : public mc2llvm {
   void liftVRGather(bool ei16);
   void liftVReduce(VRedOp op);
   void liftVWidenReduce(bool isSigned);
+  enum class VSetFirstOp { Before, Including, Only };
+  void liftVMaskSetFirst(VSetFirstOp op);
+  void liftVIota();
+  void liftVCompress();
 
   bool liftVector(unsigned opcode);
 

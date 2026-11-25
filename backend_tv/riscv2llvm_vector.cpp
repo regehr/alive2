@@ -284,103 +284,195 @@ void riscv2llvm::liftVSet(unsigned opcode) {
   curVType = vtypei;
 }
 
-// vle<eew>.v vd, (rs1), vm / vse<eew>.v vs3, (rs1), vm
-// vlse<eew>.v vd, (rs1), rs2, vm / vsse<eew>.v vs3, (rs1), rs2, vm
-//
-// EEW is encoded in the instruction, and EMUL = (EEW / SEW) * LMUL, so the
-// element count is still VLMAX. element i is at rs1 + i * stride, where the
-// stride is EEW / 8 for the unit-stride forms and the signed byte count in
-// rs2 for the strided ones. only active elements access memory, which is
-// modeled by redirecting each inactive element to a scratch location
-void riscv2llvm::liftVLoadStore(unsigned EEW, bool isStore, bool isStrided) {
+/*
+ * vector loads and stores, other than the whole-register ones
+ *
+ *   unit-stride: vle<eew>.v / vse<eew>.v, vlseg<nf>e<eew>.v / vsseg...
+ *   strided:     vlse<eew>.v / vsse<eew>.v, vlsseg<nf>e<eew>.v / vssseg...
+ *   indexed:     vl{u,o}xei<eew>.v / vs{u,o}xei<eew>.v,
+ *                vl{u,o}xseg<nf>ei<eew>.v / vs{u,o}xseg...
+ *
+ * the operand layout is (vd or vs3, rs1, [rs2 or vs2,] vm). element i of
+ * field f is at base + (i * nf + f) * bytes for unit-stride, base +
+ * i * stride + f * bytes for strided, and base + index[i] + f * bytes for
+ * indexed accesses. for unit-stride and strided accesses, `EEW` is the data
+ * width and EMUL = (EEW / SEW) * LMUL. for indexed ones, it is the width of
+ * the unsigned byte offsets in vs2, which have that EMUL, and the data
+ * has EEW = SEW and EMUL = LMUL. field f of the data is the register group
+ * that starts EMUL registers (at least one) after field f - 1
+ *
+ * only active elements access memory, which is modeled by redirecting each
+ * inactive element to a scratch location. masking applies to whole
+ * segments
+ */
+void riscv2llvm::liftVMemAccess(VAddrMode mode, unsigned EEW, unsigned nf,
+                                bool isStore, bool ordered) {
   auto cfg = getVConfig();
-  int EMULLog2 = cfg.LMULLog2 + int(Log2_32(EEW)) - int(Log2_32(cfg.SEW));
-  if (EMULLog2 < -3 || EMULLog2 > 3)
+  bool indexed = mode == VAddrMode::Indexed;
+  int encEMUL = cfg.LMULLog2 + int(Log2_32(EEW)) - int(Log2_32(cfg.SEW));
+  if (encEMUL < -3 || encEMUL > 3)
     vectorError("vector memory access with EMUL out of range, which is "
                 "reserved");
-  auto first = vregRange(CurInst->getOperand(0).getReg()).first;
-  checkVGroup(first, EEW, EMULLog2);
-  unsigned n = numVElts(EEW, EMULLog2);
-  unsigned bytes = EEW / 8;
+  unsigned DEEW = indexed ? cfg.SEW : EEW;
+  int DEMUL = indexed ? cfg.LMULLog2 : encEMUL;
+  unsigned n = numVElts(DEEW, DEMUL);
+  unsigned bytes = DEEW / 8;
+  unsigned fieldRegs = numVRegs(DEMUL);
+  if (DEMUL > 0 && (nf << DEMUL) > 8)
+    vectorError("segment access with EMUL * NFIELDS > 8, which is reserved");
 
-  auto mask = readVMaskOperand(isStrided ? 3 : 2, n);
+  auto first = vregRange(CurInst->getOperand(0).getReg()).first;
+  if (first + nf * fieldRegs > 32)
+    vectorError("segment access that would use registers past v31, which is "
+                "reserved");
+  vector<VOperand> fields;
+  for (unsigned f = 0; f < nf; ++f) {
+    fields.push_back({first + f * fieldRegs, DEEW, DEMUL});
+    checkVGroup(fields.back().first, DEEW, DEMUL);
+  }
+
+  int maskIdx = mode == VAddrMode::Unit ? 2 : 3;
+  auto mask = readVMaskOperand(maskIdx, n);
   // for a load, a masked destination may not overlap v0; for a store, v0
   // would be read with two different EEWs. both are reserved
   if (mask && first == 0)
     vectorError("masked vector memory access whose data group includes v0, "
                 "which is reserved");
 
+  // the index operand's constraints. a single-field indexed load follows
+  // the usual destination/source overlap rules; a segment load's
+  // destination may not overlap the index at all
+  bool forcedAgnostic = false;
+  optional<VOperand> index;
+  if (indexed) {
+    index = vopAt(2, EEW, encEMUL);
+    if (isStore) {
+      auto srcs = fields;
+      srcs.push_back(*index);
+      checkVSources(srcs, mask != nullptr);
+    } else if (nf == 1) {
+      forcedAgnostic = checkVOverlap(fields[0], {*index}, mask != nullptr);
+    } else {
+      checkVSources({*index}, mask != nullptr);
+      for (auto &f : fields)
+        rejectVOverlap(f, {*index});
+    }
+  }
+
   auto vl = readVL();
-  Value *active = createBodyMask(vl, n);
-  if (mask)
-    active = createSelect(active, mask,
-                          Constant::getNullValue(getVecTy(1, n)));
+  auto active = createActiveMask(mask, n);
   auto activeBits = createBitCast(active, getIntTy(n));
 
   auto i64ty = getIntTy(64);
   auto base = readFromRegOperand(1, PointerType::get(Ctx, 0));
-  Value *stride = isStrided ? readFromRegOperand(2, i64ty)
-                            : getUnsignedIntConst(bytes, 64);
+  Value *stride = mode == VAddrMode::Strided ? readFromRegOperand(2, i64ty)
+                                             : nullptr;
+  Value *offsets = nullptr;
+  if (indexed) {
+    // narrower offsets are zero-extended to XLEN
+    offsets = createVExt(readVGroup(index->first, EEW, encEMUL), 64,
+                         /*isSigned=*/false);
+  }
+
+  // the byte offset from base of segment i
+  auto segOffset = [&](unsigned i) -> Value * {
+    switch (mode) {
+    case VAddrMode::Unit:
+      return getUnsignedIntConst(uint64_t(i) * nf * bytes, 64);
+    case VAddrMode::Strided:
+      return createMul(getUnsignedIntConst(i, 64), stride);
+    case VAddrMode::Indexed:
+      return createExtractElement(offsets, i);
+    }
+    return nullptr;
+  };
 
   // LLVM only emits element-aligned vector accesses unless it is told the
   // hardware handles misaligned ones, which RVA23U64 does not promise, so
-  // a misaligned active element is treated as a fault. all elements of a
-  // unit-stride access share the base address's alignment; a strided
-  // access is checked element by element below
-  if (!isStrided) {
+  // a misaligned active element is treated as a fault. every field of a
+  // segment shares the segment's alignment, and every segment of a
+  // unit-stride access shares the base address's alignment
+  if (mode == VAddrMode::Unit) {
     auto anyActive = createICmp(ICmpInst::ICMP_NE, activeBits,
                                 getUnsignedIntConst(0, n));
     assertVAligned(base, bytes, anyActive);
   }
 
-  // the element accesses of a strided store are unordered, so where two
-  // active elements overlap, the value left in memory is not determined.
-  // rather than model that, such a store is treated as a fault. this is
-  // conservative: two active elements can only overlap when |stride| is
-  // less than the element size, but not every store like that has an
-  // overlap
-  if (isStrided && isStore) {
+  // the stores of a unit-stride or strided access, and of an unordered
+  // indexed one, are unordered, so where two active segments overlap, the
+  // value left in memory is not determined. rather than model that, such a
+  // store is treated as a fault. this is conservative: for a strided store
+  // the check is only that |stride| is at least the segment size, when
+  // more than one segment is active. (the fields within one segment never
+  // overlap each other, and a unit-stride store's segments never do.)
+  unsigned segBytes = nf * bytes;
+  if (isStore && mode == VAddrMode::Strided) {
     auto neg = createICmp(ICmpInst::ICMP_SLT, stride,
                           getUnsignedIntConst(0, 64));
-    auto absStride =
-        createSelect(neg, createSub(getUnsignedIntConst(0, 64), stride),
-                     stride);
+    auto absStride = createSelect(
+        neg, createSub(getUnsignedIntConst(0, 64), stride), stride);
     auto wide = createICmp(ICmpInst::ICMP_UGE, absStride,
-                           getUnsignedIntConst(bytes, 64));
+                           getUnsignedIntConst(segBytes, 64));
     auto atMostOne = createICmp(ICmpInst::ICMP_ULE, createCtPop(activeBits),
                                 getUnsignedIntConst(1, n));
     assertTrue(createOr(wide, atMostOne));
   }
+  if (isStore && indexed && !ordered) {
+    // segments i and j are disjoint iff their offsets differ by at least
+    // segBytes in both directions, modulo 2^64. this is quadratic in the
+    // number of elements
+    auto size = getUnsignedIntConst(segBytes, 64);
+    auto maxDiff = getUnsignedIntConst(-uint64_t(segBytes), 64);
+    for (unsigned i = 0; i < n; ++i) {
+      for (unsigned j = i + 1; j < n; ++j) {
+        auto d = createSub(createExtractElement(offsets, j),
+                           createExtractElement(offsets, i));
+        auto disjoint =
+            createAnd(createICmp(ICmpInst::ICMP_UGE, d, size),
+                      createICmp(ICmpInst::ICMP_ULE, d, maxDiff));
+        auto both = createAnd(createExtractElement(active, i),
+                              createExtractElement(active, j));
+        assertTrue(createOr(disjoint, createXor(both, getBoolConst(true))));
+      }
+    }
+  }
 
-  auto eltTy = getIntTy(EEW);
+  auto eltTy = getIntTy(DEEW);
   auto i8ty = getIntTy(8);
-  Value *data = isStore ? readVGroup(first, EEW, EMULLog2)
-                        : PoisonValue::get(getVecTy(EEW, n));
+  vector<Value *> data;
+  for (auto &f : fields)
+    data.push_back(isStore ? readVGroup(f.first, DEEW, DEMUL)
+                           : static_cast<Value *>(
+                                 PoisonValue::get(getVecTy(DEEW, n))));
   for (unsigned i = 0; i < n; ++i) {
-    Value *offset = isStrided
-                        ? static_cast<Value *>(createMul(
-                              getUnsignedIntConst(i, 64), stride))
-                        : getUnsignedIntConst(i * bytes, 64);
-    auto addr = createGEP(i8ty, base, {offset}, nextName());
+    auto segAddr = createGEP(i8ty, base, {segOffset(i)}, nextName());
     auto isActive = createExtractElement(active, i);
-    if (isStrided)
-      assertVAligned(addr, bytes, isActive);
-    auto ptr = createSelect(isActive, addr, vScratch);
-    if (isStore) {
-      createStore(createExtractElement(data, i), ptr);
-    } else {
-      // an inactive element's value is never used, but leaving it as
-      // whatever the scratch slot holds lets LLVM turn it into undef, which
-      // makes verification much slower
-      auto loaded = createSelect(isActive, createLoad(eltTy, ptr),
-                                 getUnsignedIntConst(0, EEW));
-      data = createInsertElement(data, loaded, i);
+    if (mode != VAddrMode::Unit)
+      assertVAligned(segAddr, bytes, isActive);
+    for (unsigned f = 0; f < nf; ++f) {
+      Value *addr = segAddr;
+      if (f != 0)
+        addr = createGEP(i8ty, segAddr,
+                         {getUnsignedIntConst(f * bytes, 64)}, nextName());
+      auto ptr = createSelect(isActive, addr, vScratch);
+      if (isStore) {
+        createStore(createExtractElement(data[f], i), ptr);
+      } else {
+        // an inactive element's value is never used, but leaving it as
+        // whatever the scratch slot holds lets LLVM turn it into undef,
+        // which makes verification much slower
+        auto loaded = createSelect(isActive, createLoad(eltTy, ptr),
+                                   getUnsignedIntConst(0, DEEW));
+        data[f] = createInsertElement(data[f], loaded, i);
+      }
     }
   }
 
   if (!isStore)
-    writeVGroup(first, EEW, EMULLog2, data, vl, mask, cfg.tailAgnostic,
-                cfg.maskAgnostic);
+    for (unsigned f = 0; f < nf; ++f)
+      writeVGroup(fields[f].first, DEEW, DEMUL, data[f], vl, mask,
+                  cfg.tailAgnostic || forcedAgnostic,
+                  cfg.maskAgnostic || forcedAgnostic);
 }
 
 // vl<nregs>re<eew>.v vd, (rs1) / vs<nregs>r.v vs3, (rs1)
@@ -1384,6 +1476,98 @@ void riscv2llvm::liftVWidenReduce(bool isSigned) {
   writeVElt0(vd, acc, cfg);
 }
 
+// vmsbf.m / vmsif.m / vmsof.m vd, vs2, vm: with x the lowest active set
+// bit of vs2, these set the active elements before x, up to and including
+// x, and only x. if no active element of vs2 is set, vmsbf and vmsif set
+// every active element and vmsof sets none. the destination may not
+// overlap the source, nor v0 if masked
+void riscv2llvm::liftVMaskSetFirst(VSetFirstOp op) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto mask = readVMaskOperand(2, n);
+  auto vd = vopAt(0, 1, 0);
+  auto vs2 = vopAt(1, 1, 0);
+  rejectVOverlap(vd, {vs2});
+  if (mask)
+    rejectVOverlap(vd, {VOperand{0, 1, 0}});
+  auto active = createActiveMask(mask, n);
+  auto bits = createBitCast(createAnd(readVMask(vs2.first, n), active),
+                            getIntTy(n));
+  // the lowest set bit, or 0
+  auto lowest = createAnd(bits, createSub(getUnsignedIntConst(0, n), bits));
+  auto below = createSub(lowest, getUnsignedIntConst(1, n));
+  Value *res = nullptr;
+  switch (op) {
+  case VSetFirstOp::Before:
+    res = below;
+    break;
+  case VSetFirstOp::Including:
+    res = createXor(lowest, below);
+    break;
+  case VSetFirstOp::Only:
+    res = lowest;
+    break;
+  }
+  writeVMask(vd.first, createBitCast(res, getVecTy(1, n)), readVL(), mask,
+             cfg.maskAgnostic);
+}
+
+// viota.m vd, vs2, vm: vd[i] = the number of active elements below i that
+// are set in vs2, keeping the low SEW bits. the destination may not
+// overlap the source, nor v0 if masked
+void riscv2llvm::liftVIota() {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
+  auto mask = readVMaskOperand(2, n);
+  auto vd = vopAt(0, S, L);
+  auto vs2 = vopAt(1, 1, 0);
+  checkVOverlap(vd, {vs2}, mask != nullptr);
+  rejectVOverlap(vd, {vs2});
+  auto set = createAnd(readVMask(vs2.first, n), createActiveMask(mask, n));
+  auto eltTy = getIntTy(S);
+  Value *res = PoisonValue::get(getVecTy(S, n));
+  Value *count = ConstantInt::get(eltTy, 0);
+  for (unsigned i = 0; i < n; ++i) {
+    res = createInsertElement(res, count, i);
+    count = createAdd(count, createZExt(createExtractElement(set, i), eltTy));
+  }
+  writeVGroup(vd.first, S, L, res, readVL(), mask, cfg.tailAgnostic,
+              cfg.maskAgnostic);
+}
+
+// vcompress.vm vd, vs2, vs1: the body elements of vs2 whose bit is set in
+// the mask vs1 are packed, in order, at the start of vd. everything after
+// them is tail, though nothing is written when vl = 0. this is never
+// masked, and the destination may not overlap either source
+void riscv2llvm::liftVCompress() {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
+  auto vd = vopAt(0, S, L);
+  auto vs2 = vopAt(1, S, L);
+  auto vs1 = vopAt(2, 1, 0);
+  checkVOverlap(vd, {vs2, vs1}, /*readsV0Mask=*/false);
+  rejectVOverlap(vd, {vs2, vs1});
+  auto vl = readVL();
+  auto selected = createAnd(readVMask(vs1.first, n), createBodyMask(vl, n));
+  auto src = readVGroup(vs2.first, S, L);
+  auto i64ty = getIntTy(64);
+  Value *res = Constant::getNullValue(src->getType());
+  Value *pos = getUnsignedIntConst(0, 64);
+  for (unsigned i = 0; i < n; ++i) {
+    auto sel = createExtractElement(selected, i);
+    // pos <= i < n, so the insert is always in range
+    auto moved = createInsertElement(res, createExtractElement(src, i), pos);
+    res = createSelect(sel, moved, res);
+    pos = createAdd(pos, createZExt(sel, i64ty));
+  }
+  writeVGroup(vd.first, S, L, res, vl, nullptr, cfg.tailAgnostic,
+              cfg.maskAgnostic, /*keep=*/nullptr, /*bodyLen=*/pos);
+}
+
 // returns false if the opcode is not one of ours
 bool riscv2llvm::liftVector(unsigned opcode) {
   switch (opcode) {
@@ -1646,6 +1830,21 @@ bool riscv2llvm::liftVector(unsigned opcode) {
   case RISCV::VID_V:
     liftVId();
     return true;
+  case RISCV::VMSBF_M:
+    liftVMaskSetFirst(VSetFirstOp::Before);
+    return true;
+  case RISCV::VMSIF_M:
+    liftVMaskSetFirst(VSetFirstOp::Including);
+    return true;
+  case RISCV::VMSOF_M:
+    liftVMaskSetFirst(VSetFirstOp::Only);
+    return true;
+  case RISCV::VIOTA_M:
+    liftVIota();
+    return true;
+  case RISCV::VCOMPRESS_VM:
+    liftVCompress();
+    return true;
 
   case RISCV::VMV_X_S:
     liftVMvXS();
@@ -1698,43 +1897,69 @@ bool riscv2llvm::liftVector(unsigned opcode) {
     liftVWidenReduce(true);
     return true;
 
-  case RISCV::VLE8_V:
-    liftVLoadStore(8, false, false);
-    return true;
-  case RISCV::VLE16_V:
-    liftVLoadStore(16, false, false);
-    return true;
-  case RISCV::VLE32_V:
-    liftVLoadStore(32, false, false);
-    return true;
-  case RISCV::VLE64_V:
-    liftVLoadStore(64, false, false);
-    return true;
-  case RISCV::VSE8_V:
-    liftVLoadStore(8, true, false);
-    return true;
-  case RISCV::VSE16_V:
-    liftVLoadStore(16, true, false);
-    return true;
-  case RISCV::VSE32_V:
-    liftVLoadStore(32, true, false);
-    return true;
-  case RISCV::VSE64_V:
-    liftVLoadStore(64, true, false);
-    return true;
-
-#define STRIDED(E)                                                             \
+#define VMEM_EEW(E)                                                            \
+  case RISCV::VLE##E##_V:                                                      \
+    liftVMemAccess(VAddrMode::Unit, E, 1, false, false);                       \
+    return true;                                                               \
+  case RISCV::VSE##E##_V:                                                      \
+    liftVMemAccess(VAddrMode::Unit, E, 1, true, false);                        \
+    return true;                                                               \
   case RISCV::VLSE##E##_V:                                                     \
-    liftVLoadStore(E, false, true);                                            \
+    liftVMemAccess(VAddrMode::Strided, E, 1, false, false);                    \
     return true;                                                               \
   case RISCV::VSSE##E##_V:                                                     \
-    liftVLoadStore(E, true, true);                                             \
+    liftVMemAccess(VAddrMode::Strided, E, 1, true, false);                     \
+    return true;                                                               \
+  case RISCV::VLUXEI##E##_V:                                                   \
+    liftVMemAccess(VAddrMode::Indexed, E, 1, false, false);                    \
+    return true;                                                               \
+  case RISCV::VLOXEI##E##_V:                                                   \
+    liftVMemAccess(VAddrMode::Indexed, E, 1, false, true);                     \
+    return true;                                                               \
+  case RISCV::VSUXEI##E##_V:                                                   \
+    liftVMemAccess(VAddrMode::Indexed, E, 1, true, false);                     \
+    return true;                                                               \
+  case RISCV::VSOXEI##E##_V:                                                   \
+    liftVMemAccess(VAddrMode::Indexed, E, 1, true, true);                      \
     return true;
-    STRIDED(8)
-    STRIDED(16)
-    STRIDED(32)
-    STRIDED(64)
-#undef STRIDED
+#define VSEG(NF, W)                                                            \
+  case RISCV::VLSEG##NF##E##W##_V:                                             \
+    liftVMemAccess(VAddrMode::Unit, W, NF, false, false);                      \
+    return true;                                                               \
+  case RISCV::VSSEG##NF##E##W##_V:                                             \
+    liftVMemAccess(VAddrMode::Unit, W, NF, true, false);                       \
+    return true;                                                               \
+  case RISCV::VLSSEG##NF##E##W##_V:                                            \
+    liftVMemAccess(VAddrMode::Strided, W, NF, false, false);                   \
+    return true;                                                               \
+  case RISCV::VSSSEG##NF##E##W##_V:                                            \
+    liftVMemAccess(VAddrMode::Strided, W, NF, true, false);                    \
+    return true;                                                               \
+  case RISCV::VLUXSEG##NF##EI##W##_V:                                          \
+    liftVMemAccess(VAddrMode::Indexed, W, NF, false, false);                   \
+    return true;                                                               \
+  case RISCV::VLOXSEG##NF##EI##W##_V:                                          \
+    liftVMemAccess(VAddrMode::Indexed, W, NF, false, true);                    \
+    return true;                                                               \
+  case RISCV::VSUXSEG##NF##EI##W##_V:                                          \
+    liftVMemAccess(VAddrMode::Indexed, W, NF, true, false);                    \
+    return true;                                                               \
+  case RISCV::VSOXSEG##NF##EI##W##_V:                                          \
+    liftVMemAccess(VAddrMode::Indexed, W, NF, true, true);                     \
+    return true;
+#define VSEG_NF(W)                                                             \
+  VSEG(2, W) VSEG(3, W) VSEG(4, W) VSEG(5, W) VSEG(6, W) VSEG(7, W) VSEG(8, W)
+    VMEM_EEW(8)
+    VMEM_EEW(16)
+    VMEM_EEW(32)
+    VMEM_EEW(64)
+    VSEG_NF(8)
+    VSEG_NF(16)
+    VSEG_NF(32)
+    VSEG_NF(64)
+#undef VSEG_NF
+#undef VSEG
+#undef VMEM_EEW
 
 #define WHOLE_REG_LOAD(N, E)                                                   \
   case RISCV::VL##N##RE##E##_V:                                                \

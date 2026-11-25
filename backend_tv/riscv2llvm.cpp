@@ -410,12 +410,14 @@ Value *riscv2llvm::createBodyMask(Value *vl, unsigned numElts) {
  * `mask` is a vector of numVElts(EEW, EMUL) i1s, or null if unmasked.
  * `keep`, if not null, is another such vector: body elements where it is
  * set keep their old value whatever the mask and the policies say, the way
- * vslideup leaves the elements below its offset unchanged
+ * vslideup leaves the elements below its offset unchanged. `bodyLen`, if
+ * not null, ends the body there instead of at vl, as vcompress needs; the
+ * nothing-is-written rule still depends on vl
  */
 void riscv2llvm::writeVGroup(unsigned first, unsigned EEW, int EMULLog2,
                              Value *result, Value *vl, Value *mask,
                              bool tailAgnostic, bool maskAgnostic,
-                             Value *keep) {
+                             Value *keep, Value *bodyLen) {
   checkVGroup(first, EEW, EMULLog2);
   auto n = numVElts(EEW, EMULLog2);
   auto regs = numVRegs(EMULLog2);
@@ -440,7 +442,7 @@ void riscv2llvm::writeVGroup(unsigned first, unsigned EEW, int EMULLog2,
       keep = createShuffleVector(keep, widen);
   }
 
-  auto inBody = createBodyMask(vl, total);
+  auto inBody = createBodyMask(bodyLen ? bodyLen : vl, total);
   // select rather than and, so the poison lanes of a widened mask are
   // never looked at
   Value *active =
