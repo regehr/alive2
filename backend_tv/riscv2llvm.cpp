@@ -1101,11 +1101,13 @@ void riscv2llvm::platformInit() {
   for (unsigned i = 0; i < 32; ++i)
     createRegStorage(RISCV::V0 + i, VLEN, "V" + to_string(i));
 
-  // ...except under the vector calling convention variant, which a
-  // function that takes or returns a vector follows
-  usesVectorCC = srcFn->getReturnType()->isVectorTy();
-  for (auto &arg : srcFn->args())
-    usesVectorCC |= arg.getType()->isVectorTy();
+  // ...except under the vector calling convention variant. The psABI
+  // says any function passing vectors in vector registers follows the
+  // variant, but LLVM applies it only to riscv_vector_cc functions: a C
+  // calling convention function takes vector arguments in v8-v23 yet
+  // preserves no vector registers (see test_vector_std in LLVM's
+  // test/CodeGen/RISCV/rvv/callee-saved-regs.ll). We follow LLVM.
+  usesVectorCC = srcFn->getCallingConv() == CallingConv::RISCV_VectorCall;
   if (usesVectorCC)
     for (unsigned i = 0; i < 32; ++i)
       if (isCalleeSavedVReg(i))
@@ -1307,8 +1309,14 @@ void riscv2llvm::checkTypeSupport(Type *ty) {
 }
 
 void riscv2llvm::checkCallingConv(Function *fn) {
-  if (fn->getCallingConv() != CallingConv::C) {
-    *out << "\nERROR: Only the C calling convention is supported\n\n";
+  // riscv_vector_cc differs from C only in making v1-v7 and v24-v31
+  // callee-saved. For the lifted function, doReturn() checks that; for a
+  // callee, doCall() clobbering all vector state is a sound
+  // over-approximation
+  if (fn->getCallingConv() != CallingConv::C &&
+      fn->getCallingConv() != CallingConv::RISCV_VectorCall) {
+    *out << "\nERROR: Only the C and riscv_vector_cc calling conventions "
+            "are supported\n\n";
     exit(-1);
   }
 }

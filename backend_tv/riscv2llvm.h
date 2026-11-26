@@ -50,9 +50,9 @@ class riscv2llvm final : public mc2llvm {
   // platformInit(). Each of V0-V31 is backed by an iVLEN alloca.
   unsigned VLEN{0};
 
-  // true if the function takes or returns a vector, and so
-  // follows the psABI's vector calling convention variant, which makes
-  // v1-v7 and v24-v31 callee-saved. their values on entry are kept here
+  // true if the function is riscv_vector_cc, and so follows the psABI's
+  // vector calling convention variant, which makes v1-v7 and v24-v31
+  // callee-saved. their values on entry are kept here
   bool usesVectorCC{false};
   llvm::Value *initialVReg[32]{nullptr};
   static bool isCalleeSavedVReg(unsigned idx) {
