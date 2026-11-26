@@ -234,8 +234,42 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
           exit(-1);
         }
 
+  // Alive2's type conversion rejects these without saying why, which
+  // leaves only "Fatal error, exiting"; catch them here to give a reason
+  {
+    std::function<const char *(llvm::Type *)> badType =
+        [&](llvm::Type *T) -> const char * {
+      if (auto *PT = llvm::dyn_cast<llvm::PointerType>(T))
+        return PT->getAddressSpace() != 0
+                   ? "pointers in non-zero address spaces not supported"
+                   : nullptr;
+      if (auto *ST = llvm::dyn_cast<llvm::StructType>(T)) {
+        if (ST->isOpaque())
+          return nullptr;
+        if (ST->isScalableTy())
+          return "structs containing scalable vectors not supported";
+      }
+      for (auto *Sub : T->subtypes())
+        if (auto *msg = badType(Sub))
+          return msg;
+      return nullptr;
+    };
+    auto check = [&](llvm::Type *T) {
+      if (auto *msg = badType(T)) {
+        *out << "\nERROR: " << msg << "\n\n";
+        exit(-1);
+      }
+    };
+    check(srcFn->getFunctionType());
+    for (auto &I : llvm::instructions(*srcFn)) {
+      check(I.getType());
+      for (auto &Op : I.operands())
+        check(Op->getType());
+    }
+  }
+
   for (auto &global : srcModule->globals()) {
-    lifter::debug() << global.getName().str();
+    lifter::debug() << global.getName().str() << "\n";
     if (global.isThreadLocal()) {
       *out << "\nERROR: thread_local not supported\n\n";
       exit(-1);

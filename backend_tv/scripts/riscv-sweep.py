@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -47,7 +48,14 @@ SUMMARY_RE = {
     'failed_to_prove': re.compile(r'^\s*(\d+) failed-to-prove transformations', re.M),
     'alive_errors': re.compile(r'^\s*(\d+) Alive2 errors', re.M),
 }
-DETAIL_RE = re.compile(r'^(ERROR:.*|.*Assertion .* failed.*|LLVM ERROR:.*)$', re.M)
+# ERROR: is not anchored to the start of the line, since debug output
+# without a trailing newline can run into it. The fallback catches
+# failures that don't print an ERROR: line at all.
+DETAIL_RE = re.compile(r'(LLVM ERROR:.*|ERROR:.*|.*Assertion .* failed.*)$', re.M)
+DETAIL_FALLBACK_RE = re.compile(
+    r'(Could not read bitcode.*|^error: .*|.*cannot be lifted|Fatal error, exiting)$',
+    re.M)
+RUN_RE = re.compile(r'^\s*;\s*RUN:(.*)$', re.M)
 
 
 def unescape_llvm_name(s):
@@ -110,6 +118,58 @@ def collect_inputs(llvm, suites):
             yield 'CodeGen-RISCV', p.relative_to(root), p
 
 
+def run_commands(text):
+    """The file's RUN commands, with continuation lines joined."""
+    cmds, cur = [], ''
+    for m in RUN_RE.finditer(text):
+        line = m.group(1).rstrip()
+        if line.endswith('\\'):
+            cur += line[:-1] + ' '
+            continue
+        cmds.append(cur + line)
+        cur = ''
+    return cmds
+
+
+def sed_command(text):
+    """If the test pipes itself through sed before compiling (as many
+    RISC-V tests do to fill in iXLen and the like), return that sed
+    command as an argv list, preferring a riscv64 RUN line. The '%s'
+    argument is left for the caller to substitute."""
+    cands = [c for c in run_commands(text) if re.search(r'\bsed\b', c)]
+    if not cands:
+        return None
+    rv64 = [c for c in cands if 'riscv64' in c]
+    first = (rv64 or cands)[0].split('|')[0].strip()
+    try:
+        argv = shlex.split(first)
+    except ValueError:
+        return None
+    if not argv or argv[0] != 'sed' or '%s' not in argv:
+        return None
+    return argv
+
+
+def preprocess(suite, rel, path, workdir):
+    """Return the file backend-tv should read: the test itself, or a copy
+    rewritten by the test's own sed command."""
+    try:
+        argv = sed_command(path.read_text(errors='replace'))
+    except OSError:
+        return path
+    if not argv:
+        return path
+    argv = [str(path) if a == '%s' else a for a in argv]
+    p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                       stdin=subprocess.DEVNULL)
+    if p.returncode != 0:
+        return path
+    out = workdir / 'preprocessed' / suite / rel
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(p.stdout)
+    return out
+
+
 def safe_name(fn, maxlen=80):
     s = re.sub(r'[^A-Za-z0-9._-]', '_', fn)
     return s[:maxlen] or '_'
@@ -134,14 +194,14 @@ def classify(rc, output, timed_out):
         status = 'error'
     else:
         status = 'no-summary'
-    m = DETAIL_RE.search(output)
+    m = DETAIL_RE.search(output) or DETAIL_FALLBACK_RE.search(output)
     return status, counts, (m.group(1).strip()[:300] if m else None)
 
 
 def run_one(job, args):
-    suite, rel, path, idx, fn, log = job
+    suite, rel, path, inp, idx, fn, log = job
     cmd = [str(args.backend_tv), '-backend=riscv64', '-always-verify',
-           f'--fn={fn}', *args.extra, str(path)]
+           f'--fn={fn}', *args.extra, str(inp)]
 
     # Resource limits are applied by prlimit(1) rather than preexec_fn,
     # which is not safe to use while other threads are running.
@@ -168,9 +228,12 @@ def run_one(job, args):
     output = out.decode(errors='replace')
     status, counts, detail = classify(p.returncode, output, timed_out)
 
+    sed_note = (f'# input: {inp} (rewritten by the test\'s sed command)\n'
+                if inp != path else '')
     header = (f'# file: {path}\n'
               f'# suite: {suite}\n'
               f'# relpath: {rel}\n'
+              f'{sed_note}'
               f'# function: {fn}\n'
               f'# cmd: {" ".join(cmd)}\n'
               f'# rc: {p.returncode}\n'
@@ -260,13 +323,14 @@ def main():
         if filt and not filt.search(str(rel)):
             continue
         nfiles += 1
-        for idx, fn in enumerate(functions_in(path)):
+        inp = preprocess(suite, rel, path, args.workdir)
+        for idx, fn in enumerate(functions_in(inp)):
             log = (args.out / 'logs' / suite / rel /
                    f'{idx:04d}-{safe_name(fn)}.log')
             if str(log.relative_to(args.out)) in done and log.exists():
                 skipped += 1
                 continue
-            jobs.append((suite, rel, path, idx, fn, log))
+            jobs.append((suite, rel, path, inp, idx, fn, log))
             if args.max_functions and len(jobs) >= args.max_functions:
                 break
         if args.max_functions and len(jobs) >= args.max_functions:
