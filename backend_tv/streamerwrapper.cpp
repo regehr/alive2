@@ -21,7 +21,11 @@ void MCStreamerWrapper::emitInstruction(const MCInst &Inst,
 
   debug() << "MCStreamerWrapper got opcode = " << Inst.getOpcode() << "\n";
 
-  assert(prev_line != ASMLine::none);
+  if (prev_line == ASMLine::none) {
+    // e.g. module-level inline asm that places code before any label
+    *out << "\nERROR: instruction appears before any label\n\n";
+    exit(-1);
+  }
 
   if (prev_line == ASMLine::terminator)
     curBB = MF.addBlock(MF.getLabel());
@@ -105,6 +109,13 @@ void MCStreamerWrapper::emitValueImpl(const MCExpr *Value, unsigned Size,
     *out << "[emitValue MCTargetExpr]\n";
     TE->dump();
     assert(false && "handle this");
+  } else if (isa<MCSpecifierExpr>(Value)) {
+    // e.g. %pltpcrel(f) in a relative vtable: a PC-relative offset,
+    // which our symbol+constant representation can't express
+    Value->dump();
+    *out << "\nERROR: unsupported relocation specifier expression emitted "
+            "into section '" << curSec << "'\n\n";
+    exit(-1);
   } else {
     assert(false && "unexpected MCExpr type");
   }

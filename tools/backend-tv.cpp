@@ -268,6 +268,42 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
       F.deleteBody();
   }
 
+  // aliases and ifuncs must point at definitions, so any that now
+  // point at a declaration become external declarations themselves;
+  // otherwise the module fails verification during codegen
+  auto replaceWithDecl = [&](llvm::GlobalValue &GV, llvm::Type *valTy) {
+    std::string name = GV.getName().str();
+    GV.setName("");
+    llvm::GlobalValue *decl;
+    if (auto *FT = llvm::dyn_cast<llvm::FunctionType>(valTy))
+      decl = llvm::Function::Create(FT, llvm::GlobalValue::ExternalLinkage,
+                                    GV.getAddressSpace(), name, srcModule);
+    else
+      decl = new llvm::GlobalVariable(
+          *srcModule, valTy, /*isConstant=*/false,
+          llvm::GlobalValue::ExternalLinkage, nullptr, name, nullptr,
+          llvm::GlobalValue::NotThreadLocal, GV.getAddressSpace());
+    GV.replaceAllUsesWith(decl);
+  };
+  llvm::SmallVector<llvm::GlobalValue *, 8> dead;
+  // ifuncs first: an alias may point at an ifunc we replace
+  for (auto &GI : srcModule->ifuncs()) {
+    auto *R = GI.getResolverFunction();
+    if (!R || R->isDeclaration()) {
+      replaceWithDecl(GI, GI.getValueType());
+      dead.push_back(&GI);
+    }
+  }
+  for (auto &GA : srcModule->aliases()) {
+    auto *GO = GA.getAliaseeObject();
+    if (!GO || GO->isDeclaration()) {
+      replaceWithDecl(GA, GA.getValueType());
+      dead.push_back(&GA);
+    }
+  }
+  for (auto *GV : dead)
+    GV->eraseFromParent();
+
   if (test_replace_ptrtoint) {
     llvm::raw_os_ostream streamWrapper(*out);
     tryReplacePtrtoInt(srcFn);

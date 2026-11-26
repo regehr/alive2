@@ -756,6 +756,13 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
     auto a2 = a.addFnAttribute(Ctx, Attribute::NoReturn);
     CI->setAttributes(a2);
   }
+  // a call-site memory attribute (e.g. "call @f() readnone") is a fact
+  // about this call, so it holds for the lifted call as well; without it
+  // the target call may write memory the source call can't, which
+  // Alive2's call-state matching doesn't handle
+  auto memAttr = llvmCI->getAttributes().getFnAttr(Attribute::Memory);
+  if (memAttr.isValid())
+    CI->addFnAttr(memAttr);
   // NB we have to check for both function attributes and call site
   // attributes
   if (llvmCI->hasRetAttr(Attribute::SExt))
