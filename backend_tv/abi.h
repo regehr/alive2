@@ -51,6 +51,11 @@ struct ArgLoc {
     // stack slot; `limbs` has exactly one entry, and when it is in a
     // register `reg` indexes the vector registers rather than the GPRs
     Vector,
+    // RV64 only: a scalable vector in an RVV register group. `limbs` has
+    // one entry per register of the group, lowest-numbered first, and each
+    // `reg` is an architectural vector register number (8 means v8). a
+    // fractional-LMUL type occupies the low part of a single register
+    VectorGroup,
   };
 
   Kind kind{None};
@@ -118,6 +123,8 @@ private:
   const llvm::DataLayout &DL;
   unsigned nextGPR{0};
   unsigned nextVec{0};
+  // RV64: which of v8-v23 hold vector arguments so far; bit i is v(8 + i)
+  uint32_t vregsUsed{0};
   uint64_t stackOff{0};
   ArgLoc ret;
 
@@ -135,6 +142,7 @@ private:
 
   ArgLoc assignArgAArch64(llvm::Type *ty);
   ArgLoc assignArgRISCV(llvm::Type *ty);
+  ArgLoc assignRVVGroup(llvm::ScalableVectorType *ty, bool isRet);
   ArgLoc assignRet(llvm::Type *ty);
 };
 

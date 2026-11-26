@@ -713,11 +713,20 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   // tail call. Restoring SP later does not make a misaligned call valid.
   checkStackAlignment();
 
-  for (auto &arg : FC.getFunctionType()->params()) {
+  auto *calleeTy = FC.getFunctionType();
+  bool scalable = isa<ScalableVectorType>(calleeTy->getReturnType());
+  for (auto *arg : calleeTy->params())
+    scalable |= isa<ScalableVectorType>(arg);
+  if (scalable) {
+    *out << "\nERROR: calls that pass or return scalable vectors are not "
+            "supported yet\n\n";
+    exit(-1);
+  }
+  for (auto &arg : calleeTy->params()) {
     if (auto vTy = dyn_cast<VectorType>(arg))
       checkVectorTy(vTy);
   }
-  if (auto RT = dyn_cast<VectorType>(FC.getFunctionType()->getReturnType()))
+  if (auto RT = dyn_cast<VectorType>(calleeTy->getReturnType()))
     checkVectorTy(RT);
 
   auto args = marshallArgs(FC.getFunctionType(), *llvmCI);
@@ -904,6 +913,11 @@ void riscv2llvm::doReturn(Value *returnAddress) {
       assertSame(initialFPReg[reg], bits);
     }
   }
+  // the vector calling convention variant preserves v1-v7 and v24-v31
+  if (usesVectorCC)
+    for (unsigned i = 0; i < 32; ++i)
+      if (isCalleeSavedVReg(i))
+        assertSame(initialVReg[i], createLoad(getIntTy(VLEN), lookupVReg(i)));
   // JALR clears bit 0 of its target. Compare effective destinations so a
   // change to that bit alone does not invalidate an otherwise correct return.
   auto mask = getSignedIntConst(-2, 64);
@@ -916,6 +930,8 @@ void riscv2llvm::doReturn(Value *returnAddress) {
 
   if (retTyp->isVoidTy()) {
     createReturn(nullptr);
+  } else if (retLoc.kind == ArgLoc::VectorGroup) {
+    createReturn(readScalableRet(cast<ScalableVectorType>(retTyp), retLoc));
   } else if (retTyp->isFloatingPointTy()) {
     createReturn(readFPABIReg(RISCV::F10_Q + retLoc.limbs[0].reg, retTyp));
   } else {
@@ -940,6 +956,77 @@ void riscv2llvm::doReturn(Value *returnAddress) {
     }
     createReturn(retVal);
   }
+}
+
+/*
+ * scalable vectors at the ABI boundary. alive2 checks a single vscale, at
+ * which a <vscale x N x T> has exactly N * vscale elements, and VLEN is 64
+ * * vscale, so such a value fills its register group exactly -- or, for a
+ * fractional-LMUL type, the low part of one register. the conversions go
+ * element by element, because alive2 handles neither scalable allocas nor
+ * llvm.vector.extract/insert. the indices are constants that may be past
+ * the type's known minimum, which LLVM does not fold to poison for
+ * scalable vectors
+ */
+
+Value *riscv2llvm::scalableToFixed(Value *v) {
+  auto *ty = cast<ScalableVectorType>(v->getType());
+  unsigned n = ty->getMinNumElements() * util::config::vscale_value;
+  Value *res = PoisonValue::get(FixedVectorType::get(ty->getElementType(), n));
+  for (unsigned i = 0; i < n; ++i)
+    res = createInsertElement(res, createExtractElement(v, i), i);
+  return res;
+}
+
+Value *riscv2llvm::fixedToScalable(Value *v, ScalableVectorType *ty) {
+  auto n = cast<FixedVectorType>(v->getType())->getNumElements();
+  assert(n == ty->getMinNumElements() * util::config::vscale_value);
+  Value *res = PoisonValue::get(ty);
+  for (unsigned i = 0; i < n; ++i)
+    res = createInsertElement(res, createExtractElement(v, i), i);
+  return res;
+}
+
+// put an incoming argument where the caller would have: in its register
+// group, with the unused high part of a fractional type's register left
+// unknown
+void riscv2llvm::writeScalableArg(Value *arg, const ArgLoc &loc) {
+  auto fixed = scalableToFixed(arg);
+  auto *fixedTy = cast<FixedVectorType>(fixed->getType());
+  unsigned EEW = getBitWidth(fixedTy->getElementType());
+  unsigned n = fixedTy->getNumElements();
+  unsigned nregs = loc.limbs.size();
+  unsigned first = loc.limbs[0].reg;
+  unsigned full = nregs * VLEN / EEW;
+  if (n < full) {
+    assert(nregs == 1);
+    // widen to a whole register, then fill the new lanes from `rest`
+    SmallVector<int> widen;
+    for (unsigned i = 0; i < full; ++i)
+      widen.push_back(i < n ? int(i) : PoisonMaskElem);
+    auto wide = createShuffleVector(fixed, widen);
+    auto rest = createBitCast(createUnknownInt(VLEN), getVecTy(EEW, full));
+    SmallVector<int> idx;
+    for (unsigned i = 0; i < full; ++i)
+      idx.push_back(i < n ? int(i) : int(full + i));
+    fixed = createShuffleVector(wide, rest, idx);
+  }
+  writeVRegs(first, nregs, fixed);
+}
+
+// the value a function returns in a register group; for a fractional
+// type, the high part of the register is ignored
+Value *riscv2llvm::readScalableRet(ScalableVectorType *ty, const ArgLoc &loc) {
+  unsigned EEW = getBitWidth(ty->getElementType());
+  unsigned n = ty->getMinNumElements() * util::config::vscale_value;
+  auto vec = readVRegs(loc.limbs[0].reg, loc.limbs.size(), EEW);
+  if (cast<FixedVectorType>(vec->getType())->getNumElements() != n) {
+    SmallVector<int> low;
+    for (unsigned i = 0; i < n; ++i)
+      low.push_back(i);
+    vec = createShuffleVector(vec, low);
+  }
+  return fixedToScalable(vec, ty);
 }
 
 void riscv2llvm::platformInit() {
@@ -984,6 +1071,16 @@ void riscv2llvm::platformInit() {
   for (unsigned i = 0; i < 32; ++i)
     createRegStorage(RISCV::V0 + i, VLEN, "V" + to_string(i));
 
+  // ...except under the vector calling convention variant, which a
+  // function that takes or returns a scalable vector follows
+  usesVectorCC = isa<ScalableVectorType>(srcFn->getReturnType());
+  for (auto &arg : srcFn->args())
+    usesVectorCC |= isa<ScalableVectorType>(arg.getType());
+  if (usesVectorCC)
+    for (unsigned i = 0; i < 32; ++i)
+      if (isCalleeSavedVReg(i))
+        initialVReg[i] = createLoad(getIntTy(VLEN), lookupVReg(i));
+
   // vl, vtype, vxrm, and vxsat are unspecified on entry. vlenb is a
   // constant (see getVLENB()) and vstart is not modeled
   createRegStorage(RISCV::VL, 64, "VL");
@@ -1022,6 +1119,12 @@ void riscv2llvm::platformInit() {
                               srcArg = srcFn->arg_begin();
        arg != E; ++arg, ++srcArg) {
     auto loc = CC.assignArg(arg->getType());
+    if (loc.kind == ArgLoc::VectorGroup) {
+      debug() << "  processing scalable vector arg at " << toString(loc)
+              << "\n";
+      writeScalableArg(&*arg, loc);
+      continue;
+    }
     debug() << "  processing " << getBitWidth(arg) << "-bit arg at "
          << toString(loc);
     auto *argTy = arg->getType();
@@ -1140,8 +1243,25 @@ Value *riscv2llvm::getPointerOperand() {
   return getPointerFromMCExpr();
 }
 
-void riscv2llvm::checkArgSupport(Argument &arg) {}
+// scalable vectors of integers can be passed and returned in RVV register
+// groups (see backend_tv/abi.h); the lifter has no vector floating point
+static void checkScalableElt(ScalableVectorType *ty, std::ostream *out) {
+  if (!ty->getElementType()->isIntegerTy()) {
+    *out << "\nERROR: only scalable vectors of integers are supported\n\n";
+    exit(-1);
+  }
+}
+
+void riscv2llvm::checkArgSupport(Argument &arg) {
+  if (auto *svTy = dyn_cast<ScalableVectorType>(arg.getType()))
+    checkScalableElt(svTy, out);
+}
+
 void riscv2llvm::checkTypeSupport(Type *ty) {
+  if (auto *svTy = dyn_cast<ScalableVectorType>(ty)) {
+    checkScalableElt(svTy, out);
+    return;
+  }
   if (ty->isVectorTy()) {
     *out << "\nERROR: vectors not yet supported\n\n";
     exit(-1);

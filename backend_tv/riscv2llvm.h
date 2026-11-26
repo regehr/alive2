@@ -50,6 +50,15 @@ class riscv2llvm final : public mc2llvm {
   // platformInit(). Each of V0-V31 is backed by an iVLEN alloca.
   unsigned VLEN{0};
 
+  // true if the function takes or returns a scalable vector, and so
+  // follows the psABI's vector calling convention variant, which makes
+  // v1-v7 and v24-v31 callee-saved. their values on entry are kept here
+  bool usesVectorCC{false};
+  llvm::Value *initialVReg[32]{nullptr};
+  static bool isCalleeSavedVReg(unsigned idx) {
+    return (idx >= 1 && idx <= 7) || idx >= 24;
+  }
+
   // a vector register operand names one register, an LMUL>1 group (VnM2,
   // VnM4, VnM8), or a segment tuple; all of these cover a contiguous run
   // of architectural registers starting at `first`
@@ -284,6 +293,14 @@ class riscv2llvm final : public mc2llvm {
   void liftVCompress();
 
   bool liftVector(unsigned opcode);
+
+  // moving scalable vector arguments and return values between LLVM
+  // values and RVV register groups; see backend_tv/abi.h
+  llvm::Value *scalableToFixed(llvm::Value *v);
+  llvm::Value *fixedToScalable(llvm::Value *v, llvm::ScalableVectorType *ty);
+  void writeScalableArg(llvm::Value *arg, const ArgLoc &loc);
+  llvm::Value *readScalableRet(llvm::ScalableVectorType *ty,
+                               const ArgLoc &loc);
 
 public:
   riscv2llvm(llvm::Function *srcFn, std::unique_ptr<llvm::MemoryBuffer> MB,

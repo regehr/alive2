@@ -25,12 +25,15 @@ std::string toString(const ArgLoc &loc) {
   case ArgLoc::Vector:
     s = "VECTOR";
     break;
+  case ArgLoc::VectorGroup:
+    s = "VGROUP";
+    break;
   }
   for (auto &limb : loc.limbs) {
     s += " ";
     if (!limb.inReg)
       s += "s" + std::to_string(limb.stackOffset);
-    else if (loc.kind == ArgLoc::Vector)
+    else if (loc.kind == ArgLoc::Vector || loc.kind == ArgLoc::VectorGroup)
       s += "v" + std::to_string(limb.reg);
     else if (loc.kind == ArgLoc::Indirect &&
              limb.reg == CCAssigner::AArch64IndirectResultReg)
@@ -142,7 +145,61 @@ ArgLoc CCAssigner::assignArgAArch64(Type *ty) {
  * "Scalars wider than 2*XLEN bits are passed by reference and are replaced
  * in the argument list with the address" (riscv-elf-psabi-doc).
  */
+/*
+ * a scalable vector goes in an RVV register group, following the psABI's
+ * "standard vector calling convention variant" (riscv-cc.adoc) and
+ * allocateRVVReg() in LLVM's RISCVCallingConv.cpp. the type's LMUL is its
+ * known-minimum size over 64 bits (RVVBitsPerBlock), treated as 1 when
+ * that is fractional. each argument takes the first group of LMUL
+ * registers in v8-v23 that starts at a multiple of LMUL and holds no
+ * earlier argument -- the search starts at v8 every time, so a later
+ * argument can land below an earlier one. a vector return value uses the
+ * group starting at v8.
+ *
+ * not modeled, and so Unsupported: masks (the first one goes in v0),
+ * tuples, types LLVM widens or splits rather than mapping directly onto
+ * one group, and arguments passed by reference once v8-v23 run out.
+ */
+ArgLoc CCAssigner::assignRVVGroup(ScalableVectorType *ty, bool isRet) {
+  ArgLoc loc;
+  loc.limbBits = limbBits();
+  auto *eltTy = ty->getElementType();
+  bool eltOK = eltTy->isFloatTy() || eltTy->isDoubleTy();
+  if (auto *intTy = dyn_cast<IntegerType>(eltTy)) {
+    unsigned w = intTy->getBitWidth();
+    eltOK = w == 8 || w == 16 || w == 32 || w == 64;
+  }
+  uint64_t minElts = ty->getMinNumElements();
+  uint64_t minBits = eltTy->getScalarSizeInBits() * minElts;
+  if (!eltOK || !isPowerOf2_64(minElts) || minBits > 512) {
+    loc.kind = ArgLoc::Unsupported;
+    return loc;
+  }
+  // the known-minimum size; the real size is this times vscale
+  loc.bitWidth = minBits;
+
+  unsigned nregs = std::max<uint64_t>(1, minBits / 64);
+  unsigned first = 0;
+  if (!isRet) {
+    uint32_t group = (1u << nregs) - 1;
+    while (first + nregs <= 16 && (vregsUsed & (group << first)))
+      first += nregs;
+    if (first + nregs > 16) {
+      loc.kind = ArgLoc::Unsupported;
+      return loc;
+    }
+    vregsUsed |= group << first;
+  }
+  loc.kind = ArgLoc::VectorGroup;
+  for (unsigned i = 0; i < nregs; ++i)
+    loc.limbs.push_back(LimbLoc{true, 8 + first + i, 0});
+  return loc;
+}
+
 ArgLoc CCAssigner::assignArgRISCV(Type *ty) {
+  if (auto *svTy = dyn_cast<ScalableVectorType>(ty))
+    return assignRVVGroup(svTy, /*isRet=*/false);
+
   ArgLoc loc;
   loc.bitWidth = DL.getTypeSizeInBits(ty);
   loc.limbBits = limbBits();
@@ -208,6 +265,14 @@ ArgLoc CCAssigner::assignRet(Type *ty) {
   if (ty->isVoidTy())
     return loc;
 
+  if (auto *svTy = dyn_cast<ScalableVectorType>(ty)) {
+    if (target == Target::RISCV64)
+      return assignRVVGroup(svTy, /*isRet=*/true);
+    // AArch64 SVE is not modeled
+    loc.kind = ArgLoc::Unsupported;
+    return loc;
+  }
+
   loc.bitWidth = DL.getTypeSizeInBits(ty);
   loc.limbBits = limbBits();
 
@@ -255,6 +320,9 @@ ArgLoc CCAssigner::assignRet(Type *ty) {
 ArgLoc CCAssigner::assignArg(Type *ty) {
   switch (target) {
   case Target::AArch64:
+    // SVE is not modeled
+    if (isa<ScalableVectorType>(ty))
+      return ArgLoc{ArgLoc::Unsupported};
     return assignArgAArch64(ty);
   case Target::RISCV64:
     return assignArgRISCV(ty);

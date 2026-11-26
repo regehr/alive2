@@ -1201,8 +1201,11 @@ void riscv2llvm::liftVMvXS() {
   auto cfg = getVConfig();
   auto vs2 = vregRange(CurInst->getOperand(1).getReg()).first;
   auto reg = createLoad(getIntTy(VLEN), lookupVReg(vs2));
-  auto elt = createTrunc(reg, getIntTy(cfg.SEW));
-  updateReg(createSExt(elt, getIntTy(64)), CurInst->getOperand(0).getReg());
+  Value *elt = createTrunc(reg, getIntTy(cfg.SEW));
+  // at SEW = 64 the element already fills rd
+  if (cfg.SEW < 64)
+    elt = createSExt(elt, getIntTy(64));
+  updateReg(elt, CurInst->getOperand(0).getReg());
 }
 
 // vmv.s.x vd, rs1: vd[0] = the low SEW bits of rs1. the operands are

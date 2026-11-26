@@ -976,6 +976,10 @@ void mc2llvm::checkInstSupport(Instruction &i, const DataLayout &DL,
       exit(-1);
     }
     auto allocSize = ai->getAllocationSize(DL);
+    if (allocSize && allocSize->isScalable()) {
+      *out << "\nERROR: scalable allocas not supported\n\n";
+      exit(-1);
+    }
     if (allocSize)
       totalAllocas += allocSize->getFixedValue();
   }
@@ -1028,6 +1032,11 @@ void mc2llvm::checkInstSupport(Instruction &i, const DataLayout &DL,
       } else {
         for (auto arg = callee->arg_begin(); arg != callee->arg_end(); ++arg) {
 
+          if (isa<ScalableVectorType>(arg->getType())) {
+            *out << "\nERROR: calls that pass or return scalable vectors are "
+                    "not supported yet\n\n";
+            exit(-1);
+          }
           if (auto *vTy = dyn_cast<VectorType>(arg->getType()))
             checkVectorTy(vTy);
 
@@ -1122,6 +1131,14 @@ vec_error:
   exit(-1);
 }
 
+// an LLVM type as text, for error messages
+static string typeToString(Type *ty) {
+  string str;
+  raw_string_ostream ss(str);
+  ty->print(ss);
+  return str;
+}
+
 void mc2llvm::checkSupport(Function *srcFn) {
   checkCallingConv(srcFn);
   if (srcFn->getLinkage() ==
@@ -1160,6 +1177,19 @@ void mc2llvm::checkSupport(Function *srcFn) {
       *out << "\nERROR: we don't support arrays in arguments yet\n\n";
       exit(-1);
     }
+    // a scalable vector's size is not a plain number; whether we can pass
+    // it is entirely up to the calling convention model
+    if (isa<ScalableVectorType>(ty)) {
+      auto loc = CC.assignArg(ty);
+      if (!canPlace(loc)) {
+        *out << "\nERROR: Unsupported function argument: a "
+             << typeToString(ty) << " would be passed at " << toString(loc)
+             << ", which we don't support yet\n\n";
+        exit(-1);
+      }
+      continue;
+    }
+
     auto &DL = srcFn->getParent()->getDataLayout();
     auto orig_width = DL.getTypeSizeInBits(ty);
     if (auto vTy = dyn_cast<VectorType>(ty)) {
@@ -1181,8 +1211,15 @@ void mc2llvm::checkSupport(Function *srcFn) {
     }
   }
 
-  if (auto RT = dyn_cast<VectorType>(srcFn->getReturnType()))
+  if (auto RT = dyn_cast<FixedVectorType>(srcFn->getReturnType()))
     checkVectorTy(RT);
+  if (isa<ScalableVectorType>(srcFn->getReturnType()) &&
+      !canPlace(CC.retLoc())) {
+    *out << "\nERROR: Unsupported Function Return: a "
+         << typeToString(srcFn->getReturnType()) << " would be returned at "
+         << toString(CC.retLoc()) << ", which we don't support yet\n\n";
+    exit(-1);
+  }
 
   if (srcFn->getReturnType()->isStructTy()) {
     *out << "\nERROR: we don't support structures in return values yet\n\n";
@@ -1252,9 +1289,15 @@ Function *mc2llvm::adjustSrc(Function *srcFn) {
   }
 
   auto &DL = srcFn->getParent()->getDataLayout();
-  origRetWidth = origRetTy->isVoidTy() ? 0 : DL.getTypeSizeInBits(origRetTy);
+  // a scalable return was vetted by checkSupport(), and has no fixed width
+  bool scalableRet = isa<ScalableVectorType>(origRetTy);
+  origRetWidth = origRetTy->isVoidTy() || scalableRet
+                     ? 0
+                     : unsigned(DL.getTypeSizeInBits(origRetTy));
 
-  if (origRetTy->isVectorTy()) {
+  if (scalableRet) {
+    // nothing to check here
+  } else if (origRetTy->isVectorTy()) {
     if (origRetWidth > 128) {
       *out << "\nERROR: Unsupported Function Return: vector > 128 bits\n\n";
       exit(-1);
