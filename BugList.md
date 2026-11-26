@@ -182,3 +182,4 @@ Please contact us or submit a PR if something is missing or inaccurate.
 46. risc-v backend miscompile of cttz-related optimization (https://github.com/llvm/llvm-project/issues/155014)
 47. inconsistent NaN boxing on 64-bit RISC-V (https://github.com/llvm/llvm-project/issues/225455)
 48. risc-v 64-bit backend miscompile of alloca with gigantic alignment (https://github.com/llvm/llvm-project/issues/228084)
+49. backend miscompile of vector umulh (https://github.com/llvm/llvm-project/issues/246481)
