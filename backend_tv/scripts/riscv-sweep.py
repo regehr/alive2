@@ -50,10 +50,12 @@ SUMMARY_RE = {
 }
 # ERROR: is not anchored to the start of the line, since debug output
 # without a trailing newline can run into it. The fallback catches
-# failures that don't print an ERROR: line at all.
-DETAIL_RE = re.compile(r'(LLVM ERROR:.*|ERROR:.*|.*Assertion .* failed.*)$', re.M)
+# failures that don't print an ERROR: line at all. Alternatives that start
+# with .* must be anchored with ^: unanchored, they are quadratic in the
+# line length and can hang the sweep on a huge single-line output.
+DETAIL_RE = re.compile(r'(LLVM ERROR:.*|ERROR:.*|^.*Assertion .* failed.*)$', re.M)
 DETAIL_FALLBACK_RE = re.compile(
-    r'(Could not read bitcode.*|^error: .*|.*cannot be lifted|Fatal error, exiting)$',
+    r'(Could not read bitcode.*|^error: .*|^.*cannot be lifted|Fatal error, exiting)$',
     re.M)
 RUN_RE = re.compile(r'^\s*;\s*RUN:(.*)$', re.M)
 
