@@ -122,6 +122,11 @@ class riscv2llvm final : public mc2llvm {
 
   unsigned sentinelNOP() override;
 
+  llvm::MCRegister stackPointerReg() override;
+  llvm::MCRegister framePointerReg() override;
+  std::optional<std::pair<int64_t, int64_t>>
+  decodeCFAExpression(llvm::StringRef expr) override;
+
   void doReturn() override;
   void doReturn(llvm::Value *returnAddress);
   bool needsReturnTypeWidening() const override { return false; }

@@ -126,6 +126,11 @@ public:
 
   unsigned branchInst() override;
 
+  // decodeCFAExpression() isn't overridden: SVE frames, which are what
+  // use CFA expressions on AArch64, fall back to a fixed stack size
+  llvm::MCRegister stackPointerReg() override;
+  llvm::MCRegister framePointerReg() override;
+
   void checkCallingConv(llvm::Function *fn) override;
 
   llvm::Value *conditionHolds(uint64_t cond);

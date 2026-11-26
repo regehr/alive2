@@ -149,6 +149,28 @@ public:
   MCFunction MF;
   unsigned cnt{0};
 
+  // The CFA directives, recorded in order, so the lifter can work out
+  // how deep the function's stack frame goes. Register numbers are
+  // DWARF numbers, as the asm parser delivers them.
+  struct CFIEvent {
+    enum Kind {
+      DefCfa,
+      DefCfaOffset,
+      AdjustCfaOffset,
+      DefCfaRegister,
+      Escape,
+      RememberState,
+      RestoreState,
+      Unsupported,
+    };
+    Kind kind;
+    int64_t reg{0};
+    int64_t offset{0};
+    std::string bytes;
+  };
+  std::vector<CFIEvent> CFIEvents;
+  unsigned numCFIStartProcs{0};
+
   MCStreamerWrapper(llvm::MCContext &Context, const llvm::MCInstrAnalysis &IA,
                     llvm::MCInstPrinter &InstPrinter, llvm::MCRegisterInfo &MRI,
                     unsigned SentinelNOP,
@@ -252,6 +274,65 @@ public:
   }
 
   virtual void emitLabel(llvm::MCSymbol *Symbol, llvm::SMLoc Loc) override;
+
+  // CFI directives are recorded and then passed on to MCStreamer, which
+  // keeps its own frame bookkeeping
+  void recordCFI(CFIEvent::Kind kind, int64_t reg = 0, int64_t offset = 0,
+                 llvm::StringRef bytes = {}) {
+    if (!FunctionEnded)
+      CFIEvents.push_back({kind, reg, offset, bytes.str()});
+  }
+
+  virtual void emitCFIStartProcImpl(llvm::MCDwarfFrameInfo &Frame) override {
+    ++numCFIStartProcs;
+    MCStreamer::emitCFIStartProcImpl(Frame);
+  }
+
+  virtual void emitCFIDefCfa(int64_t Register, int64_t Offset,
+                             llvm::SMLoc Loc) override {
+    recordCFI(CFIEvent::DefCfa, Register, Offset);
+    MCStreamer::emitCFIDefCfa(Register, Offset, Loc);
+  }
+
+  virtual void emitCFIDefCfaOffset(int64_t Offset, llvm::SMLoc Loc) override {
+    recordCFI(CFIEvent::DefCfaOffset, 0, Offset);
+    MCStreamer::emitCFIDefCfaOffset(Offset, Loc);
+  }
+
+  virtual void emitCFIAdjustCfaOffset(int64_t Adjustment,
+                                      llvm::SMLoc Loc) override {
+    recordCFI(CFIEvent::AdjustCfaOffset, 0, Adjustment);
+    MCStreamer::emitCFIAdjustCfaOffset(Adjustment, Loc);
+  }
+
+  virtual void emitCFIDefCfaRegister(int64_t Register,
+                                     llvm::SMLoc Loc) override {
+    recordCFI(CFIEvent::DefCfaRegister, Register);
+    MCStreamer::emitCFIDefCfaRegister(Register, Loc);
+  }
+
+  virtual void emitCFILLVMDefAspaceCfa(int64_t Register, int64_t Offset,
+                                       int64_t AddressSpace,
+                                       llvm::SMLoc Loc) override {
+    recordCFI(CFIEvent::Unsupported);
+    MCStreamer::emitCFILLVMDefAspaceCfa(Register, Offset, AddressSpace, Loc);
+  }
+
+  virtual void emitCFIEscape(llvm::StringRef Values,
+                             llvm::SMLoc Loc) override {
+    recordCFI(CFIEvent::Escape, 0, 0, Values);
+    MCStreamer::emitCFIEscape(Values, Loc);
+  }
+
+  virtual void emitCFIRememberState(llvm::SMLoc Loc) override {
+    recordCFI(CFIEvent::RememberState);
+    MCStreamer::emitCFIRememberState(Loc);
+  }
+
+  virtual void emitCFIRestoreState(llvm::SMLoc Loc) override {
+    recordCFI(CFIEvent::RestoreState);
+    MCStreamer::emitCFIRestoreState(Loc);
+  }
 
   std::string findTargetLabel(llvm::MCInst &Inst) {
     auto num_operands = Inst.getNumOperands();

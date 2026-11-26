@@ -4,7 +4,9 @@
 #include "Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/BinaryFormat/ELF.h"
+#include "llvm/Support/LEB128.h"
 #include "util/config.h"
 
 #include <cmath>
@@ -63,6 +65,72 @@ unsigned riscv2llvm::branchInst() {
 
 unsigned riscv2llvm::sentinelNOP() {
   return RISCV::C_NOP_HINT;
+}
+
+MCRegister riscv2llvm::stackPointerReg() {
+  return RISCV::X2;
+}
+
+MCRegister riscv2llvm::framePointerReg() {
+  return RISCV::X8;
+}
+
+// Recognizes the CFA expressions RISCVFrameLowering emits for frames with
+// RVV stack objects (see createDefCFAExpression() there):
+//
+//   DW_OP_breg<reg> 0 [DW_OP_consts <fixed> DW_OP_plus]
+//   DW_OP_consts <scalable> DW_OP_bregx <vlenb> 0 DW_OP_mul DW_OP_plus
+//
+// meaning reg + fixed + scalable * vlenb. vlenb is a constant per run, so
+// this is reg plus a constant.
+optional<pair<int64_t, int64_t>>
+riscv2llvm::decodeCFAExpression(StringRef expr) {
+  auto *p = (const uint8_t *)expr.data();
+  auto *end = p + expr.size();
+  auto sleb = [&](int64_t &v) {
+    unsigned n;
+    const char *err = nullptr;
+    v = decodeSLEB128(p, &n, end, &err);
+    p += err ? 0 : n;
+    return !err;
+  };
+  auto uleb = [&](uint64_t &v) {
+    unsigned n;
+    const char *err = nullptr;
+    v = decodeULEB128(p, &n, end, &err);
+    p += err ? 0 : n;
+    return !err;
+  };
+  auto expect = [&](uint8_t op) {
+    if (p == end || *p != op)
+      return false;
+    ++p;
+    return true;
+  };
+
+  if (p == end || *p < dwarf::DW_OP_breg0 || *p > dwarf::DW_OP_breg31)
+    return nullopt;
+  int64_t reg = *p++ - dwarf::DW_OP_breg0;
+  int64_t regOffset, fixed = 0, scalable;
+  if (!sleb(regOffset) || regOffset != 0)
+    return nullopt;
+  if (!expect(dwarf::DW_OP_consts) || !sleb(scalable))
+    return nullopt;
+  if (expect(dwarf::DW_OP_plus)) {
+    fixed = scalable;
+    if (!expect(dwarf::DW_OP_consts) || !sleb(scalable))
+      return nullopt;
+  }
+  uint64_t vlenbReg;
+  int64_t vlenbOffset;
+  if (!expect(dwarf::DW_OP_bregx) || !uleb(vlenbReg) ||
+      vlenbReg != (uint64_t)MRI->getDwarfRegNum(RISCV::VLENB, true) ||
+      !sleb(vlenbOffset) || vlenbOffset != 0 || !expect(dwarf::DW_OP_mul) ||
+      !expect(dwarf::DW_OP_plus) || p != end)
+    return nullopt;
+  // same value platformInit() gives VLEN, which isn't set yet when this runs
+  int64_t vlenb = 64 * util::config::vscale_value / 8;
+  return make_pair(reg, fixed + scalable * vlenb);
 }
 
 Value *riscv2llvm::enforceSExtZExt(Value *V, bool isSExt, bool isZExt) {

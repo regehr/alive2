@@ -16,6 +16,14 @@ unsigned arm2llvm::sentinelNOP() {
   return AArch64::SEH_Nop;
 }
 
+MCRegister arm2llvm::stackPointerReg() {
+  return AArch64::SP;
+}
+
+MCRegister arm2llvm::framePointerReg() {
+  return AArch64::FP;
+}
+
 arm2llvm::arm2llvm(Function *srcFn, unique_ptr<MemoryBuffer> MB,
                    unordered_map<unsigned, Instruction *> &lineMap,
                    ostream *out, const Target *Targ, Triple DefaultTT,

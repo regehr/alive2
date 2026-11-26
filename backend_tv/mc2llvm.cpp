@@ -1,5 +1,7 @@
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/CFG.h"
+#include "llvm/Support/LEB128.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/ModRef.h"
@@ -780,6 +782,21 @@ pair<Function *, Function *> mc2llvm::run() {
   Str->checkEntryBlock(branchInst());
   Str->generateSuccessors();
 
+  if (auto depth = frameDepthFromCFI()) {
+    stackBytes = alignTo(*depth, 16);
+    debug() << "stack frame depth from CFI: " << *depth << " bytes\n";
+  } else {
+    stackBytes = fallbackStackBytes;
+    debug() << "can't determine stack frame depth from CFI, using "
+            << stackBytes << " bytes\n";
+    // when the depth is known, it already accounts for the allocas
+    if (totalAllocas >= (long)stackBytes) {
+      *out << "ERROR: Stack frame too large, consider increasing "
+              "fallbackStackBytes\n\n";
+      exit(-1);
+    }
+  }
+
   set<BasicBlock *> fallthroughBlocks;
 
   // we'll want this later
@@ -1249,12 +1266,6 @@ void mc2llvm::checkSupport(Function *srcFn) {
       ++llvmInstCount;
     }
   }
-  if (totalAllocas >= stackBytes) {
-    *out << "ERROR: Stack frame too large, consider increasing "
-            "stackBytes\n\n";
-    exit(-1);
-  }
-
   for (auto ty : typeSet)
     checkTypeSupport(ty);
 
@@ -1497,4 +1508,85 @@ void mc2llvm::fixupOptimizedTgt(Function *tgt) {
   }
   if (myAllocCall)
     myAllocCall->eraseFromParent();
+}
+
+optional<uint64_t> mc2llvm::frameDepthFromCFI() {
+  using Ev = MCStreamerWrapper::CFIEvent;
+  if (Str->numCFIStartProcs != 1)
+    return nullopt;
+  int64_t sp = MRI->getDwarfRegNum(stackPointerReg(), true);
+  int64_t fp = MRI->getDwarfRegNum(framePointerReg(), true);
+
+  // The CFA is the value SP had at the call site, so on entry it is
+  // sp + 0. Whenever the rule is sp + N, the frame is N bytes deep. A
+  // rule based on some other register is skipped -- RISC-V's stack
+  // probing loop briefly uses t1, and the next rule is sp-based again --
+  // except the frame pointer: once the CFA is fp-based, SP can move
+  // without further CFI.
+  struct Rule {
+    int64_t reg, offset;
+    bool fromExpr;
+  };
+  Rule cur{sp, 0, false};
+  vector<Rule> saved;
+  int64_t maxDepth = 0;
+  for (auto &e : Str->CFIEvents) {
+    switch (e.kind) {
+    case Ev::DefCfa:
+      cur = {e.reg, e.offset, false};
+      break;
+    case Ev::DefCfaOffset:
+    case Ev::AdjustCfaOffset:
+    case Ev::DefCfaRegister:
+      // these modify a register + offset rule, not an expression
+      if (cur.fromExpr)
+        return nullopt;
+      if (e.kind == Ev::DefCfaOffset)
+        cur.offset = e.offset;
+      else if (e.kind == Ev::AdjustCfaOffset)
+        cur.offset += e.offset;
+      else
+        cur.reg = e.reg;
+      break;
+    case Ev::RememberState:
+      saved.push_back(cur);
+      break;
+    case Ev::RestoreState:
+      if (saved.empty())
+        return nullopt;
+      cur = saved.back();
+      saved.pop_back();
+      break;
+    case Ev::Escape: {
+      auto *p = (const uint8_t *)e.bytes.data();
+      auto *end = p + e.bytes.size();
+      if (p == end)
+        return nullopt;
+      uint8_t op = *p++;
+      // these say where a register was saved, not where the CFA is
+      if (op == dwarf::DW_CFA_expression || op == dwarf::DW_CFA_val_expression)
+        continue;
+      if (op != dwarf::DW_CFA_def_cfa_expression)
+        return nullopt;
+      unsigned n;
+      const char *err = nullptr;
+      uint64_t len = decodeULEB128(p, &n, end, &err);
+      if (err || len != (uint64_t)(end - (p + n)))
+        return nullopt;
+      p += n;
+      auto rule = decodeCFAExpression(StringRef((const char *)p, len));
+      if (!rule)
+        return nullopt;
+      cur = {rule->first, rule->second, true};
+      break;
+    }
+    case Ev::Unsupported:
+      return nullopt;
+    }
+    if (cur.reg == fp)
+      return nullopt;
+    if (cur.reg == sp)
+      maxDepth = max(maxDepth, cur.offset);
+  }
+  return maxDepth;
 }

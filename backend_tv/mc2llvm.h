@@ -94,8 +94,12 @@ public:
 
   const uint16_t NO_SPECIFIER = 0xfff;
 
-  // amount of stack available for use by the lifted function, in bytes
-  const int stackBytes = 1024;
+  // amount of stack available for use by the lifted function, in bytes:
+  // the frame depth worked out from the CFA directives (see
+  // frameDepthFromCFI()), or fallbackStackBytes when that can't be
+  // determined statically. set in run(), once the assembly is parsed
+  uint64_t stackBytes{0};
+  static constexpr uint64_t fallbackStackBytes = 2048;
 
   // number of 8-byte stack slots for parameters
   const unsigned numStackSlots = 32;
@@ -1032,6 +1036,24 @@ public:
   void nameGlobals(llvm::Module *M);
   llvm::Function *adjustSrc(llvm::Function *srcFn);
   virtual void fixupOptimizedTgt(llvm::Function *tgt);
+
+  // How many bytes below its entry SP the function's stack frame
+  // reaches, according to the CFA directives, or nullopt when that can't
+  // be determined statically: no CFI, a CFA based on the frame pointer
+  // (the frame below it is then not described, e.g. dynamic allocas,
+  // realignment, or RVV spill space), or a directive we don't decode.
+  std::optional<uint64_t> frameDepthFromCFI();
+
+  // DWARF CFA expressions are target specific. Returns the base
+  // register's DWARF number and the constant offset from it, or nullopt
+  // if the expression isn't recognized.
+  virtual std::optional<std::pair<int64_t, int64_t>>
+  decodeCFAExpression(llvm::StringRef expr) {
+    return std::nullopt;
+  }
+
+  virtual llvm::MCRegister stackPointerReg() = 0;
+  virtual llvm::MCRegister framePointerReg() = 0;
 
   /*
    * resolve a symbol reference to the corresponding lifted global. used by
