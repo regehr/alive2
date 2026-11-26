@@ -220,6 +220,20 @@ void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,
     exit(-1);
   }
 
+  // coroutine intrinsics are normally lowered by the coroutine passes,
+  // which we don't run; letting them reach codegen crashes LLVM
+  if (srcFn->isPresplitCoroutine()) {
+    *out << "\nERROR: coroutines not supported\n\n";
+    exit(-1);
+  }
+  for (auto &I : llvm::instructions(*srcFn))
+    if (auto *CB = llvm::dyn_cast<llvm::CallBase>(&I))
+      if (auto *Callee = CB->getCalledFunction())
+        if (Callee->getName().starts_with("llvm.coro.")) {
+          *out << "\nERROR: coroutine intrinsics not supported\n\n";
+          exit(-1);
+        }
+
   for (auto &global : srcModule->globals()) {
     lifter::debug() << global.getName().str();
     if (global.isThreadLocal()) {
