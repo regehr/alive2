@@ -714,12 +714,12 @@ void riscv2llvm::doCall(FunctionCallee FC, CallInst *llvmCI,
   checkStackAlignment();
 
   auto *calleeTy = FC.getFunctionType();
-  bool scalable = isa<ScalableVectorType>(calleeTy->getReturnType());
+  bool vectors = calleeTy->getReturnType()->isVectorTy();
   for (auto *arg : calleeTy->params())
-    scalable |= isa<ScalableVectorType>(arg);
-  if (scalable) {
-    *out << "\nERROR: calls that pass or return scalable vectors are not "
-            "supported yet\n\n";
+    vectors |= arg->isVectorTy();
+  if (vectors) {
+    *out << "\nERROR: calls that pass or return vectors are not supported "
+            "yet\n\n";
     exit(-1);
   }
   for (auto &arg : calleeTy->params()) {
@@ -931,7 +931,7 @@ void riscv2llvm::doReturn(Value *returnAddress) {
   if (retTyp->isVoidTy()) {
     createReturn(nullptr);
   } else if (retLoc.kind == ArgLoc::VectorGroup) {
-    createReturn(readScalableRet(cast<ScalableVectorType>(retTyp), retLoc));
+    createReturn(readVectorRet(cast<VectorType>(retTyp), retLoc));
   } else if (retTyp->isFloatingPointTy()) {
     createReturn(readFPABIReg(RISCV::F10_Q + retLoc.limbs[0].reg, retTyp));
   } else {
@@ -959,18 +959,23 @@ void riscv2llvm::doReturn(Value *returnAddress) {
 }
 
 /*
- * scalable vectors at the ABI boundary. alive2 checks a single vscale, at
- * which a <vscale x N x T> has exactly N * vscale elements, and VLEN is 64
- * * vscale, so such a value fills its register group exactly -- or, for a
- * fractional-LMUL type, the low part of one register. the conversions go
- * element by element, because alive2 handles neither scalable allocas nor
+ * vectors at the ABI boundary; see backend_tv/abi.h. alive2 checks a
+ * single vscale, at which a <vscale x N x T> has exactly N * vscale
+ * elements, and VLEN is 64 * vscale, so such a value fills its register
+ * group exactly -- or, for a fractional-LMUL type, the low part of one
+ * register. a fixed-length vector is in the low bits of its group, which
+ * was sized for VLEN = 128. scalable values are converted element by
+ * element, because alive2 handles neither scalable allocas nor
  * llvm.vector.extract/insert. the indices are constants that may be past
  * the type's known minimum, which LLVM does not fold to poison for
  * scalable vectors
  */
 
-Value *riscv2llvm::scalableToFixed(Value *v) {
-  auto *ty = cast<ScalableVectorType>(v->getType());
+// the elements of a vector argument or return value, as a fixed vector
+Value *riscv2llvm::vectorElts(Value *v) {
+  auto *ty = dyn_cast<ScalableVectorType>(v->getType());
+  if (!ty)
+    return v;
   unsigned n = ty->getMinNumElements() * util::config::vscale_value;
   Value *res = PoisonValue::get(FixedVectorType::get(ty->getElementType(), n));
   for (unsigned i = 0; i < n; ++i)
@@ -978,47 +983,57 @@ Value *riscv2llvm::scalableToFixed(Value *v) {
   return res;
 }
 
-Value *riscv2llvm::fixedToScalable(Value *v, ScalableVectorType *ty) {
+// the inverse of vectorElts()
+Value *riscv2llvm::vectorFromElts(Value *v, VectorType *ty) {
+  auto *svTy = dyn_cast<ScalableVectorType>(ty);
+  if (!svTy) {
+    assert(v->getType() == ty);
+    return v;
+  }
   auto n = cast<FixedVectorType>(v->getType())->getNumElements();
-  assert(n == ty->getMinNumElements() * util::config::vscale_value);
-  Value *res = PoisonValue::get(ty);
+  assert(n == svTy->getMinNumElements() * util::config::vscale_value);
+  Value *res = PoisonValue::get(svTy);
   for (unsigned i = 0; i < n; ++i)
     res = createInsertElement(res, createExtractElement(v, i), i);
   return res;
 }
 
-// put an incoming argument where the caller would have: in its register
-// group, with the unused high part of a fractional type's register left
-// unknown
-void riscv2llvm::writeScalableArg(Value *arg, const ArgLoc &loc) {
-  auto fixed = scalableToFixed(arg);
-  auto *fixedTy = cast<FixedVectorType>(fixed->getType());
-  unsigned EEW = getBitWidth(fixedTy->getElementType());
-  unsigned n = fixedTy->getNumElements();
+// put an incoming argument where the caller would have: in the low bits of
+// its register group, with any bits of the group above it left unknown. a
+// mask is handled the same way, with EEW = 1: bit i of its register is
+// element i
+void riscv2llvm::writeVectorArg(Value *arg, const ArgLoc &loc) {
+  auto elts = vectorElts(arg);
+  auto *eltsTy = cast<FixedVectorType>(elts->getType());
+  unsigned EEW = getBitWidth(eltsTy->getElementType());
+  unsigned n = eltsTy->getNumElements();
   unsigned nregs = loc.limbs.size();
   unsigned first = loc.limbs[0].reg;
   unsigned full = nregs * VLEN / EEW;
+  assert(n <= full);
   if (n < full) {
-    assert(nregs == 1);
-    // widen to a whole register, then fill the new lanes from `rest`
+    // widen to the whole group, then fill the new lanes from `rest`
     SmallVector<int> widen;
     for (unsigned i = 0; i < full; ++i)
       widen.push_back(i < n ? int(i) : PoisonMaskElem);
-    auto wide = createShuffleVector(fixed, widen);
-    auto rest = createBitCast(createUnknownInt(VLEN), getVecTy(EEW, full));
+    auto wide = createShuffleVector(elts, widen);
+    auto rest =
+        createBitCast(createUnknownInt(nregs * VLEN), getVecTy(EEW, full));
     SmallVector<int> idx;
     for (unsigned i = 0; i < full; ++i)
       idx.push_back(i < n ? int(i) : int(full + i));
-    fixed = createShuffleVector(wide, rest, idx);
+    elts = createShuffleVector(wide, rest, idx);
   }
-  writeVRegs(first, nregs, fixed);
+  writeVRegs(first, nregs, elts);
 }
 
-// the value a function returns in a register group; for a fractional
-// type, the high part of the register is ignored
-Value *riscv2llvm::readScalableRet(ScalableVectorType *ty, const ArgLoc &loc) {
+// the value a function returns in a register group, which is in its low
+// bits; the rest of the group is ignored
+Value *riscv2llvm::readVectorRet(VectorType *ty, const ArgLoc &loc) {
   unsigned EEW = getBitWidth(ty->getElementType());
-  unsigned n = ty->getMinNumElements() * util::config::vscale_value;
+  unsigned n = ty->getElementCount().getKnownMinValue();
+  if (isa<ScalableVectorType>(ty))
+    n *= util::config::vscale_value;
   auto vec = readVRegs(loc.limbs[0].reg, loc.limbs.size(), EEW);
   if (cast<FixedVectorType>(vec->getType())->getNumElements() != n) {
     SmallVector<int> low;
@@ -1026,7 +1041,7 @@ Value *riscv2llvm::readScalableRet(ScalableVectorType *ty, const ArgLoc &loc) {
       low.push_back(i);
     vec = createShuffleVector(vec, low);
   }
-  return fixedToScalable(vec, ty);
+  return vectorFromElts(vec, ty);
 }
 
 void riscv2llvm::platformInit() {
@@ -1072,10 +1087,10 @@ void riscv2llvm::platformInit() {
     createRegStorage(RISCV::V0 + i, VLEN, "V" + to_string(i));
 
   // ...except under the vector calling convention variant, which a
-  // function that takes or returns a scalable vector follows
-  usesVectorCC = isa<ScalableVectorType>(srcFn->getReturnType());
+  // function that takes or returns a vector follows
+  usesVectorCC = srcFn->getReturnType()->isVectorTy();
   for (auto &arg : srcFn->args())
-    usesVectorCC |= isa<ScalableVectorType>(arg.getType());
+    usesVectorCC |= arg.getType()->isVectorTy();
   if (usesVectorCC)
     for (unsigned i = 0; i < 32; ++i)
       if (isCalleeSavedVReg(i))
@@ -1120,9 +1135,8 @@ void riscv2llvm::platformInit() {
        arg != E; ++arg, ++srcArg) {
     auto loc = CC.assignArg(arg->getType());
     if (loc.kind == ArgLoc::VectorGroup) {
-      debug() << "  processing scalable vector arg at " << toString(loc)
-              << "\n";
-      writeScalableArg(&*arg, loc);
+      debug() << "  processing vector arg at " << toString(loc) << "\n";
+      writeVectorArg(&*arg, loc);
       continue;
     }
     debug() << "  processing " << getBitWidth(arg) << "-bit arg at "
@@ -1243,28 +1257,24 @@ Value *riscv2llvm::getPointerOperand() {
   return getPointerFromMCExpr();
 }
 
-// scalable vectors of integers can be passed and returned in RVV register
-// groups (see backend_tv/abi.h); the lifter has no vector floating point
-static void checkScalableElt(ScalableVectorType *ty, std::ostream *out) {
+// vectors of integers can be passed and returned in RVV register groups
+// (see backend_tv/abi.h); the lifter has no vector floating point
+static void checkVectorElt(VectorType *ty, std::ostream *out) {
   if (!ty->getElementType()->isIntegerTy()) {
-    *out << "\nERROR: only scalable vectors of integers are supported\n\n";
+    *out << "\nERROR: only vectors of integers are supported\n\n";
     exit(-1);
   }
 }
 
 void riscv2llvm::checkArgSupport(Argument &arg) {
-  if (auto *svTy = dyn_cast<ScalableVectorType>(arg.getType()))
-    checkScalableElt(svTy, out);
+  if (auto *vTy = dyn_cast<VectorType>(arg.getType()))
+    checkVectorElt(vTy, out);
 }
 
 void riscv2llvm::checkTypeSupport(Type *ty) {
-  if (auto *svTy = dyn_cast<ScalableVectorType>(ty)) {
-    checkScalableElt(svTy, out);
+  if (auto *vTy = dyn_cast<VectorType>(ty)) {
+    checkVectorElt(vTy, out);
     return;
-  }
-  if (ty->isVectorTy()) {
-    *out << "\nERROR: vectors not yet supported\n\n";
-    exit(-1);
   }
   // RVA23U64 gives us Zfhmin (so f16 arithmetic is promoted to f32) but
   // neither Q nor bfloat, and those get turned into libcalls such as

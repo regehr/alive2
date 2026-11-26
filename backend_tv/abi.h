@@ -51,10 +51,11 @@ struct ArgLoc {
     // stack slot; `limbs` has exactly one entry, and when it is in a
     // register `reg` indexes the vector registers rather than the GPRs
     Vector,
-    // RV64 only: a scalable vector in an RVV register group. `limbs` has
+    // RV64 only: a vector in an RVV register group. `limbs` has
     // one entry per register of the group, lowest-numbered first, and each
     // `reg` is an architectural vector register number (8 means v8). a
-    // fractional-LMUL type occupies the low part of a single register
+    // value smaller than its group -- a fractional-LMUL type, or a
+    // fixed-length vector when VLEN is more than 128 -- is in its low bits
     VectorGroup,
   };
 
@@ -118,6 +119,11 @@ public:
   static constexpr unsigned numArgGPRs = 8;
   static constexpr unsigned numArgVecRegs = 8;
 
+  // RV64: the VLEN that LLVM sizes a fixed-length vector's register group
+  // by -- the minimum that RVA23U64's Zvl128b guarantees -- and so the
+  // psABI's ABI_VLEN for those vectors
+  static constexpr unsigned fixedABIVLEN = 128;
+
 private:
   Target target;
   const llvm::DataLayout &DL;
@@ -125,6 +131,8 @@ private:
   unsigned nextVec{0};
   // RV64: which of v8-v23 hold vector arguments so far; bit i is v(8 + i)
   uint32_t vregsUsed{0};
+  // RV64: whether v0 holds the first mask argument
+  bool v0Used{false};
   uint64_t stackOff{0};
   ArgLoc ret;
 
@@ -142,7 +150,7 @@ private:
 
   ArgLoc assignArgAArch64(llvm::Type *ty);
   ArgLoc assignArgRISCV(llvm::Type *ty);
-  ArgLoc assignRVVGroup(llvm::ScalableVectorType *ty, bool isRet);
+  ArgLoc assignRVVGroup(llvm::VectorType *ty, bool isRet);
   ArgLoc assignRet(llvm::Type *ty);
 };
 

@@ -1032,9 +1032,13 @@ void mc2llvm::checkInstSupport(Instruction &i, const DataLayout &DL,
       } else {
         for (auto arg = callee->arg_begin(); arg != callee->arg_end(); ++arg) {
 
-          if (isa<ScalableVectorType>(arg->getType())) {
-            *out << "\nERROR: calls that pass or return scalable vectors are "
-                    "not supported yet\n\n";
+          // RISC-V doesn't do the caller side of its vector calling
+          // convention yet, and nobody models SVE
+          if (isa<ScalableVectorType>(arg->getType()) ||
+              (ccTarget() == CCAssigner::Target::RISCV64 &&
+               arg->getType()->isVectorTy())) {
+            *out << "\nERROR: calls that pass or return vectors are not "
+                    "supported yet\n\n";
             exit(-1);
           }
           if (auto *vTy = dyn_cast<VectorType>(arg->getType()))
@@ -1177,9 +1181,11 @@ void mc2llvm::checkSupport(Function *srcFn) {
       *out << "\nERROR: we don't support arrays in arguments yet\n\n";
       exit(-1);
     }
-    // a scalable vector's size is not a plain number; whether we can pass
-    // it is entirely up to the calling convention model
-    if (isa<ScalableVectorType>(ty)) {
+    // a scalable vector's size is not a plain number, and RISC-V passes
+    // fixed-length vectors in RVV register groups; either way, whether we
+    // can pass it is entirely up to the calling convention model
+    if (isa<ScalableVectorType>(ty) ||
+        (ty->isVectorTy() && ccTarget() == CCAssigner::Target::RISCV64)) {
       auto loc = CC.assignArg(ty);
       if (!canPlace(loc)) {
         *out << "\nERROR: Unsupported function argument: a "
@@ -1211,10 +1217,13 @@ void mc2llvm::checkSupport(Function *srcFn) {
     }
   }
 
-  if (auto RT = dyn_cast<FixedVectorType>(srcFn->getReturnType()))
+  auto *retTy = srcFn->getReturnType();
+  bool retViaCC = isa<ScalableVectorType>(retTy) ||
+                  (retTy->isVectorTy() &&
+                   ccTarget() == CCAssigner::Target::RISCV64);
+  if (auto RT = dyn_cast<FixedVectorType>(retTy); RT && !retViaCC)
     checkVectorTy(RT);
-  if (isa<ScalableVectorType>(srcFn->getReturnType()) &&
-      !canPlace(CC.retLoc())) {
+  if (retViaCC && !canPlace(CC.retLoc())) {
     *out << "\nERROR: Unsupported Function Return: a "
          << typeToString(srcFn->getReturnType()) << " would be returned at "
          << toString(CC.retLoc()) << ", which we don't support yet\n\n";
@@ -1289,14 +1298,15 @@ Function *mc2llvm::adjustSrc(Function *srcFn) {
   }
 
   auto &DL = srcFn->getParent()->getDataLayout();
-  // a scalable return was vetted by checkSupport(), and has no fixed width
+  // a scalable return has no fixed width
   bool scalableRet = isa<ScalableVectorType>(origRetTy);
   origRetWidth = origRetTy->isVoidTy() || scalableRet
                      ? 0
                      : unsigned(DL.getTypeSizeInBits(origRetTy));
 
-  if (scalableRet) {
-    // nothing to check here
+  if (scalableRet || (origRetTy->isVectorTy() &&
+                      ccTarget() == CCAssigner::Target::RISCV64)) {
+    // checkSupport() already asked the calling convention model
   } else if (origRetTy->isVectorTy()) {
     if (origRetWidth > 128) {
       *out << "\nERROR: Unsupported Function Return: vector > 128 bits\n\n";

@@ -139,55 +139,96 @@ ArgLoc CCAssigner::assignArgAArch64(Type *ty) {
 }
 
 /*
- * RV64 has no even-register requirement, and CC_RISCVAssign2XLen will
- * happily split a two-limb value between the last argument register and
- * the stack. anything wider than two limbs is passed by reference:
- * "Scalars wider than 2*XLEN bits are passed by reference and are replaced
- * in the argument list with the address" (riscv-elf-psabi-doc).
- */
-/*
- * a scalable vector goes in an RVV register group, following the psABI's
- * "standard vector calling convention variant" (riscv-cc.adoc) and
- * allocateRVVReg() in LLVM's RISCVCallingConv.cpp. the type's LMUL is its
- * known-minimum size over 64 bits (RVVBitsPerBlock), treated as 1 when
- * that is fractional. each argument takes the first group of LMUL
- * registers in v8-v23 that starts at a multiple of LMUL and holds no
+ * a vector goes in an RVV register group, following the psABI's "standard
+ * vector calling convention variant" (riscv-cc.adoc) and allocateRVVReg()
+ * in LLVM's RISCVCallingConv.cpp. each argument takes the first group of
+ * LMUL registers in v8-v23 that starts at a multiple of LMUL and holds no
  * earlier argument -- the search starts at v8 every time, so a later
  * argument can land below an earlier one. a vector return value uses the
- * group starting at v8.
+ * group starting at v8. LMUL is:
  *
- * not modeled, and so Unsupported: masks (the first one goes in v0),
- * tuples, types LLVM widens or splits rather than mapping directly onto
- * one group, and arguments passed by reference once v8-v23 run out.
+ * - for a scalable vector, its known-minimum size over 64 bits
+ *   (RVVBitsPerBlock), treated as 1 when that is fractional
+ * - for a fixed-length vector, its size rounded up to a power of two, over
+ *   128 bits, again treated as 1 when fractional. 128 is the minimum VLEN
+ *   that RVA23U64's Zvl128b guarantees, which is what LLVM sizes the
+ *   scalable container of a fixed-length vector by. the value is in the
+ *   low bits of the group; on a machine with a longer VLEN, the rest of
+ *   the group is unused
+ *
+ * masks (vectors of i1, one bit per element) are the exception: the first
+ * mask argument goes in v0, and later ones are placed like LMUL = 1 data.
+ * a mask return value goes in v0.
+ *
+ * not modeled, and so Unsupported: tuples, types LLVM promotes, widens, or
+ * splits rather than mapping directly onto one group, and arguments
+ * passed by reference once v8-v23 run out.
  */
-ArgLoc CCAssigner::assignRVVGroup(ScalableVectorType *ty, bool isRet) {
+ArgLoc CCAssigner::assignRVVGroup(VectorType *ty, bool isRet) {
   ArgLoc loc;
   loc.limbBits = limbBits();
   auto *eltTy = ty->getElementType();
+  bool scalable = isa<ScalableVectorType>(ty);
+  uint64_t elts = ty->getElementCount().getKnownMinValue();
+  auto unsupported = [&]() {
+    loc = ArgLoc{};
+    loc.kind = ArgLoc::Unsupported;
+    return loc;
+  };
+
+  if (eltTy->isIntegerTy(1)) {
+    // the legal mask types, each of which fits in one register: nxv1i1
+    // through nxv64i1, and fixed-length masks of up to 128 elements
+    if (scalable ? !isPowerOf2_64(elts) || elts > 64 : elts > 128)
+      return unsupported();
+    loc.bitWidth = elts;
+    loc.kind = ArgLoc::VectorGroup;
+    if (isRet || !v0Used) {
+      if (!isRet)
+        v0Used = true;
+      loc.limbs.push_back(LimbLoc{true, 0, 0});
+      return loc;
+    }
+    unsigned i = 0;
+    while (i < 16 && (vregsUsed & (1u << i)))
+      ++i;
+    if (i == 16)
+      return unsupported();
+    vregsUsed |= 1u << i;
+    loc.limbs.push_back(LimbLoc{true, 8 + i, 0});
+    return loc;
+  }
+
   bool eltOK = eltTy->isFloatTy() || eltTy->isDoubleTy();
   if (auto *intTy = dyn_cast<IntegerType>(eltTy)) {
     unsigned w = intTy->getBitWidth();
     eltOK = w == 8 || w == 16 || w == 32 || w == 64;
   }
-  uint64_t minElts = ty->getMinNumElements();
-  uint64_t minBits = eltTy->getScalarSizeInBits() * minElts;
-  if (!eltOK || !isPowerOf2_64(minElts) || minBits > 512) {
-    loc.kind = ArgLoc::Unsupported;
-    return loc;
+  if (!eltOK)
+    return unsupported();
+  uint64_t bits = eltTy->getScalarSizeInBits() * elts;
+  unsigned nregs;
+  if (scalable) {
+    if (!isPowerOf2_64(elts) || bits > 512)
+      return unsupported();
+    nregs = std::max<uint64_t>(1, bits / 64);
+  } else {
+    uint64_t rounded = PowerOf2Ceil(bits);
+    if (rounded > 8 * fixedABIVLEN)
+      return unsupported();
+    nregs = std::max<uint64_t>(1, rounded / fixedABIVLEN);
   }
-  // the known-minimum size; the real size is this times vscale
-  loc.bitWidth = minBits;
+  // for a scalable vector, the known-minimum size; the real size is this
+  // times vscale
+  loc.bitWidth = bits;
 
-  unsigned nregs = std::max<uint64_t>(1, minBits / 64);
   unsigned first = 0;
   if (!isRet) {
     uint32_t group = (1u << nregs) - 1;
     while (first + nregs <= 16 && (vregsUsed & (group << first)))
       first += nregs;
-    if (first + nregs > 16) {
-      loc.kind = ArgLoc::Unsupported;
-      return loc;
-    }
+    if (first + nregs > 16)
+      return unsupported();
     vregsUsed |= group << first;
   }
   loc.kind = ArgLoc::VectorGroup;
@@ -196,18 +237,20 @@ ArgLoc CCAssigner::assignRVVGroup(ScalableVectorType *ty, bool isRet) {
   return loc;
 }
 
+/*
+ * RV64 has no even-register requirement, and CC_RISCVAssign2XLen will
+ * happily split a two-limb value between the last argument register and
+ * the stack. anything wider than two limbs is passed by reference:
+ * "Scalars wider than 2*XLEN bits are passed by reference and are replaced
+ * in the argument list with the address" (riscv-elf-psabi-doc).
+ */
 ArgLoc CCAssigner::assignArgRISCV(Type *ty) {
-  if (auto *svTy = dyn_cast<ScalableVectorType>(ty))
-    return assignRVVGroup(svTy, /*isRet=*/false);
+  if (auto *vTy = dyn_cast<VectorType>(ty))
+    return assignRVVGroup(vTy, /*isRet=*/false);
 
   ArgLoc loc;
   loc.bitWidth = DL.getTypeSizeInBits(ty);
   loc.limbBits = limbBits();
-
-  if (ty->isVectorTy()) {
-    loc.kind = ArgLoc::Unsupported;
-    return loc;
-  }
 
   if (ty->isFloatingPointTy()) {
     if (nextVec < numArgVecRegs) {
@@ -265,9 +308,9 @@ ArgLoc CCAssigner::assignRet(Type *ty) {
   if (ty->isVoidTy())
     return loc;
 
-  if (auto *svTy = dyn_cast<ScalableVectorType>(ty)) {
-    if (target == Target::RISCV64)
-      return assignRVVGroup(svTy, /*isRet=*/true);
+  if (auto *vTy = dyn_cast<VectorType>(ty); vTy && target == Target::RISCV64)
+    return assignRVVGroup(vTy, /*isRet=*/true);
+  if (isa<ScalableVectorType>(ty)) {
     // AArch64 SVE is not modeled
     loc.kind = ArgLoc::Unsupported;
     return loc;
@@ -275,12 +318,6 @@ ArgLoc CCAssigner::assignRet(Type *ty) {
 
   loc.bitWidth = DL.getTypeSizeInBits(ty);
   loc.limbBits = limbBits();
-
-  if (ty->isVectorTy() && target == Target::RISCV64) {
-    // RV64 vectors are not modelled here
-    loc.kind = ArgLoc::Unsupported;
-    return loc;
-  }
 
   if (ty->isVectorTy() || ty->isFloatingPointTy()) {
     loc.kind = ArgLoc::Vector;
