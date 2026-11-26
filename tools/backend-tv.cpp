@@ -168,8 +168,7 @@ bool tryReplaceRoundTrip(llvm::IntToPtrInst *intToPtr) {
 
   // we only understand add instructions in this context
   auto *op_inst = dyn_cast<llvm::Instruction>(intToPtr->getOperand(0));
-  if (!op_inst || op_inst->getOpcode() != llvm::Instruction::Add ||
-      op_inst->getNumUses() > 1)
+  if (!op_inst || op_inst->getOpcode() != llvm::Instruction::Add)
     return false;
 
   // keep track of (ptr + int) vs (int + ptr)
@@ -181,7 +180,7 @@ bool tryReplaceRoundTrip(llvm::IntToPtrInst *intToPtr) {
     ptrToInt = dyn_cast<llvm::PtrToIntInst>(op_inst->getOperand(1));
   }
 
-  if (!ptrToInt || ptrToInt->getNumUses() > 1)
+  if (!ptrToInt)
     return false;
 
   llvm::IRBuilder<> B(intToPtr);
@@ -191,8 +190,13 @@ bool tryReplaceRoundTrip(llvm::IntToPtrInst *intToPtr) {
 
   intToPtr->replaceAllUsesWith(gep);
   intToPtr->eraseFromParent();
-  op_inst->eraseFromParent();
-  ptrToInt->eraseFromParent();
+  // the add and the ptrtoint may have other users; in lifted code, a
+  // single ptrtoint of the stack pointer typically feeds every
+  // SP-relative address. remove them only once they're dead
+  if (op_inst->use_empty())
+    op_inst->eraseFromParent();
+  if (ptrToInt->use_empty())
+    ptrToInt->eraseFromParent();
 
   return true;
 }
@@ -200,14 +204,14 @@ bool tryReplaceRoundTrip(llvm::IntToPtrInst *intToPtr) {
 // find and collapse sequences of the form ptrToInt, add, intToPtr
 // into a single GEP instruction. Possible performance benefits.
 void tryReplacePtrtoInt(llvm::Function *fn) {
-  // apparently iterating in this way is stable
-  for (auto it = instructions(*fn).begin(), end = instructions(*fn).end();
-       it != end;) {
-    llvm::Instruction &Inst = *it++;
-    if (auto *intToPtr = dyn_cast<llvm::IntToPtrInst>(&Inst)) {
-      tryReplaceRoundTrip(intToPtr);
-    }
-  }
+  // collect first: the rewrite can erase the add and ptrtoint feeding an
+  // inttoptr, and those aren't guaranteed to precede it in layout order
+  llvm::SmallVector<llvm::IntToPtrInst *> intToPtrs;
+  for (auto &Inst : instructions(*fn))
+    if (auto *intToPtr = dyn_cast<llvm::IntToPtrInst>(&Inst))
+      intToPtrs.push_back(intToPtr);
+  for (auto *intToPtr : intToPtrs)
+    tryReplaceRoundTrip(intToPtr);
 }
 
 void doit(llvm::Module *srcModule, llvm::Function *srcFn, Verifier &verifier,

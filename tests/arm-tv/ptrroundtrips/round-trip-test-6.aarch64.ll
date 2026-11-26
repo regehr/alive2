@@ -1,5 +1,5 @@
 ; TEST-ARGS: -test-replace-ptrtoint
-; should not collapse gep
+; should collapse into gep; the add has another use, so it stays
 define ptr @b(ptr %p, i64 %idx, ptr nocapture noundef %x) {
     %i1 = ptrtoint ptr %p to i64
     %i2 = add i64 %i1, %idx      ; can't destroy, has a use
@@ -10,4 +10,7 @@ define ptr @b(ptr %p, i64 %idx, ptr nocapture noundef %x) {
     ret ptr %r
 }
 
-; CHECK-NOT: getelementptr
+; CHECK: %i2 = add i64 %i1, %idx
+; CHECK: getelementptr i8, ptr %p, i64 %idx
+; CHECK: store i64 %i2, ptr %x
+; CHECK-NOT: inttoptr
