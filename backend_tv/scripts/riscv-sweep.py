@@ -24,7 +24,7 @@ import argparse
 import json
 import os
 import re
-import resource
+import shutil
 import signal
 import subprocess
 import sys
@@ -50,6 +50,30 @@ SUMMARY_RE = {
 DETAIL_RE = re.compile(r'^(ERROR:.*|.*Assertion .* failed.*|LLVM ERROR:.*)$', re.M)
 
 
+def unescape_llvm_name(s):
+    """Decode an LLVM quoted identifier body: \\\\ is a backslash and \\XX is a
+    hex-encoded byte. Returns the name as a str suitable for argv (non-UTF-8
+    bytes are carried via surrogateescape), or None if it can't be passed
+    on a command line (contains NUL)."""
+    out = bytearray()
+    raw = s.encode('utf-8', 'surrogateescape')
+    i = 0
+    while i < len(raw):
+        c = raw[i]
+        if c == 0x5c and raw[i+1:i+2] == b'\\':
+            out.append(0x5c)
+            i += 2
+        elif c == 0x5c and re.fullmatch(rb'[0-9A-Fa-f]{2}', raw[i+1:i+3]):
+            out.append(int(raw[i+1:i+3], 16))
+            i += 3
+        else:
+            out.append(c)
+            i += 1
+    if 0 in out:
+        return None
+    return os.fsdecode(bytes(out))
+
+
 def functions_in(path):
     try:
         text = path.read_text(errors='replace')
@@ -60,7 +84,9 @@ def functions_in(path):
     for m in DEFINE_RE.finditer(text):
         name = m.group(1)
         if name.startswith('"'):
-            name = name[1:-1]
+            name = unescape_llvm_name(name[1:-1])
+            if name is None:
+                continue
         if name not in seen:
             seen.add(name)
             names.append(name)
@@ -117,17 +143,18 @@ def run_one(job, args):
     cmd = [str(args.backend_tv), '-backend=riscv64', '-always-verify',
            f'--fn={fn}', *args.extra, str(path)]
 
-    def limits():
-        if args.mem_limit:
-            b = args.mem_limit * 1024 * 1024
-            resource.setrlimit(resource.RLIMIT_AS, (b, b))
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    # Resource limits are applied by prlimit(1) rather than preexec_fn,
+    # which is not safe to use while other threads are running.
+    limits = [args.prlimit, '--core=0']
+    if args.mem_limit:
+        limits.append(f'--as={args.mem_limit * 1024 * 1024}')
+    limits.append('--')
 
     t0 = time.monotonic()
     timed_out = False
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    p = subprocess.Popen(limits + cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          stdin=subprocess.DEVNULL, cwd=args.workdir,
-                         start_new_session=True, preexec_fn=limits)
+                         start_new_session=True)
     try:
         out, _ = p.communicate(timeout=args.timeout)
     except subprocess.TimeoutExpired:
@@ -154,13 +181,30 @@ def run_one(job, args):
         output += f'\n*** TIMEOUT after {args.timeout}s ***\n'
     log.parent.mkdir(parents=True, exist_ok=True)
     tmp = log.with_suffix('.log.tmp')
-    tmp.write_text(header + output)
+    tmp.write_text(header + output, errors='backslashreplace')
     tmp.rename(log)  # atomic, so a present .log is always complete
 
     return {'file': str(path), 'suite': suite, 'relpath': str(rel),
             'function': fn, 'index': idx,
             'log': str(log.relative_to(args.out)), 'rc': p.returncode,
             'status': status, 'detail': detail, 'seconds': round(secs, 2), **counts}
+
+
+def read_manifest(path):
+    """Yield the latest record for each log in the manifest, ignoring a
+    truncated trailing line left by an interrupted write."""
+    latest = {}
+    try:
+        with open(path) as m:
+            for line in m:
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                latest[rec['log']] = rec
+    except FileNotFoundError:
+        pass
+    yield from latest.values()
 
 
 def main():
@@ -191,6 +235,9 @@ def main():
     args.backend_tv = args.backend_tv.resolve()
     if not os.access(args.backend_tv, os.X_OK):
         sys.exit(f'backend-tv not found at {args.backend_tv}')
+    args.prlimit = shutil.which('prlimit')
+    if not args.prlimit:
+        sys.exit('prlimit (from util-linux) not found in PATH')
     args.out = args.out.resolve()
     (args.out / 'logs').mkdir(parents=True, exist_ok=True)
     # backend-tv runs here, so any stray files it writes stay out of the way
@@ -198,6 +245,13 @@ def main():
     args.workdir.mkdir(exist_ok=True)
     suites = set(args.suites.split(','))
     filt = re.compile(args.filter) if args.filter else None
+
+    # A log is only "done" if the manifest records it; a log without a
+    # manifest record (crash between the rename and the manifest write) is
+    # rerun, which overwrites it.
+    done = set()
+    for rec in read_manifest(args.out / 'manifest.jsonl'):
+        done.add(rec['log'])
 
     jobs = []
     skipped = 0
@@ -209,7 +263,7 @@ def main():
         for idx, fn in enumerate(functions_in(path)):
             log = (args.out / 'logs' / suite / rel /
                    f'{idx:04d}-{safe_name(fn)}.log')
-            if log.exists():
+            if str(log.relative_to(args.out)) in done and log.exists():
                 skipped += 1
                 continue
             jobs.append((suite, rel, path, idx, fn, log))
@@ -220,7 +274,12 @@ def main():
     print(f'{nfiles} files, {len(jobs)} invocations to run, '
           f'{skipped} already done', file=sys.stderr)
 
-    manifest = open(args.out / 'manifest.jsonl', 'a')
+    manifest = open(args.out / 'manifest.jsonl', 'a+b')
+    # terminate a truncated last line so new records don't run into it
+    if manifest.tell() > 0:
+        manifest.seek(-1, os.SEEK_END)
+        if manifest.read(1) != b'\n':
+            manifest.write(b'\n')
     lock = threading.Lock()
     stats = Counter()
     t0 = time.monotonic()
@@ -234,7 +293,7 @@ def main():
                 stats['script-error'] += 1
                 continue
             with lock:
-                manifest.write(json.dumps(rec) + '\n')
+                manifest.write((json.dumps(rec) + '\n').encode())
                 manifest.flush()
             stats[rec['status']] += 1
             if n % 200 == 0 or n == len(futs):
@@ -247,9 +306,8 @@ def main():
 
     # summary over the whole manifest, including earlier resumed runs
     total = Counter()
-    with open(args.out / 'manifest.jsonl') as m:
-        for line in m:
-            total[json.loads(line)['status']] += 1
+    for rec in read_manifest(args.out / 'manifest.jsonl'):
+        total[rec['status']] += 1
     with open(args.out / 'summary.txt', 'w') as s:
         for k, v in total.most_common():
             s.write(f'{k:20} {v}\n')
