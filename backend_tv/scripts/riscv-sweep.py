@@ -200,7 +200,7 @@ def classify(rc, output, timed_out):
 
 def run_one(job, args):
     suite, rel, path, inp, idx, fn, log = job
-    cmd = [str(args.backend_tv), '-backend=riscv64', '-always-verify',
+    cmd = [str(args.backend_tv), '-backend=riscv64', '-always-verify', '--terse',
            f'--fn={fn}', *args.extra, str(inp)]
 
     # Resource limits are applied by prlimit(1) rather than preexec_fn,
