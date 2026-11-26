@@ -294,6 +294,38 @@ class riscv2llvm final : public mc2llvm {
 
   bool liftVector(unsigned opcode);
 
+  // vector floating point (riscv2llvm_vector_fp.cpp). elements are held
+  // in the register file as integers and bitcast to FP for arithmetic
+  enum class VFOp { Add, Sub, RSub, Mul, Div, RDiv, Min, Max, SgnJ, SgnJN,
+                    SgnJX };
+  enum class VFMacOp { Macc, NMacc, Msac, NMsac, Madd, NMadd, Msub, NMsub };
+  static void vfMacFlags(VFMacOp op, bool &negProduct, bool &negAddend,
+                         bool &overwritesMultiplicand);
+  enum class VFRedOp { OSum, Min, Max };
+  enum class VFCvtKind { FToI, FToIRtz, IToF, FToF };
+  bool isFPRegOperand(int idx);
+  void checkVFWidth(unsigned width);
+  VConfig getVFConfig();
+  llvm::Value *toVF(llvm::Value *v);
+  llvm::Value *toVI(llvm::Value *v);
+  llvm::Value *readVFScalar(int idx, unsigned SEW);
+  llvm::Value *readVScalarBits(int idx, unsigned SEW);
+  llvm::Value *readVFGroup(unsigned first, unsigned EEW, int EMULLog2);
+  llvm::Value *readVFOperand(int idx, const VConfig &cfg);
+  llvm::Value *createVFOp(VFOp op, llvm::Value *a, llvm::Value *b);
+  llvm::Value *createVFConvert(llvm::Value *v, VFCvtKind kind, bool isSigned,
+                               llvm::Type *toTy);
+  void liftVFBinary(VFOp op);
+  void liftVFUnary(bool isClass);
+  void liftVFMulAdd(VFMacOp op);
+  void liftVFCompare(llvm::CmpInst::Predicate pred);
+  void liftVFMvFS();
+  void liftVFCvt(VFCvtKind kind, bool isSigned, int widthChange);
+  void liftVFWidenBinary(VFOp op, bool wideVs2);
+  void liftVFWidenMulAdd(VFMacOp op);
+  void liftVFReduce(VFRedOp op, bool widen);
+  bool liftVectorFP(unsigned opcode);
+
   // moving vector arguments and return values between LLVM values and RVV
   // register groups; see backend_tv/abi.h
   llvm::Value *vectorElts(llvm::Value *v);

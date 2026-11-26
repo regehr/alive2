@@ -1,0 +1,5 @@
+declare <2 x i32> @llvm.fptosi.sat.v2i32.v2f32(<2 x float>)
+define <2 x i32> @test(<2 x float> %x) {
+  %r = call <2 x i32> @llvm.fptosi.sat.v2i32.v2f32(<2 x float> %x)
+  ret <2 x i32> %r
+}

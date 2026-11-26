@@ -639,8 +639,16 @@ Value *riscv2llvm::readVOperand(int idx, const VConfig &cfg, bool zextImm) {
     return getElemSplat(n, cfg.SEW, op.getImm(), /*isSigned=*/!zextImm);
   if (auto first = vgroupOperand(idx))
     return readVGroup(*first, cfg.SEW, cfg.LMULLog2);
+  return createVSplat(readVScalarBits(idx, cfg.SEW), n);
+}
+
+// the scalar operand `idx` as SEW bits: the low SEW bits of an x register,
+// or, for the .vf forms, an f register checked for NaN-boxing
+Value *riscv2llvm::readVScalarBits(int idx, unsigned SEW) {
+  if (isFPRegOperand(idx))
+    return createBitCast(readVFScalar(idx, SEW), getIntTy(SEW));
   auto x = readFromRegOperand(idx, getIntTy(64));
-  return createVSplat(createTrunc(x, getIntTy(cfg.SEW)), n);
+  return createTrunc(x, getIntTy(SEW));
 }
 
 // elementwise `a op b`, where `a` comes from vs2. every lane is computed,
@@ -1301,8 +1309,10 @@ void riscv2llvm::liftVSlide1(bool up) {
   if (up)
     rejectVOverlap(vd, {vs2});
   auto src = readVGroup(vs2.first, S, L);
-  auto x = createVSplat(
-      createTrunc(readFromRegOperand(2, getIntTy(64)), getIntTy(S)), n);
+  // vfslide1up.vf / vfslide1down.vf take an f register instead
+  if (isFPRegOperand(2))
+    checkVFWidth(S);
+  auto x = createVSplat(readVScalarBits(2, S), n);
 
   // lane n of the shuffle input is lane 0 of the splatted scalar
   SmallVector<int> idx;
@@ -2018,6 +2028,6 @@ bool riscv2llvm::liftVector(unsigned opcode) {
   }
 
   default:
-    return false;
+    return liftVectorFP(opcode);
   }
 }

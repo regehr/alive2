@@ -182,13 +182,15 @@ void riscv2llvm::updateFPReg(Value *V, uint64_t Reg) {
 }
 
 Value *riscv2llvm::canonicalizeNaN(Value *V) {
-  assert(V->getType()->isFloatingPointTy());
+  assert(V->getType()->isFPOrFPVectorTy());
 
   // RISC-V computational FP instructions produce the canonical NaN. Keep this
   // separate from updateFPReg: transfers and sign injection preserve payloads.
+  // for a vector, this applies to each element
   auto isNaN = createIsFPClass(V, fcNan);
-  auto canonical = APFloat::getQNaN(V->getType()->getFltSemantics());
-  return createSelect(isNaN, ConstantFP::get(Ctx, canonical), V);
+  auto canonical =
+      APFloat::getQNaN(V->getType()->getScalarType()->getFltSemantics());
+  return createSelect(isNaN, ConstantFP::get(V->getType(), canonical), V);
 }
 
 unsigned riscv2llvm::getRegSize(unsigned Reg) {
@@ -1011,6 +1013,10 @@ Value *riscv2llvm::vectorFromElts(Value *v, VectorType *ty) {
 // element i
 void riscv2llvm::writeVectorArg(Value *arg, const ArgLoc &loc) {
   auto elts = vectorElts(arg);
+  // the register file holds integers; FP elements move as their bits
+  if (elts->getType()->isFPOrFPVectorTy())
+    elts = createBitCast(
+        elts, VectorType::getInteger(cast<VectorType>(elts->getType())));
   auto *eltsTy = cast<FixedVectorType>(elts->getType());
   unsigned EEW = getBitWidth(eltsTy->getElementType());
   unsigned n = eltsTy->getNumElements();
@@ -1048,6 +1054,8 @@ Value *riscv2llvm::readVectorRet(VectorType *ty, const ArgLoc &loc) {
       low.push_back(i);
     vec = createShuffleVector(vec, low);
   }
+  if (ty->getElementType()->isFloatingPointTy())
+    vec = createBitCast(vec, getVecTy(EEW, n, /*isFP=*/true));
   return vectorFromElts(vec, ty);
 }
 
@@ -1264,11 +1272,15 @@ Value *riscv2llvm::getPointerOperand() {
   return getPointerFromMCExpr();
 }
 
-// vectors of integers can be passed and returned in RVV register groups
-// (see backend_tv/abi.h); the lifter has no vector floating point
+// vectors can be passed and returned in RVV register groups (see
+// backend_tv/abi.h). RVA23U64 has vector f32 and f64 arithmetic (V) and
+// conversions to and from f16 (Zvfhmin), but no vector bfloat
 static void checkVectorElt(VectorType *ty, std::ostream *out) {
-  if (!ty->getElementType()->isIntegerTy()) {
-    *out << "\nERROR: only vectors of integers are supported\n\n";
+  auto *elt = ty->getElementType();
+  if (!elt->isIntegerTy() && !elt->isHalfTy() && !elt->isFloatTy() &&
+      !elt->isDoubleTy()) {
+    *out << "\nERROR: only vectors of integers, half, float, and double are "
+            "supported\n\n";
     exit(-1);
   }
 }

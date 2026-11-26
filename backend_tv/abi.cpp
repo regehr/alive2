@@ -199,7 +199,9 @@ ArgLoc CCAssigner::assignRVVGroup(VectorType *ty, bool isRet) {
     return loc;
   }
 
-  bool eltOK = eltTy->isFloatTy() || eltTy->isDoubleTy();
+  // f16 vectors are legal types under Zvfhmin, which RVA23U64 includes;
+  // bfloat ones would need Zvfbfmin
+  bool eltOK = eltTy->isHalfTy() || eltTy->isFloatTy() || eltTy->isDoubleTy();
   if (auto *intTy = dyn_cast<IntegerType>(eltTy)) {
     unsigned w = intTy->getBitWidth();
     eltOK = w == 8 || w == 16 || w == 32 || w == 64;
