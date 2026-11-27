@@ -811,6 +811,14 @@ pair<Function *, Function *> mc2llvm::run() {
       Function::Create(srcFn->getFunctionType(), GlobalValue::ExternalLinkage,
                        0, srcFn->getName(), LiftedModule);
   liftedFn->copyAttributesFrom(srcFn);
+  // A nofpclass violation makes an argument poison, lane by lane for a
+  // vector. The machine code sees concrete bits, but the lifted code
+  // reinterprets vector registers at other element widths, and there one
+  // poison lane poisons its neighbors: rotating <2 x float> as an i64 (as
+  // vror.vi does to swap the halves) poisons both. The source still has
+  // the attribute, so dropping it here only makes the target more defined.
+  for (unsigned i = 0; i < liftedFn->arg_size(); ++i)
+    liftedFn->removeParamAttr(i, Attribute::NoFPClass);
   // The source function's memory effects don't describe the lifted code: it
   // calls the unknown-value helpers, and it accesses its own stack frame
   // through pointers materialized from SP with inttoptr. Alive2 can't tell

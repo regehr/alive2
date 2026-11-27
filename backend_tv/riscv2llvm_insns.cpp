@@ -299,6 +299,9 @@ void riscv2llvm::lift(MCInst &I) {
     break;
   }
 
+  // c.add rd, rs2 is (rd, rd, rs2), the same layout as add. with rd = x0
+  // it is a HINT (e.g. c.ntl.all), and updateReg() drops the write
+  case RISCV::C_ADD:
   case RISCV::ADD:
   case RISCV::SUB:
   case RISCV::AND:
@@ -311,6 +314,7 @@ void riscv2llvm::lift(MCInst &I) {
     auto b = readFromRegOperand(2, i64ty);
     Value *res{nullptr};
     switch (opcode) {
+    case RISCV::C_ADD:
     case RISCV::ADD:
       res = createAdd(a, b);
       break;

@@ -743,6 +743,16 @@ Value *riscv2llvm::createVIntOp(VIntOp op, Value *a, Value *b) {
     Value *ifZero = isDiv ? static_cast<Value *>(getAllOnesConst(vecTy)) : a;
     return createSelect(byZero, ifZero, res);
   }
+
+  // Zvbb. vandn computes vs2 & ~op1. the rotates use only the low lg2(SEW)
+  // bits of the amount, which is what funnel shifts do with SEW a power
+  // of two
+  case VIntOp::AndN:
+    return createAnd(a, createNot(b));
+  case VIntOp::Rol:
+    return createFShl(a, a, b);
+  case VIntOp::Ror:
+    return createFShr(a, a, b);
   }
   assert(false && "unhandled VIntOp");
   return nullptr;
@@ -772,8 +782,9 @@ void riscv2llvm::liftVIntBinary(VIntOp op) {
   addVSrc(srcs, 2, S, L);
   // every operand has EEW = SEW, so no overlap forces agnostic
   checkVOverlap(vopAt(0, S, L), srcs, mask != nullptr);
-  bool zextImm =
-      op == VIntOp::Sll || op == VIntOp::Srl || op == VIntOp::Sra;
+  // the shift immediates are uimm5, and vror.vi's is uimm6
+  bool zextImm = op == VIntOp::Sll || op == VIntOp::Srl ||
+                 op == VIntOp::Sra || op == VIntOp::Ror;
   auto a = readVGroup(srcs[0].first, S, L);
   auto b = readVOperand(2, cfg, zextImm);
   writeVGroup(vopAt(0, S, L).first, S, L, createVIntOp(op, a, b), readVL(),
@@ -834,6 +845,9 @@ void riscv2llvm::liftVMerge() {
 // the narrow operands are zero- or sign-extended first; for vwmulsu, vs2 is
 // signed and the other operand unsigned. a .vx scalar contributes its low
 // SEW bits, which are then extended like a vector operand
+//
+// vwsll (Zvbb) zero-extends vs2 and shifts it left by the low
+// lg2(2 * SEW) bits of the amount; its .vi form takes a uimm5
 void riscv2llvm::liftVWidenBinary(VWideOp op, bool wideVs2) {
   auto cfg = getVConfig();
   checkVWidenable(cfg);
@@ -852,7 +866,8 @@ void riscv2llvm::liftVWidenBinary(VWideOp op, bool wideVs2) {
       op == VWideOp::Add || op == VWideOp::Sub || op == VWideOp::Mul;
   Value *a = wideVs2 ? readVGroup(srcs[0].first, W, WL)
                      : createVExt(readVGroup(srcs[0].first, S, L), W, aSigned);
-  Value *b = createVExt(readVOperand(2, cfg, /*zextImm=*/false), W, bSigned);
+  Value *b = createVExt(readVOperand(2, cfg, /*zextImm=*/op == VWideOp::Sll),
+                        W, bSigned);
   Value *res = nullptr;
   switch (op) {
   case VWideOp::AddU:
@@ -867,6 +882,9 @@ void riscv2llvm::liftVWidenBinary(VWideOp op, bool wideVs2) {
   case VWideOp::Mul:
   case VWideOp::MulSU:
     res = createMul(a, b);
+    break;
+  case VWideOp::Sll:
+    res = createMaskedShl(a, b);
     break;
   }
   writeVGroup(vd.first, W, WL, res, readVL(), mask,
@@ -897,6 +915,45 @@ void riscv2llvm::liftVExtend(unsigned factor, bool isSigned) {
   auto res = createVExt(readVGroup(vs2.first, EEW, EMULLog2), S, isSigned);
   writeVGroup(vd.first, S, L, res, readVL(), mask,
               cfg.tailAgnostic || agnostic, cfg.maskAgnostic || agnostic);
+}
+
+// vbrev.v / vbrev8.v / vrev8.v / vclz.v / vctz.v / vcpop.v vd, vs2, vm
+// (Zvbb). clz and ctz of zero are SEW
+void riscv2llvm::liftVIntUnary(VUnaryOp op) {
+  auto cfg = getVConfig();
+  auto n = numVElts(cfg.SEW, cfg.LMULLog2);
+  auto S = cfg.SEW;
+  auto L = cfg.LMULLog2;
+  auto mask = readVMaskOperand(2, n);
+  auto vs2 = vopAt(1, S, L);
+  auto vd = vopAt(0, S, L);
+  // every operand has EEW = SEW, so no overlap forces agnostic
+  checkVOverlap(vd, {vs2}, mask != nullptr);
+  Value *a = readVGroup(vs2.first, S, L);
+  Value *res = nullptr;
+  switch (op) {
+  case VUnaryOp::Brev:
+    res = createBitReverse(a);
+    break;
+  // llvm.bswap needs at least 16 bits; a byte swap of bytes is the identity
+  case VUnaryOp::Brev8:
+    res = createBitReverse(S == 8 ? a : createBSwap(a));
+    break;
+  case VUnaryOp::Rev8:
+    res = S == 8 ? a : createBSwap(a);
+    break;
+  case VUnaryOp::Clz:
+    res = createCtlz(a);
+    break;
+  case VUnaryOp::Ctz:
+    res = createCttz(a);
+    break;
+  case VUnaryOp::Cpop:
+    res = createCtPop(a);
+    break;
+  }
+  writeVGroup(vd.first, S, L, res, readVL(), mask, cfg.tailAgnostic,
+              cfg.maskAgnostic);
 }
 
 // vnsrl.wv vd, vs2, vs1, vm / .wx vd, vs2, rs1, vm / .wi vd, vs2, uimm, vm
@@ -1669,6 +1726,9 @@ bool riscv2llvm::liftVector(unsigned opcode) {
     VINT_VV_VX(VDIV, Div)
     VINT_VV_VX(VREMU, RemU)
     VINT_VV_VX(VREM, Rem)
+    VINT_VV_VX(VANDN, AndN)
+    VINT_VV_VX(VROL, Rol)
+    VINT_VV_VX_VI(VROR, Ror)
 #undef VINT_VV_VX_VI
 #undef VINT_VV_VX
 #undef VINT_VI
@@ -1733,7 +1793,22 @@ bool riscv2llvm::liftVector(unsigned opcode) {
     VWIDE(VWMUL_VX, Mul, false)
     VWIDE(VWMULSU_VV, MulSU, false)
     VWIDE(VWMULSU_VX, MulSU, false)
+    VWIDE(VWSLL_VV, Sll, false)
+    VWIDE(VWSLL_VX, Sll, false)
+    VWIDE(VWSLL_VI, Sll, false)
 #undef VWIDE
+
+#define VUNARY(NAME, OP)                                                       \
+  case RISCV::NAME:                                                            \
+    liftVIntUnary(VUnaryOp::OP);                                               \
+    return true;
+    VUNARY(VBREV_V, Brev)
+    VUNARY(VBREV8_V, Brev8)
+    VUNARY(VREV8_V, Rev8)
+    VUNARY(VCLZ_V, Clz)
+    VUNARY(VCTZ_V, Ctz)
+    VUNARY(VCPOP_V, Cpop)
+#undef VUNARY
 
   case RISCV::VZEXT_VF2:
     liftVExtend(2, false);

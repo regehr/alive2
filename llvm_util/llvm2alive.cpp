@@ -1507,6 +1507,7 @@ public:
 
       // non-relevant for correctness
       case LLVMContext::MD_loop:
+      case LLVMContext::MD_nontemporal:
       case LLVMContext::MD_nosanitize:
       case LLVMContext::MD_prof:
       case LLVMContext::MD_unpredictable:
@@ -1515,6 +1516,9 @@ public:
       default:
         // non-relevant for correctness
         if (ID == Node->getContext().getMDKindID("irce.loop.clone"))
+          break;
+        // RISC-V cache-domain hint for !nontemporal accesses
+        if (ID == Node->getContext().getMDKindID("riscv-nontemporal-domain"))
           break;
 
         // For the target, dropping metadata is fine as metadata will never turn

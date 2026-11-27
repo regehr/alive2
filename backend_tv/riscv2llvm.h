@@ -231,6 +231,9 @@ class riscv2llvm final : public mc2llvm {
     Div,
     RemU,
     Rem,
+    AndN,
+    Rol,
+    Ror,
   };
   // a vector register operand, for checking the overlap rules: the first
   // register of its group, its EEW (1 for a mask), and its EMUL
@@ -259,10 +262,13 @@ class riscv2llvm final : public mc2llvm {
 
   // widening add, subtract, and multiply; U is unsigned, SU is signed vs2
   // times unsigned vs1/rs1
-  enum class VWideOp { AddU, Add, SubU, Sub, MulU, Mul, MulSU };
+  enum class VWideOp { AddU, Add, SubU, Sub, MulU, Mul, MulSU, Sll };
   enum class VMacOp { Macc, Nmsac, Madd, Nmsub };
   void liftVWidenBinary(VWideOp op, bool wideVs2);
   void liftVExtend(unsigned factor, bool isSigned);
+  // Zvbb elementwise unary operations
+  enum class VUnaryOp { Brev, Brev8, Rev8, Clz, Ctz, Cpop };
+  void liftVIntUnary(VUnaryOp op);
   void liftVNarrowShift(bool isArith);
   void liftVMulAdd(VMacOp op);
   void liftVWidenMulAdd(bool s1Signed, bool s2Signed);
