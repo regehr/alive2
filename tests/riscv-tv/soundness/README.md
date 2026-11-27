@@ -8,12 +8,13 @@ both are executed in QEMU. These are false approvals, not unsupported cases or
 solver timeouts.
 
 The stack-alignment gap is now fixed: `call-stack-align` requires a
-counterexample. The other seven reproducers still track outstanding false
-approvals. [BASELINE.md](BASELINE.md) records the coverage and timing comparison
+counterexample. Symbolic LUI now clobbers its destination, so
+`reloc-high-clobber` also requires a counterexample. The other six reproducers
+still track outstanding false approvals. [BASELINE.md](BASELINE.md) records the coverage and timing comparison
 for steps 1 and 2 of the [plan](PLAN.md).
 
-1. **[P1] Symbolic LUI writes and the base register of `%lo` operations are
-   ignored.**
+1. **[P1, partly fixed] Symbolic LUI writes and the base register of `%lo`
+   operations are ignored.**
    [The LUI handler](../../../backend_tv/riscv2llvm_insns.cpp#L389) treats
    `lui a0, %hi(g)` as a no-op. Consequently,
    `li a0, 42; lui a0, %hi(g); ret` validates against `ret i64 42`, although
@@ -27,6 +28,11 @@ for steps 1 and 2 of the [plan](PLAN.md).
    [reloc-base](reloc-base.riscvasm.ll).
    Preserve the actual register write and address arithmetic, or reject
    symbolic relocations whose semantics cannot be established.
+   Containment for the LUI half has landed: symbolic `lui %hi(sym)` now writes
+   an arbitrary frozen value, so `reloc-high-clobber` is rejected. This is
+   conservative; any use of that register other than as a `%lo` base fails
+   validation. The `%lo` base register is still ignored, so `reloc-base`
+   remains a false approval.
 
 2. **[P1] Target optimization removes faulting machine loads.**
    [createLoad](../../../backend_tv/mc2llvm.h#L347) emits ordinary LLVM loads,
@@ -125,8 +131,8 @@ Observed results for all eight cases:
 | global-width | `0x20001000` | `0x120001000` |
 
 The runner verifies all 16 executions and all eight normal-codegen controls.
-It requires a counterexample for `call-stack-align` and reproduces the seven
-remaining false approvals. The SROA-only dead-load control must also produce a
+It requires a counterexample for `call-stack-align` and `reloc-high-clobber`
+and reproduces the six remaining false approvals. The SROA-only dead-load control must also produce a
 counterexample. Completed verification summaries are checked exactly: a timeout,
 unsupported input, or other error cannot stand in for a counterexample.
 The remaining lit cases are marked XFAIL on their false-approval message.

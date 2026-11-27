@@ -664,6 +664,22 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
     }
     auto &limb = loc.limbs[0];
 
+    // the low `bits` bits of an integer-convention limb: an argument GPR,
+    // or a slot in the outgoing argument area at the current SP. the
+    // slot is read at the value's own width, since the caller need not
+    // write the rest of it (e.g. a float is stored with sw)
+    auto readIntLimb = [&](const LimbLoc &l, unsigned bits) -> Value * {
+      if (l.inReg) {
+        Value *v = readFromReg(RISCV::X10 + l.reg, getIntTy(64));
+        return bits < 64 ? createTrunc(v, getIntTy(bits)) : v;
+      }
+      auto SP = readFromReg(RISCV::X2, PointerType::get(Ctx, 0));
+      auto addr = createGEP(getIntTy(8), SP,
+                            {getUnsignedIntConst(l.stackOffset, 64)},
+                            nextName());
+      return createLoad(getIntTy(bits), addr);
+    };
+
     Value *param{nullptr};
     if (argTy->isVectorTy()) {
       assert(false && "Error: calling function with vector args is not supported yet\n\n");
@@ -672,17 +688,8 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
       // significant first, and the ones that did not fit in registers sit
       // in the outgoing argument area at the current SP
       vector<Value *> limbs;
-      for (auto &l : loc.limbs) {
-        if (l.inReg) {
-          limbs.push_back(readFromReg(RISCV::X10 + l.reg, getIntTy(64)));
-        } else {
-          auto SP = readFromReg(RISCV::X2, PointerType::get(Ctx, 0));
-          auto addr = createGEP(getIntTy(8), SP,
-                                {getUnsignedIntConst(l.stackOffset, 64)},
-                                nextName());
-          limbs.push_back(createLoad(getIntTy(64), addr));
-        }
-      }
+      for (auto &l : loc.limbs)
+        limbs.push_back(readIntLimb(l, 64));
       param = concatLimbs(limbs);
       if (argTy->isPointerTy()) {
         param = new IntToPtrInst(param, PointerType::get(Ctx, 0), "", LLVMBB);
@@ -706,15 +713,22 @@ vector<Value *> riscv2llvm::marshallArgs(FunctionType *fTy,
                                 llvmCI.paramHasAttr(argIdx, Attribute::ZExt));
       }
     } else if (argTy->isFloatingPointTy()) {
-      // FIXME -- once the FP registers run out, CCAssigner says a float
-      // travels in a GPR (and then on the stack). the callee side
-      // implements that; this side does not yet.
-      if (loc.kind != ArgLoc::Vector) {
-        *out << "\nERROR: we don't support call arguments past the FP "
-                "registers yet\n\n";
-        exit(-1);
+      if (loc.kind == ArgLoc::Vector) {
+        param = readFPABIReg(RISCV::F10_Q + limb.reg, argTy);
+      } else {
+        // once the FP registers run out, a float is passed like an integer
+        // of the same width: in a GPR, then on the stack. the integer
+        // convention leaves the bits above the value unspecified (no
+        // NaN-boxing), so the callee sees only the low bits
+        auto bits = getBitWidth(argTy);
+        if (loc.kind != ArgLoc::Direct || loc.limbs.size() != 1 || bits > 64) {
+          *out << "\nERROR: we don't support a " << bits
+               << "-bit FP call argument passed at " << toString(loc)
+               << " yet\n\n";
+          exit(-1);
+        }
+        param = createBitCast(readIntLimb(limb, bits), argTy);
       }
-      param = readFPABIReg(RISCV::F10_Q + limb.reg, argTy);
     } else {
       assert(false && "unknown arg type\n");
     }

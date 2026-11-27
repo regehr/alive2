@@ -13,7 +13,7 @@ test:
 	fli.s fa5, 1.0
 	fli.s fa6, 1.0
 	fli.s fa7, 1.0
-	li a0, 1065353216
+	lui a0, 262144
 	.loc 1 1 0
 	call consume
 	ld ra, 8(sp)

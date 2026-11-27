@@ -23,7 +23,7 @@ RESULTS = {
     "global-layout": (G, 0),
     "global-width": (G, G + (1 << 32)),
 }
-FIXED = {"call-stack-align"}
+FIXED = {"call-stack-align", "reloc-high-clobber"}
 
 LINKER_SCRIPT = """ENTRY(_start)
 SECTIONS {
